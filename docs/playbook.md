@@ -48,7 +48,7 @@ The build loop can run interactively (one card at a time) or unattended — seve
 - **Proof of life = a commit on the branch within 30–60 minutes.** Liveness is always commit age — never "the process is alive" or a status message. No commit ≈ no loop.
 - **Halt conditions are written into the kickoff**: all features accepted, OR N iterations without test improvement (stop and write down why), OR a max-iteration cap.
 - **A monitor watches the loop** (a scheduled check): commit cadence, plus answering the mailbox below. Whatever can relaunch a stalled worker must use the commit-age rule itself — a report-only watchdog serves nobody at 3am.
-- **Agent↔agent questions go in a mailbox file** (`QUESTIONS.md` (at the repo root), append-only, status OPEN → ANSWERED → CLOSED; NEEDS-HUMAN items get surfaced in chat). Direct session-to-session messaging, where available, is fine as the notification — but the file is the record, because messages die with sessions. Agents never relay through the human, and if it was only said in chat, it doesn't exist.
+- **Agent↔agent questions go in a mailbox file** (`QUESTIONS.md` at the repo root, append-only, status OPEN → ANSWERED → CLOSED; NEEDS-HUMAN items get surfaced in chat). Direct session-to-session messaging, where available, is fine as the notification — but the file is the record, because messages die with sessions. Agents never relay through the human, and if it was only said in chat, it doesn't exist.
 - **Single writer:** the worker alone appends to the build log while running.
 
 ## The build record
