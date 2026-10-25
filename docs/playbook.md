@@ -36,7 +36,7 @@ The roles above typically run on two differently-shaped Claude surfaces, and the
 
 - **Check the model at every session start, in both surfaces** — model selectors come up on app defaults, not on what you planned. For loop runs, record the actual model in `LOG.md`'s first line.
 - **Implementer permissions: scoped, not global.** Auto-accept mode *inside* a per-repo allow-list (`.claude/settings.local.json`): no blanket shell access. A loop's blast radius is its own repo. A permission prompt stalling an overnight run is the accepted failure mode — add the missing rule next morning rather than widening permissions in advance.
-- **Navigator: use the surface with broad access** (local files, a real browser, email/calendar where relevant) — that reach is its job. It stays read-only on the repo host by policy, which no setting should "fix."
+- **Navigator: use the surface with broad access** (local files, a real browser, email/calendar where relevant) — that reach is its job. By policy it stays read-only on the repo host except for appending to QUESTIONS.md; no setting should "fix" that.
 
 Humans never type git commands in this process — the implementer session does them. When one surface needs the other to act, it writes a self-contained plain-English paste block (what to do, why, where the context lives) — never a list of shell commands for the human to relay. The role separation is the invariant; how you map roles to surfaces can vary (a solo builder might run everything in Claude Code with the reviewer as a fresh session or the @claude PR bot).
 
