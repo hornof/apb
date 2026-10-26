@@ -1,6 +1,6 @@
 # Collaborator guide — building with apb
 
-You'll build a real project. AI agents do most of the design and coding; you give direction and details when needed. We're following [apb](playbook.md), a workflow for building software with Claude (you don't need to read it now). Go through the steps below in order; this page is the whole map.
+You'll build a real project. AI agents do most of the design and coding; you give direction and details when needed. We're following [apb](https://github.com/hornof/apb/blob/main/docs/playbook.md), a workflow for building software with Claude (you don't need to read it now). Go through the steps below in order; this page is the whole map.
 
 1. **Accept the invite** to the repo (email from GitHub, or github.com/notifications).
 
