@@ -1,13 +1,17 @@
 # Collaborator guide — building with apb
 
-You'll build a real project with AI doing the heavy lifting. You go through these steps in order, one at a time; this page is the whole map.
+You'll build a real project. AI agents do most of the design and coding; you give direction and details when needed. We're following [apb](playbook.md), a workflow for building software with Claude (you don't need to read it now). Go through the steps below in order; this page is the whole map.
 
-1. **GitHub account** — create one at github.com if needed and give the project owner your username; accept the invite when it arrives.
-2. **Brain dump** — write down everything about what you want built, in any form. Also answer: Who will use it? What must it do on day one? Anything it must never do? How many users/how much traffic do you expect?
-3. **Review the PRD** — Claude turns your dump into a one-page requirements doc. Read it; reply with anything wrong or missing. Iterate until you're happy. Your sign-off is gate 1; the TDD comes next.
-4. **Review the TDD** — the system-design step: architecture, APIs, data, and how every requirement will be tested all live here. Read it and flag anything that worries you; the deep technical review is done by a separate Claude reviewer. You approve it (gate 2). (Implementation itself gets checked later, at every PR and against the live site.)
-5. **Set up Claude Code** (hands-on starts here) — [quickstart](https://code.claude.com/docs/en/quickstart). Run `claude` in a fresh folder; install the apb plugin (`/plugin install apb --marketplace hornof/apb`); from here on you do everything by *prompting*, not typing commands. Claude Code will ask permission for commands as it goes; answer 'Yes, and don't ask again' for build, test and git commands, and it saves those choices in `.claude/settings.local.json` (yours only; it is git-ignored).
-6. **Session 0** — by prompting only: create the repo copy locally, make a commit, open a PR, have a reviewer who didn't write it approve, merge it, see the site deploy. ~2 hours; you'll have touched the whole pipeline.
-7. **Build** — pick a card from the project board, prompt Claude to build it tests-first, a reviewer who didn't write it approves, you merge, check the live site.
+1. **Accept the invite** to the repo (email from GitHub, or github.com/notifications).
 
-The full process we're following: `docs/playbook.md`.
+2. **Set up Claude Code.** Install it ([quickstart](https://code.claude.com/docs/en/quickstart)), clone the repo, run `claude` inside it. Then install the apb plugin: `/plugin install apb --marketplace hornof/apb` (pick the option that installs it for you). If it says `gh` is missing or not logged in, let it fix that (one browser login). It will ask permission for commands as it goes; answer "Yes, and don't ask again" for build, test and git commands — it saves those in `.claude/settings.local.json`, yours only, git-ignored. From here on you do everything by prompting Claude in this repo, including questions: "what do I do next?", "this isn't working", "what does X mean?" It has the repo and GitHub, so it knows the state.
+
+3. **Brain dump.** Write everything you want built as a comment on the brain-dump ticket on the project board; the ticket lists the questions to answer. Then tell Claude: "I posted the brain dump on issue #N; draft the PRD." It writes `docs/PRD.md` and opens a PR.
+
+4. **Review the PRD.** Read the PR. Comment on it, or tell Claude "I added comments, take a look," until it says what you mean. Merging the PR is your approval (gate 1). Nothing gets built before that.
+
+5. **TDD.** Tell Claude: "PRD approved; draft the TDD." It writes `docs/TDD.md` — architecture, where data lives, how each requirement is tested — and opens a PR. Same review loop; merging is gate 2. Right after, Claude sets up hosting and CI per the TDD.
+
+6. **Session 0.** By prompting only: make a small change, open a PR, have a reviewer who didn't write it approve, merge it, see it deploy. ~2 hours; you'll have touched the whole pipeline.
+
+7. **Build.** Tell Claude "build the next card." It takes the top card from the project board, writes tests first, then code, and opens a PR. A reviewer who didn't write it approves; you merge; check the live site.

@@ -16,4 +16,4 @@ Built with the apb process: https://github.com/hornof/apb
 | LOG.md | One line per build iteration | anyone |
 | LESSONS.md | What building it taught | anyone |
 
-Progress is on the GitHub Projects board, not in this file.
+Progress is on the GitHub Projects [<project>](<board URL>) board, not in this file.
