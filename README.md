@@ -28,7 +28,7 @@ Humans supply the idea, comment at the gates, review and merge PRs. Claude does 
 
 ## Install
 
-See [plugin install docs](https://code.claude.com/docs/en/plugins/install.md). Both builder and reviewer run on a Claude subscription — the optional @claude PR bot does too, via an OAuth token ([docs](https://code.claude.com/docs/en/github-actions)).
+In Claude Code (v2.1.275 or later): `/plugin install apb --marketplace hornof/apb`, then pick a scope. Older versions: `/plugin marketplace add hornof/apb` then `/plugin install apb@apb`. Both builder and reviewer run on a Claude subscription — the optional @claude PR bot does too, via an OAuth token ([docs](https://code.claude.com/docs/en/github-actions)).
 
 ## Core rules (each one paid for)
 

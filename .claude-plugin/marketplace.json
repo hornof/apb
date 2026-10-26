@@ -1,0 +1,8 @@
+{
+  "name": "apb",
+  "description": "Agentic Programming Blueprint — a software factory as a Claude Code plugin",
+  "owner": { "name": "Luke Hornof", "url": "https://hornof.org" },
+  "plugins": [
+    { "name": "apb", "source": ".", "description": "PRD → TDD → board → tests-first build → separated review → human merge → verify the live site" }
+  ]
+}
