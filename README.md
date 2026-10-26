@@ -23,7 +23,7 @@ Humans supply the idea, comment at the gates, review and merge PRs. Claude does 
 | `skills/apb-loop` | Runs the loop unattended over several cards — launch protocol, liveness by commit age, halt conditions |
 | `skills/apb-review` | Launches the reviewer agent — a separate context that did not write the code |
 | `agents/builder`, `agents/reviewer` | The two separated roles |
-| `templates/` | PRD, TDD, repo-CLAUDE.md, and QUESTIONS (agent mailbox) starters |
+| `templates/` | PRD, TDD, repo-CLAUDE.md, and MAILBOX (agent mailbox) starters |
 | `docs/collaborator-guide.md` | Step-by-step onboarding for a teammate new to AI-assisted building |
 
 ## Install

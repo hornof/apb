@@ -29,14 +29,14 @@ The roles above typically run on two differently-shaped Claude surfaces, and the
 
 | Surface | Access | Power | Runs |
 |---|---|---|---|
-| **Navigator** (Claude chat/Cowork) | Broad — files, web, email, calendars | Limited — no repo writes except appending to QUESTIONS.md, no deletes | PRD/TDD drafting, research, the reviewer role, deployed-site verification |
+| **Navigator** (Claude chat/Cowork) | Broad — files, web, email, calendars | Limited — no repo writes except appending to MAILBOX.md, no deletes | PRD/TDD drafting, research, the reviewer role, deployed-site verification |
 | **Implementer** (Claude Code, opened in the repo) | Narrow — just the repo directories | Full — git, gh, deletes, pushes | Repo setup, the build loop, all git operations |
 
 ### Session settings
 
 - **Check the model at every session start, in both surfaces** — model selectors come up on app defaults, not on what you planned. For loop runs, record the actual model in `LOG.md`'s first line.
 - **Implementer permissions: scoped, not global.** Auto-accept mode *inside* a per-repo allow-list (`.claude/settings.local.json`): no blanket shell access. A loop's blast radius is its own repo. A permission prompt stalling an overnight run is the accepted failure mode — add the missing rule next morning rather than widening permissions in advance.
-- **Navigator: use the surface with broad access** (local files, a real browser, email/calendar where relevant) — that reach is its job. By policy it stays read-only on the repo host except for appending to QUESTIONS.md; no setting should "fix" that.
+- **Navigator: use the surface with broad access** (local files, a real browser, email/calendar where relevant) — that reach is its job. By policy it stays read-only on the repo host except for appending to MAILBOX.md; no setting should "fix" that.
 
 Humans never type git commands in this process — the implementer session does them. When one surface needs the other to act, it writes a self-contained plain-English paste block (what to do, why, where the context lives) — never a list of shell commands for the human to relay. The role separation is the invariant; how you map roles to surfaces can vary (a solo builder might run everything in Claude Code with the reviewer as a fresh session or the @claude PR bot).
 
@@ -48,7 +48,7 @@ The build loop can run interactively (one card at a time) or unattended — seve
 - **Proof of life = a commit on the branch within 30–60 minutes.** Liveness is always commit age — never "the process is alive" or a status message. No commit ≈ no loop.
 - **Halt conditions are written into the kickoff**: all features accepted, OR N iterations without test improvement (stop and write down why), OR a max-iteration cap.
 - **A monitor watches the loop** (a scheduled check): commit cadence, plus answering the mailbox below. Whatever can relaunch a stalled worker must use the commit-age rule itself — a report-only watchdog serves nobody at 3am.
-- **Agent↔agent questions go in a mailbox file** (`QUESTIONS.md` at the repo root, append-only, status OPEN → ANSWERED → CLOSED; NEEDS-HUMAN items get surfaced in chat). Direct session-to-session messaging, where available, is fine as the notification — but the file is the record, because messages die with sessions. Agents never relay through the human, and if it was only said in chat, it doesn't exist.
+- **Agent↔agent questions go in a mailbox file** (`MAILBOX.md` at the repo root, append-only, status OPEN → ANSWERED → CLOSED; NEEDS-HUMAN items get surfaced in chat). Direct session-to-session messaging, where available, is fine as the notification — but the file is the record, because messages die with sessions. Agents never relay through the human, and if it was only said in chat, it doesn't exist.
 - **Single writer:** the worker alone appends to the build log while running.
 
 ## The build record
