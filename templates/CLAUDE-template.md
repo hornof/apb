@@ -6,4 +6,5 @@
 - Every incident becomes a rule here the same day.
 - Approved PRD/TDD wording is immutable except by the human's explicit choice.
 - `LOG.md` is append-only; `MAILBOX.md` is the agent mailbox — nothing important lives only in chat.
-<add project-specific rules below>
+## Project rules
+(none yet — add one line per rule as incidents happen)
