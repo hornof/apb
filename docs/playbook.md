@@ -10,6 +10,12 @@ Idea → PRD → TDD → Task board → Build loop → PR → Review → Merge �
 ```
 The three gates are human approvals. Humans supply the idea, comment at the gates, and merge; Claude drafts the docs, writes tests and code, reviews, and verifies the deployed result.
 
+## What runs where
+
+- **Claude Code**, opened in the project repo — the whole pipeline. One main session, the **orchestrator**, runs the skills, keeps the board, and spawns two subagents: the **builder** (tests, code, one PR per card) and the **reviewer** (reviews the PR and the live site in its own context). All git happens here. Nothing passes through the human between steps.
+- **Cowork** (Claude chat with broad access) — optional. An **advisor**: thinking through the idea before a repo exists, research, anything outside the repo (local files, email, calendar, a real browser), and an independent read of the PRD, TDD or live site when asked. It never writes to the repo; its input goes on the relevant GitHub issue as a comment.
+- **The human** — the idea, the three gates, every merge.
+
 ## Roles
 
 | Who | Does | Never does |
@@ -18,10 +24,11 @@ The three gates are human approvals. Humans supply the idea, comment at the gate
 | Claude (**orchestrator** — the main Claude Code session) | Drafts PRD/TDD, runs the skills, manages the board, spawns the builder and reviewer | merge to main |
 | Claude (**builder** — a subagent the orchestrator spawns from `agents/builder.md`) | Writes tests then code for one issue at a time, opens PRs | merge to main |
 | Claude (**reviewer** — a subagent the orchestrator spawns from `agents/reviewer.md`, in its own context) | Reviews PRs and the *deployed* site | write code |
+| Claude (**advisor** — a Cowork session, optional) | Thinks through the idea with the human, researches, reads the repo and the live site, comments on issues | write to the repo |
 
 On a shared project the project owner approves the gates and merges; they pull in another human by assigning an issue or requesting a PR review — nobody reviews by default.
 
-Names, used the same way everywhere in apb: the **orchestrator** is the main Claude Code session the human talks to; the **builder** and **reviewer** are subagents it starts — separate conversations with their own instructions and no view of each other's work, each returning one summary to the orchestrator; the **navigator** is the Cowork session (next section). “Spawn” means the orchestrator starts one of those subagents.
+Names, used the same way everywhere in apb: the **orchestrator** is the main Claude Code session the human talks to; the **builder** and **reviewer** are subagents it starts — separate conversations with their own instructions and no view of each other's work, each returning one summary to the orchestrator; the **advisor** is a Cowork session outside the repo, used when its broad access or a second opinion helps. “Spawn” means the orchestrator starts one of those subagents.
 
 The core safety rule: the agent that writes code never reviews or merges it.
 
@@ -31,16 +38,16 @@ The roles above typically run on two differently-shaped Claude surfaces, and the
 
 | Surface | Access | Power | Runs |
 |---|---|---|---|
-| **Navigator** (Claude chat/Cowork) | Broad — files, web, email, calendars | Limited — no repo writes except appending to MAILBOX.md, no deletes | PRD/TDD drafting, research, the reviewer role, deployed-site verification |
+| **Advisor** (Claude chat/Cowork) | Broad — files, web, email, calendars | Limited — no repo writes; comments on GitHub issues | Idea stage, research, independent reads of PRD/TDD/live site |
 | **Orchestrator** (Claude Code, opened in the repo) | Narrow — just the repo directories | Full — git, gh, deletes, pushes | Repo setup, the build loop (spawning builder and reviewer), all git operations |
 
 ### Session settings
 
 - **Check the model at every session start, in both surfaces** — model selectors come up on app defaults, not on what you planned. For loop runs, record the actual model in `LOG.md`'s first line.
 - **Orchestrator permissions: scoped, not global.** Auto-accept mode *inside* a per-repo allow-list (`.claude/settings.local.json`): no blanket shell access. A loop's blast radius is its own repo. A permission prompt stalling an overnight run is the accepted failure mode — add the missing rule next morning rather than widening permissions in advance.
-- **Navigator: use the surface with broad access** (local files, a real browser, email/calendar where relevant) — that reach is its job. By policy it stays read-only on the repo host except for appending to MAILBOX.md; no setting should "fix" that.
+- **Advisor: use the surface with broad access** (local files, a real browser, email/calendar where relevant) — that reach is its job. By policy it stays read-only on the repo; no setting should "fix" that.
 
-Humans never type git commands in this process — the orchestrator does them. When one surface needs the other to act, it writes a self-contained plain-English paste block (what to do, why, where the context lives) — never a list of shell commands for the human to relay. The role separation is the invariant; how you map roles to surfaces can vary (a human working alone might run everything in Claude Code, with the reviewer as a fresh session or the @claude PR bot).
+Humans never type git commands in this process — the orchestrator does them. The advisor never hands the human something to paste into Claude Code: its input goes on the GitHub issue, where the orchestrator reads it. The role separation is the invariant; the advisor is optional, and a human working alone runs everything in Claude Code.
 
 ## Unattended builds (the loop)
 
@@ -49,8 +56,8 @@ The build loop can run interactively (one card at a time) or unattended — seve
 - **"Go" in chat is not a running loop.** The kickoff must actually launch a background worker (Agent Teams / a worktree per feature), and the agent confirms by naming the mechanism, not describing intent.
 - **Proof of life = a commit on the branch within 30–60 minutes.** Liveness is always commit age — never "the process is alive" or a status message. No commit ≈ no loop.
 - **Halt conditions are written into the kickoff**: all features accepted, OR N iterations without test improvement (stop and write down why), OR a max-iteration cap.
-- **A monitor watches the loop** (a scheduled check): commit cadence, plus answering the mailbox below. Whatever can relaunch a stalled worker must use the commit-age rule itself — a report-only watchdog serves nobody at 3am.
-- **Agent↔agent questions go in a mailbox file** (`MAILBOX.md` at the repo root, append-only, status OPEN → ANSWERED → CLOSED; NEEDS-HUMAN items get surfaced in chat). Direct session-to-session messaging, where available, is fine as the notification — but the file is the record, because messages die with sessions. Agents never relay through the human, and if it was only said in chat, it doesn't exist.
+- **A monitor watches the loop** (a scheduled check): commit cadence, plus answering open questions on the issues. Whatever can relaunch a stalled worker must use the commit-age rule itself — a report-only watchdog serves nobody at 3am.
+- **Questions go on the issue.** The orchestrator, builder and reviewer share one process and need no file to talk. A question for the human or the advisor is a comment on the card's GitHub issue — the board is the record, and a question that was only said in chat doesn't exist. Agents never relay through the human.
 - **Single writer:** the worker alone appends to the build log while running.
 
 ## The build record
