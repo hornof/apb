@@ -15,11 +15,13 @@ The three gates are human approvals. Humans supply the idea, comment at the gate
 | Who | Does | Never does |
 |---|---|---|
 | Humans (director) | Set intent, approve the 3 gates, review & merge every PR, judge taste | — |
-| Claude (main session) | Drafts PRD/TDD, runs the skills, manages the board | merge to main |
-| Claude (builder agent) | Writes tests then code for one issue at a time, opens PRs | merge to main |
-| Claude (reviewer) | Reviews PRs and the *deployed* site — a separate session from the builder | write code |
+| Claude (**orchestrator** — the main Claude Code session) | Drafts PRD/TDD, runs the skills, manages the board, spawns the builder and reviewer | merge to main |
+| Claude (**builder** — a subagent the orchestrator spawns from `agents/builder.md`) | Writes tests then code for one issue at a time, opens PRs | merge to main |
+| Claude (**reviewer** — a subagent the orchestrator spawns from `agents/reviewer.md`, in its own context) | Reviews PRs and the *deployed* site | write code |
 
 On a shared project the project owner approves the gates and merges; they pull in another human by assigning an issue or requesting a PR review — nobody reviews by default.
+
+Names, used the same way everywhere in apb: the **orchestrator** is the main Claude Code session the human talks to; the **builder** and **reviewer** are subagents it starts — separate conversations with their own instructions and no view of each other's work, each returning one summary to the orchestrator; the **navigator** is the Cowork session (next section). “Spawn” means the orchestrator starts one of those subagents.
 
 The core safety rule: the agent that writes code never reviews or merges it.
 
@@ -30,15 +32,15 @@ The roles above typically run on two differently-shaped Claude surfaces, and the
 | Surface | Access | Power | Runs |
 |---|---|---|---|
 | **Navigator** (Claude chat/Cowork) | Broad — files, web, email, calendars | Limited — no repo writes except appending to MAILBOX.md, no deletes | PRD/TDD drafting, research, the reviewer role, deployed-site verification |
-| **Implementer** (Claude Code, opened in the repo) | Narrow — just the repo directories | Full — git, gh, deletes, pushes | Repo setup, the build loop, all git operations |
+| **Orchestrator** (Claude Code, opened in the repo) | Narrow — just the repo directories | Full — git, gh, deletes, pushes | Repo setup, the build loop (spawning builder and reviewer), all git operations |
 
 ### Session settings
 
 - **Check the model at every session start, in both surfaces** — model selectors come up on app defaults, not on what you planned. For loop runs, record the actual model in `LOG.md`'s first line.
-- **Implementer permissions: scoped, not global.** Auto-accept mode *inside* a per-repo allow-list (`.claude/settings.local.json`): no blanket shell access. A loop's blast radius is its own repo. A permission prompt stalling an overnight run is the accepted failure mode — add the missing rule next morning rather than widening permissions in advance.
+- **Orchestrator permissions: scoped, not global.** Auto-accept mode *inside* a per-repo allow-list (`.claude/settings.local.json`): no blanket shell access. A loop's blast radius is its own repo. A permission prompt stalling an overnight run is the accepted failure mode — add the missing rule next morning rather than widening permissions in advance.
 - **Navigator: use the surface with broad access** (local files, a real browser, email/calendar where relevant) — that reach is its job. By policy it stays read-only on the repo host except for appending to MAILBOX.md; no setting should "fix" that.
 
-Humans never type git commands in this process — the implementer session does them. When one surface needs the other to act, it writes a self-contained plain-English paste block (what to do, why, where the context lives) — never a list of shell commands for the human to relay. The role separation is the invariant; how you map roles to surfaces can vary (a solo builder might run everything in Claude Code with the reviewer as a fresh session or the @claude PR bot).
+Humans never type git commands in this process — the orchestrator does them. When one surface needs the other to act, it writes a self-contained plain-English paste block (what to do, why, where the context lives) — never a list of shell commands for the human to relay. The role separation is the invariant; how you map roles to surfaces can vary (a human working alone might run everything in Claude Code, with the reviewer as a fresh session or the @claude PR bot).
 
 ## Unattended builds (the loop)
 

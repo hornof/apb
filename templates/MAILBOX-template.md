@@ -1,6 +1,6 @@
 # Mailbox
 
-Questions between the agents on this project (builder, reviewer, navigator). Append-only; never edit another agent's text.
+Questions between the agents on this project (orchestrator, builder, reviewer, navigator). Append-only; never edit another agent's text.
 
 Each question is one entry. Its status moves OPEN → ANSWERED → CLOSED; the asker closes it. A question only a human can answer is marked NEEDS-HUMAN and raised in chat.
 
