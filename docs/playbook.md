@@ -72,7 +72,7 @@ Every project produces a public how-it-was-built record — for many builders th
 
 1. **Claude Code** — install and first run: [quickstart](https://code.claude.com/docs/en/quickstart). Worth skimming once: [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) (Anthropic's own guide).
 2. **GitHub** — repo, commits, PRs, merges: [Hello World guide](https://docs.github.com/en/get-started/start-your-journey/hello-world). In this process you'll do all of it *by prompting Claude*, not by typing git commands.
-3. **Hosting** — [Cloudflare Pages](https://developers.cloudflare.com/pages/) (free; auto-deploys `main`, gives every PR a preview URL).
+3. **Hosting** — chosen in the TDD and connected right after it is approved; [Cloudflare Pages](https://developers.cloudflare.com/pages/) is the usual pick (free; auto-deploys `main`, gives every PR a preview URL).
 
 ## The steps
 

@@ -1,16 +1,16 @@
 ---
 name: apb-setup
-description: Interactive setup for a new apb project — repo, board, collaborators, optional @claude review bot. Use once per project.
+description: Interactive setup for a new apb project — repo, board, collaborators, permissions, optional @claude review bot. Use once per project. CI and hosting are NOT set up here; they come after the TDD (apb-tdd step 5).
 ---
 This skill belongs in the orchestrator (the main Claude Code session, opened in the project directory) — it needs git and gh. Walk the user through these in order, doing everything you can yourself (create the repo with `gh repo create` when gh is authenticated) and prompting them only for truly manual steps, one at a time:
 
 0. Prerequisites: verify `git` and `gh` are installed and `gh auth status` shows a logged-in account with the `project` scope — fix these first (install, then `gh auth login`; if `gh auth status` lacks the `project` scope, run `gh auth refresh -h github.com -s project` — a one-time human step with a browser login; Claude cannot do it), because every later step that touches GitHub assumes Claude can act there without the human clicking through the website.
-1. Repo: create it with `gh repo create`, then create the board (step 3) before the initial commit, so README.md's board link is filled in and no placeholder is ever committed. Push an initial commit with: templates/CLAUDE-template.md as CLAUDE.md; docs/collaborator-guide.md adapted for this project; templates/README-template.md as README.md with the project name and one-sentence description filled in; templates/LOG-template.md as LOG.md; templates/LESSONS-template.md as LESSONS.md; templates/gitignore-template as .gitignore. No angle-bracket placeholders may remain in any committed file, except inside a code block.
+1. Repo: ask whether it should be public or private (never decide this yourself), then create it with `gh repo create`, then create the board (step 3) before the initial commit, so README.md's board link is filled in and no placeholder is ever committed. Push an initial commit with: templates/CLAUDE-template.md as CLAUDE.md; docs/collaborator-guide.md adapted for this project; templates/README-template.md as README.md with the project name and one-sentence description filled in; templates/LOG-template.md as LOG.md; templates/LESSONS-template.md as LESSONS.md; templates/gitignore-template as .gitignore. No angle-bracket placeholders may remain in any committed file, except inside a code block.
 2. Collaborators: ask for each teammate's GitHub username; invite them.
 3. Projects board: create with columns Todo / In progress / In review / Done; link the repo. Then put the board's URL into README.md's last line.
-4. CI: a workflow that runs the test suite on every PR.
-5. Permissions: create `.claude/settings.local.json` in the repo — auto-accept within a qualified allow-list (build/test/git commands, no blanket shell).
-6. Hosting: connect the repo (e.g. Cloudflare Pages) so main deploys and PRs get preview URLs.
-7. OPTIONAL @claude review bot on the user's subscription: run `/install-github-app` and choose the subscription-token path ([docs](https://code.claude.com/docs/en/github-actions)). Skip unless asked.
+4. Permissions: create `.claude/settings.local.json` in the repo — auto-accept within a qualified allow-list (build/test/git commands, no blanket shell).
+5. OPTIONAL @claude review bot on the user's subscription: run `/install-github-app` and choose the subscription-token path ([docs](https://code.claude.com/docs/en/github-actions)). Skip unless asked.
+
+Do NOT set up CI or hosting here: there is no stack yet, so a CI workflow has nothing to run and a hosting connection has nothing to build. Both happen right after the TDD is approved (apb-tdd, step 5).
 
 Never store tokens in the repo; confirm each step worked before the next.
