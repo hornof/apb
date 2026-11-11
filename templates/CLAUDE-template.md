@@ -12,6 +12,7 @@
 - The Projects board is the single progress tracker; PRs reference their issue.
 - Every incident becomes a rule here the same day.
 - Approved PRD/TDD wording is immutable except by the human's explicit choice.
+- Permissions: sessions run in auto mode (set in each human's `~/.claude/settings.json`; never put `defaultMode` in a repo file). At session start the orchestrator confirms the mode is auto (desktop: `get_session` "self"); if not, it tells the human in one line before anything else. One plain command per shell call: no `$(…)`, loops or `curl | grep` chains. Use WebFetch for web pages and a script file for multi-step logic. Every subagent brief (builder, reviewer, research) repeats this command rule, since a subagent's prompts land on the human too. A permission prompt mid-session is an incident: add the missing rule to `.claude/settings.json` the same day.
 - `LOG.md` is append-only. A question for a human or the advisor goes on the card's issue — nothing important lives only in chat.
 ## Project rules
 (none yet — add one line per rule as incidents happen)
