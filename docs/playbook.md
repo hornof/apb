@@ -50,6 +50,34 @@ The roles above typically run on two differently-shaped Claude surfaces, and the
 
 Humans never type git commands in this process — the orchestrator does them. The advisor never hands the human something to paste into Claude Code: its input goes on the GitHub issue, where the orchestrator reads it. The role separation is the invariant; the advisor is optional, and a human working alone runs everything in Claude Code.
 
+## Gates: how the human reviews
+
+Learned on sketch-gallery's PRD (2026-11-11/12), where the human didn't know where to look or what to do.
+
+- **One review surface: the PR.** Every question, answer and comment for a gate lives on that PR. Material a question depends on is in the doc or linked from the question itself, never on another issue or tab.
+- **One action, with a template.** The handoff gives the human one thing to do, never a choice of review mechanics. Open questions come with Claude's recommended answers, so "ok" is a valid reply.
+- **Exact clicks.** Line comments need GitHub's *source diff* view, not the rich diff. The human can't approve their own PR, so a review is submitted as **Submit review → Comment**. Merging the PR is the approval.
+- **Answers in chat count.** The orchestrator posts them on the PR word for word, so nothing important lives only in chat.
+- **Handoff checklist**, run by the orchestrator before every "your turn": every place the human must go and every click; stale lines in the doc; every unanswered item from the human's last input; the latest version linked (a branch link, not a commit). Then one short message: what to do, one link per thing, nothing else.
+- **Approval is explicit.** "Approved", "merge it". Praise ("looks good") is not approval; when unsure, ask once.
+
+## Keeping the human in the picture
+
+- **Project map.** A single page (`docs/MAP.md`, or a published page linked from it) listing every piece of the project by where it lives (GitHub, Claude pages, the human's computer, outside services, hosting), with what each is for and when it's used, and the current gate at the top. Created at setup; never introduce a new place (page, folder, scheduled task, outside account) without adding it in the same turn.
+- **Project story.** `docs/STORY.md`: one entry per gate, with the date, the PR, the decision and the key links, so someone new can follow what happened.
+- **One question at a time.** Finish every part of the current question before raising the next. Ask in plain chat, not in pop-up buttons, so the human can answer with a sentence.
+- **Show every visual.** Anything visual (mockups, generated images, layouts) goes on a page the human can look at, including the items Claude rejected and why. Claude never makes the final aesthetic call alone.
+- **One link per thing.** Never link a local file or folder the human doesn't need to open. If the app opens extra panes, say which one matters.
+
+## Generated content
+
+When a project needs a lot of placeholder content (images, text), treat it like a small pipeline (sketch-gallery made 161 drawings this way):
+- **A subject list is the source of truth,** and the file name carries any metadata the product needs (for example the date: `YYYY-MM-DD.jpg`), never file timestamps, which git resets.
+- **A review page** shows everything so far, with a set-aside pile and the reason for each rejection, updated after every batch.
+- **A runbook and a log** live next to the content, so any session can continue the work.
+- **When a service rate-limits, schedule it:** a scheduled task that runs the runbook every N minutes, one small batch per run. Under rate limits, image tools may cram several images into one picture; small batches in fresh chats avoid that.
+- **Check processing on a real page:** color profiles and near-white backgrounds can show as gray boxes against a white page. Convert to sRGB and lift near-white to pure white.
+
 ## Unattended builds (the loop)
 
 The build loop can run interactively (one card at a time) or unattended — several features overnight. Unattended runs have their own failure modes, each of these rules paid for:
@@ -77,7 +105,7 @@ Every project produces a public how-it-was-built record — for many builders th
 
 ## The steps
 
-1. **PRD** (what & why) — Claude drafts from your description; features get *checkable acceptance criteria written in advance* ("page loads < 1s", "works on phone"). You comment, iterate, approve → **gate 1**.
+1. **PRD** (what & why) — Claude drafts from your description: goals, user journeys, requirements with *checkable acceptance criteria written in advance* ("page loads < 1s", "works on phone"), clickable mockups, and the look and feel. You comment, iterate, approve → **gate 1**.
 2. **TDD / engineering doc** (how & tested) — architecture, test plan, risks, work broken into PR-sized pieces. Approve → **gate 2**. A gate opens only on explicit sign-off of the named document — never on momentum or silence — and once approved, wording changes only by the human's explicit choice.
 3. **Task board** — the TDD's pieces become **GitHub Issues** on a Projects board (todo / in progress / in review / done). This replaces old burndown lists: humans and Claude both read and write it, and merged PRs close their issues automatically.
 4. **Build loop** — per feature: Claude writes the tests first, then code until green, then opens a small PR. One feature per PR.
