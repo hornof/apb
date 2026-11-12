@@ -18,6 +18,7 @@
 - Every new place (page, folder, scheduled task, outside account) goes into `docs/MAP.md` the same turn. Each gate gets an entry in `docs/STORY.md`.
 - Render-check every markdown doc with `gh api markdown` before handing it off.
 - Never name a third party (anyone not on the repo) in a public repo.
+- Claude acts on GitHub through the human's login, so sign every PR body and comment Claude writes with its role on the last line, e.g. `— Claude (orchestrator)`, `— Claude (builder)`, `— Claude (reviewer)`. Commits already carry a Co-Authored-By line. (Until a separate Claude identity is set up; see hornof/apb#3.)
 - Friction with the apb process itself becomes one issue per problem on hornof/apb, labeled `from-<this repo>`.
 ## Project rules
 (none yet — add one line per rule as incidents happen)
