@@ -1,10 +1,10 @@
-# TDD — <project>   (status: DRAFT | APPROVED <date>)
+# TDD — `<project>`   (status: DRAFT | APPROVED `<date>`)
 <!-- Design with the apb system design guide (docs/system-design-guide.md in the apb plugin): 11 steps, scaled to the project's size. -->
 ## Stack & architecture
-<components, APIs, data/stores, hosting, and why — simplest that meets the PRD>
+`<components, APIs, data/stores, hosting, and why — simplest that meets the PRD>`
 ## Test plan
-<per PRD acceptance criterion: how it's tested>
+`<per PRD acceptance criterion: how it's tested>`
 ## Work pieces
-<numbered, PR-sized, dependency-ordered>
+`<numbered, PR-sized, dependency-ordered>`
 ## Risks
-<what could sink this, and the check that catches it early>
+`<what could sink this, and the check that catches it early>`
