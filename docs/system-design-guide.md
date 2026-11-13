@@ -1,7 +1,5 @@
 # System design guide for the TDD
 
-Distilled from Luke Hornof's system-design interview notes, with the interview-only parts removed, and checked against the sources in section 5 (2026-11-12).
-
 Use this when you write the "Stack & architecture", "Test plan" and "Risks" sections of an apb TDD. It walks you through the design decisions in order. Each step has questions to ask, the usual answer for a small project, and what to write down. Skip any step that does not change a decision, and write one line saying you skipped it and why.
 
 ## 1. When to use this, and how small to go
@@ -108,7 +106,7 @@ Write in the TDD: the entity list with fields and types, the operations with inp
 
 ### Step 6. Where data lives
 
-Name a real store for every piece of data. "Filesystem and dicts" as a default is a known apb failure: the builder writes to a local file or an in-memory dict, tests pass, and production loses everything on the next deploy or cold start.
+Name a real store for every piece of data. Don't default to a local file or in-memory data: tests pass, but many hosts wipe both on every deploy or restart, and the data is gone.
 
 Ask, for each kind of data:
 - Which named store holds it? (Git repo, D1, Postgres, R2/S3, KV, browser localStorage.)
@@ -266,7 +264,7 @@ Check the TDD and the first PRs for these:
 
 ## 5. Going further
 
-For a full treatment of each step (capacity math, component catalog, failure-mode patterns, AI/LLM system patterns, worked domain examples), read the full interview-prep notes, if you have access. Outside sources:
+For more depth on each step:
 
 - donnemartin/system-design-primer on GitHub: component overviews and latency tables.
 - Martin Kleppmann, *Designing Data-Intensive Applications*: storage, replication, consistency.
