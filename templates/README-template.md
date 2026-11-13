@@ -4,6 +4,10 @@
 
 Built with the apb process: https://github.com/hornof/apb
 
+## Using it
+
+Added once there's something to use.
+
 ## Files
 
 | File | What it is | Who reads it |
@@ -14,6 +18,7 @@ Built with the apb process: https://github.com/hornof/apb
 | docs/PRD.md | What it does and for whom (written after the brain dump), with any mockups in docs/mockups/ | collaborator, Claude |
 | docs/TDD.md | How it's built and tested (written after the PRD is approved) | collaborator, Claude |
 | CLAUDE.md | Rules every Claude session follows in this repo | Claude |
+| .claude/settings.json | What Claude is allowed to do here, shared by everyone | Claude |
 | LOG.md | One line per build iteration | anyone |
 | LESSONS.md | What building it taught | anyone |
 
