@@ -269,25 +269,25 @@ For products on the user's machine, the usual equivalents: save results on disk 
 | Secrets | Secret store | Host env vars, GitHub Actions secrets, Doppler | Never skip if there are secrets |
 | Know when it breaks | Logs, error tracking, uptime check | Host logs, Sentry, an uptime pinger | Never fully skip; on a small site, the host's deploy log and one uptime ping are enough |
 
-## 4. Red flags in agent-built designs
+## 4. Red flags in designs Claude writes
 
 Check the TDD and the first PRs for these:
 
-- Data in a local file or an in-memory dict on a host that wipes both on redeploy or cold start.
-- Tests that mock the database, so nothing proves data survives.
-- Components with no PRD reason: Redis, Kafka, Kubernetes, microservices, GraphQL, for a site with 50 visitors.
-- Secrets in the repo, in a committed `.env`, or in front-end code.
-- Works on localhost, breaks on the host: absolute paths, case-sensitive file names, missing environment variables, a different Node or Python version.
-- Trusting the client: validation only in the browser, or prices and roles sent from the client.
-- External calls with no timeout and endless retries.
+- Data kept in a local file, or only in the program's memory, on a host that wipes both on redeploy or when a server function starts fresh.
+- Tests that fake the database, so nothing proves the data is really saved.
+- Parts with no PRD reason: Redis, Kafka, Kubernetes, microservices, GraphQL, for a site with 50 visitors.
+- Secrets in the repo, in a settings file committed to the repo, or in code that ships to users.
+- Works on the developer's machine, breaks elsewhere. Online: absolute paths, case-sensitive file names, missing environment variables, a different Node or Python version. On users' machines: a different operating system, missing permissions, no internet connection.
+- Trusting the client: checks only in the browser or app, or prices and roles sent from the user's side.
+- Outside calls with no timeout and endless retries.
 - Retried writes that double-charge, double-send or duplicate records.
-- Unbounded lists: "return all items" with no pagination.
+- Lists that return everything at once, with no pages.
 - Quality targets with no test, or tests with no PRD check behind them.
 - A stack the operator cannot run, debug or pay for.
 - No rollback plan, and no backup that has ever been restored.
-- Schema changes that rename or drop live fields with no migration.
-- LLM loops with no cap on steps, tokens or time.
-- Dependencies not pinned, so tomorrow's build differs from today's.
+- Changing the shape of stored data (renaming or deleting fields) with no plan to convert existing data.
+- AI model loops with no cap on steps, tokens or time.
+- Outside libraries without fixed versions, so tomorrow's build differs from today's.
 
 ## 5. Going further
 
