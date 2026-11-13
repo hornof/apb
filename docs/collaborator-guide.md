@@ -1,5 +1,7 @@
 # Collaborator guide — building with apb
 
+This guide is for someone invited to join a project that already uses apb. Starting your own project? Install apb and follow its [README](https://github.com/hornof/apb#readme) instead.
+
 You'll build a real project with Claude. Claude writes the plans and the code. You decide what to build, answer its questions, and approve each step. The process is called [apb](https://github.com/hornof/apb/blob/main/docs/playbook.md); you don't need to read about it now. Go through the steps below in order.
 
 Claude proposes every change as a pull request (PR) on GitHub. You approve a PR by merging it. At three points, called **gates**, Claude stops and waits for your approval before going on:
@@ -30,8 +32,6 @@ Claude proposes every change as a pull request (PR) on GitHub. You approve a PR 
    - When the PRD says what you mean, tell Claude "approved", then click **Merge**. That's gate 1. Nothing gets built before it.
    - Lost track of what's where? `docs/MAP.md` lists every piece of the project.
 
-5. **TDD.** Tell Claude: "PRD approved; draft the TDD." Claude writes `docs/TDD.md`: the parts of the system, where data is stored, and how each requirement is tested. It opens a PR. Review it the same way as the PRD. Saying "approved" and merging is gate 2. Then Claude sets up two things the TDD chose: where the product runs or is published, and automatic tests that run on every PR.
+5. **TDD.** Tell Claude: "PRD approved; draft the TDD." Claude writes `docs/TDD.md`: the parts of the system, where data is stored, and how each requirement is tested. It opens a PR. Review it the same way as the PRD. Saying "approved" and merging is gate 2. Then Claude sets up two things the TDD chose: where the product runs or is published, and automatic tests that run on every PR. Claude proves the setup works with one small PR for you to merge.
 
-6. **Practice run.** Before real work, take one small change all the way from idea to live, only by asking Claude: make the change, open a PR, have a reviewer who didn't write it approve, merge it, and see it go live (deployed or published). It takes about 2 hours.
-
-7. **Build.** The repo's project board lists the work as items, one per feature. Tell Claude "build the next item." Claude takes the top item, writes the tests first, then the code, and opens a PR. A separate Claude reviewer that didn't write the code checks it. You merge it (gate 3), then check the live product.
+6. **Build.** The repo's project board lists the work as items, one per feature. Tell Claude "build the next item." Claude takes the top item, writes the tests first, then the code, and opens a PR. A separate Claude reviewer that didn't write the code checks it. You merge it (gate 3), then check the live product.
