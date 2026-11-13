@@ -8,7 +8,7 @@ The workflow has been in use since July 2026 (it built [hornof.org](https://horn
 
 ```
 Idea → PRD → TDD → Task board → Build loop → PR → Review → Merge → Deploy → Verify
-        ▲gate1  ▲gate2                              ▲gate3              (live site)
+        ▲gate1  ▲gate2                              ▲gate3              (live product)
 ```
 Humans supply the idea, comment at the gates, review and merge PRs. Claude does the rest: drafting the docs, writing tests and code, reviewing, verifying the deployed result. Full detail: `docs/playbook.md`.
 ## What's in the box
@@ -37,7 +37,7 @@ claude plugin install apb@apb
 
 Or inside Claude Code (v2.1.275 or later): `/plugin install apb --marketplace hornof/apb`, then pick a scope. Older versions: `/plugin marketplace add hornof/apb` then `/plugin install apb@apb`. Both builder and reviewer run on a Claude subscription — the optional @claude PR bot does too, via an OAuth token ([docs](https://code.claude.com/docs/en/github-actions)).
 
-## Core rules (each one paid for)
+## Core rules
 
 Tests before code · one feature per flat PR · only humans merge · the reviewer is a separate session, read-only on what it audits · verify the **deployed** artifact, not just CI · every incident becomes a written rule in CLAUDE.md the same day. For web projects the default verifiers are Playwright (browser-behavior tests) and Lighthouse budgets (performance/accessibility scores); each TDD names its own.
 
