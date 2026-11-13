@@ -62,7 +62,9 @@ Handy anchors:
 
 ### Step 3. Pick the simplest stack that works
 
-Start at the top of this ladder and stop at the first rung that meets every PRD check:
+Start at the top of the ladder that fits the product, and stop at the first rung that meets every PRD check.
+
+For products that run online (websites, web apps, APIs):
 
 1. Static files on static hosting (Cloudflare Pages, GitHub Pages, Netlify). Content changes by commit.
 2. Static site plus a few serverless functions (Cloudflare Workers or Pages Functions, Vercel or Netlify Functions) for forms or small APIs.
@@ -70,10 +72,17 @@ Start at the top of this ladder and stop at the first rung that meets every PRD 
 4. One app server plus one managed Postgres (Fly.io, Render, Railway).
 5. Several services, queues, caches. Only with numbers from step 2 that demand it.
 
+For products that run on the user's own machine (command-line tools, libraries, desktop and phone apps):
+
+1. One program using only the language's built-in libraries.
+2. Plus a few well-known libraries.
+3. Plus local storage: files, or a small built-in database such as SQLite.
+4. Plus an online service, only if users must share data.
+
 Ask:
 - Which rung meets all the PRD checks?
 - Can the operator from step 1 deploy, debug and pay for it?
-- Does the host give preview URLs per PR? apb's review step depends on them.
+- Can the reviewer try each PR before it's merged: a preview address for a site, a test build for an app, an installable package for a tool? apb's review step depends on it.
 - Is there a vendor or language the human already uses? Prefer it.
 
 For a small project, usually: rung 1 or 2. One monolith, no microservices.
@@ -88,9 +97,11 @@ Ask:
 - Trace one write and one read from the user's click to the stored data and back. Can you say each in one sentence?
 - Where does the trust boundary sit? Everything on the client side of it is untrusted input.
 
-For a small project, usually: `browser → Cloudflare Pages (static HTML, images)` and nothing else. One line.
+For a small project, usually one line. A website: `browser → static host (HTML, images)`. A command-line tool: `terminal → tool → files on disk`.
 
-Write in the TDD: a text or Mermaid diagram with labeled arrows, plus the one-sentence read path and write path.
+A Claude Whiteboard page is a good place to work out the sketch with the human before it goes in the TDD.
+
+Write in the TDD: a text diagram, or a Mermaid diagram (a text format GitHub draws as a picture), with labeled arrows, plus the one-sentence read path and write path.
 
 ### Step 5. Data model and APIs
 
