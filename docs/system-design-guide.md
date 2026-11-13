@@ -24,7 +24,7 @@ Ask:
 - What are the two to five things a user does? (Functional.)
 - Which PRD checks are about speed, uptime, data loss, privacy or cost? Those become quality targets in step 7.
 - What is out of scope? Copy it from the PRD so nobody designs for it.
-- Who operates this after launch, and what can they run? A PM with a Cloudflare account and a senior SRE need different stacks.
+- Who operates this after launch, and what can they run? Someone who only knows a hosting dashboard and an experienced operations engineer need different stacks.
 
 For a small project, usually: copy the PRD's user actions and out-of-scope list. Note that the operator is the project owner, working from a laptop.
 
@@ -41,9 +41,11 @@ Ask:
 - Biggest single file or request?
 - Does any number hit a host limit (file count, file size, request time, free-tier quota)?
 
-For a small project, usually: "about 50 visitors a day, 200 images at about 500 KB each, owner adds a few a week. Well inside the free tier." Done.
+If the product runs on the user's own machine (a command-line tool, a library, a desktop app), skip the traffic numbers; only the size of the input and the time a run takes matter.
 
-Write in the TDD: three or four numbers and the decision each one drives ("200 images, about 100 MB in total: fits in the repo, no object storage needed").
+For a small project, usually, for example a club sign-up form: "about 50 visitors a day, 300 sign-ups a year at about 1 KB each. Well inside the free tier." Done.
+
+Write in the TDD: three or four numbers and the decision each one drives ("300 records, under 1 MB: one small database table, no file storage").
 
 Handy anchors:
 
