@@ -109,11 +109,11 @@ Ask:
 - What are the entities (about five is plenty) and how do they relate?
 - What are the two or three reads the product does most? Design the data for those.
 - For each operation: name, input, output, error cases. Most small systems have two to four operations.
-- Can a write be retried safely? If a retry would double something (a payment, an email, a record), give it an idempotency key or make it an upsert.
-- Does any list grow without bound? Then it needs pagination.
+- Can a write be retried safely? If a retry would double something (a payment, an email, a record), give each request a unique ID so a repeat is ignored (an idempotency key), or make it an upsert (insert or update in one step).
+- Does any list grow without limit? Then return it in pages.
 - How will the schema change later? Add fields; do not rename or delete live ones.
 
-For a small project, usually: a manifest file (for example `drawings.json`) with one entry per item, built from the source files at build time. No runtime API. The "API" is the owner's command-line script: arguments, checks, output.
+For a small project, usually: a single data file or one small table, and no online API at all. For a command-line tool or library, the "API" is its commands or functions: arguments, checks, output.
 
 Write in the TDD: the entity list with fields and types, the operations with inputs and outputs, and where the schema is validated.
 
@@ -124,7 +124,8 @@ Name a real store for every piece of data. Don't default to a local file or in-m
 Ask, for each kind of data:
 - Which named store holds it? (Git repo, D1, Postgres, R2/S3, KV, browser localStorage.)
 - Who writes it, who reads it?
-- What happens to it on redeploy? On a function cold start?
+- What happens to it on redeploy? When a server function starts fresh?
+- For data on the user's machine: what happens when the app is updated or uninstalled, or the phone is replaced?
 - How is it backed up, and has a restore been tried once?
 - How much loss is acceptable (RPO) and how long can restore take (RTO)?
 - Is any of it personal data? Where is it, and how is it deleted on request?
@@ -139,6 +140,7 @@ Defaults:
 | Simple lookups, flags, counters | KV store (Cloudflare KV, Upstash Redis) |
 | Sessions, auth | The auth provider's own store |
 | Per-viewer preferences | localStorage, only for things that can be lost |
+| Data an app keeps on the user's machine | A file or SQLite in the system's app-data folder |
 
 For a small project, usually: "all data lives in the Git repo; GitHub is the backup; RPO is the last push." One line.
 
