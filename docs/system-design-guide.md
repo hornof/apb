@@ -10,9 +10,9 @@ Scale it to the project:
 
 | Project size | Example | How to use this guide |
 |---|---|---|
-| Small | Static gallery on Cloudflare Pages, a personal tool, a one-page form | One line per step. Most answers are "the host handles it" or "not needed, because ...". Ten minutes. |
-| Medium | Logged-in app with a database, a few hundred users, one external API | Two to five lines per step. Name every store and every external service. |
-| Large | Multi-tenant, money, health data, many writers, real-time | Full answers, plus a reviewer read of the design before gate 2. Get a person with production experience to look at it. |
+| Small | A personal website, a command-line tool, a browser extension | One line per step. Most answers are "the host handles it" or "not needed, because ...". |
+| Medium | A logged-in web or phone app with a database, a few hundred users, one outside service | Two to five lines per step. Name every store and every external service. |
+| Large | Many users writing at once, money, health data, real-time updates, several customers sharing one system | Full answers, plus a reviewer read of the design before gate 2. Get a person with production experience to look at it. |
 
 Rule for every size: each component in the design must trace to a PRD requirement or a number in step 2. If you cannot say which, remove it.
 
