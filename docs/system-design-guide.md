@@ -152,12 +152,12 @@ Turn each relevant non-functional requirement into a number a test or a check ca
 
 | Target | Question | Small-project answer | How it gets checked |
 |---|---|---|---|
-| Latency | How fast must the main page or action be, at the 95th or 99th percentile? Use percentiles; averages hide the slow tail. | "Gallery page interactive in under 2 s on 4G" | Lighthouse or a timed Playwright run against the preview URL |
+| Latency | How fast must the main screen or action be, for 95 (or 99) out of 100 users? Averages hide the slow ones. | "Main screen usable in under 2 s on a phone connection" | Online: Lighthouse (a page-speed checker) or a timed Playwright run (a tool that drives a browser in tests) against the preview address. On the user's machine: time a run on a typical input in a test. |
 | Throughput | Peak requests per second from step 2? | "Host handles it" | Not tested; note the host's limit |
-| Availability | What uptime does the PRD need? Never promise more than the host's own figure. | "Whatever Cloudflare gives" | Not tested |
+| Availability | What uptime does the PRD need? Never promise more than the host's own figure. | "Whatever the host gives" | Not tested |
 | Durability | What data can be lost, and how much? | "Repo is the source of truth" | One restore drill, written up once |
-| Consistency | After a write, must every reader see it at once, or is a delay fine? Must users see their own writes immediately? | "New drawings appear after the next deploy" | Post-deploy check of the live site |
-| Security | Who may do what? See step 9. | "Public read; only the owner can publish" | Test that the publish path needs the owner's credentials |
+| Consistency | After a write, must every reader see it at once, or is a delay fine? Must users see their own writes immediately? | "New content appears after the next release" | Check of the live product after each release |
+| Security | Who may do what? See step 9. | "Anyone can read; only the owner can change content" | Test that changing content needs the owner's credentials |
 | Cost | Monthly ceiling? See step 10. | "$0, free tier" | Host usage page, checked after launch |
 | Operability | Can the operator see errors and roll back? | "Host's deploy log; roll back by reverting the commit" | One rollback tried before launch |
 
