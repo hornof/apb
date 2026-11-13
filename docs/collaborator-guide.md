@@ -1,5 +1,7 @@
 # Collaborator guide — building with apb
 
+This guide is for someone invited to join a project that already uses apb. Starting your own project? Install apb and follow its [README](https://github.com/hornof/apb#readme) instead.
+
 You'll build a real project with Claude. Claude writes the plans and the code. You decide what to build, answer its questions, and approve each step. The process is called [apb](https://github.com/hornof/apb/blob/main/docs/playbook.md); you don't need to read about it now. Go through the steps below in order.
 
 Claude proposes every change as a pull request (PR) on GitHub. You approve a PR by merging it. At three points, called **gates**, Claude stops and waits for your approval before going on:
