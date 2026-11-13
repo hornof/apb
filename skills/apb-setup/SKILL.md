@@ -9,11 +9,10 @@ This skill belongs in the orchestrator (the main Claude Code session, opened in 
 1b. Brain-dump issue: open an issue called "Brain dump" that lists these questions for the human to answer:
    - What should it do?
    - Who is it for?
-   - Is this a trial run for someone else? If so, who builds the real one, and where?
-   - What similar sites or apps do you like? Include links.
+   - What similar products do you like? Include links.
    - What's a must-have, and what's a nice-to-have?
    - Public or private?
-   - What web address should it have?
+   - Where will people use it: a website, a phone app, a command-line tool, something else? If it's online, what address?
    - Any deadline?
 
    Link the issue from docs/MAP.md and docs/STORY.md.
