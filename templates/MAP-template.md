@@ -1,26 +1,31 @@
-# <project>: project map
+# `<project>`: project map
 
-Every piece of this project, where it lives, and when it's used. Claude updates this whenever a new piece appears.
+Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists.
 
-**Where we are:** <gate or step, e.g. "Gate 1: PRD in review (PR #4)">
-Stages: brain dump → PRD (gate 1) → TDD (gate 2) → board → build → live (gate 3)
+**Now:** `<current stage, for example "PRD in review">`
 
-## GitHub (the official record)
-| Piece | What it is | When |
+**Stages:** brain dump → PRD (gate 1) → TDD (gate 2) → board → build → review and merge (gate 3) → check the live site
+
+## GitHub
+| Piece | What it is | When it's used |
 |---|---|---|
-| [repo](<url>) | The code, docs and content | Every stage |
-| [board](<board URL>) | Progress: one card per piece of work | From the board step on |
-| [brain dump, issue #N](<url>) | The original description | Start |
+| Repo: `<repo link>` | The code, docs and content | Every stage |
+| Board: `<board link>` | Progress, one card per piece of work | From the board stage on |
+| Brain dump: `<issue link>` | The original description of the project | Start |
 
-## Claude pages (private to <owner> unless shared)
-| Piece | What it is | When |
-|---|---|---|
+## Claude pages
+Private to `<owner>` unless shared.
 
-## <owner>'s computer
-| Piece | What it is | When |
+| Piece | What it is | When it's used |
 |---|---|---|
-| `<path to the local clone>` | Local copy of the repo | Every stage |
+| `<page name and link>` | `<for example: clickable mockups of the main screens>` | `<for example: PRD review>` |
+
+## `<owner>`'s computer
+| Piece | What it is | When it's used |
+|---|---|---|
+| `<path to the local copy of the repo>` | Local copy of the repo | Every stage |
 
 ## Outside services and hosting
-| Piece | What it is | When |
+| Piece | What it is | When it's used |
 |---|---|---|
+| `<service name and link>` | `<for example: hosting for the live site>` | `<for example: from the first deploy on>` |
