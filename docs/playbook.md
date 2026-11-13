@@ -5,7 +5,7 @@ How a small team of humans and Claude builds software with apb. This file explai
 ## The steps
 
 ```
-Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Check the live site
+Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Check the live product
         gate 1  gate 2                       gate 3
 ```
 
@@ -14,7 +14,7 @@ Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Che
 3. **Board.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues.
 4. **Build.** For each piece: Claude writes the tests first, then the code until the tests pass, then opens one small PR.
 5. **Review and merge.** A second Claude reviews the PR. The human reads the review, checks the PR's preview site, and merges: **gate 3**. Tests must pass first.
-6. **Check the live site** after every merge: content, layout, links. Passing tests don't prove the site works.
+6. **Check the live product** after every merge: for example, the site's content, layout and links, or that the package installs and runs. Passing tests don't prove the product works.
 7. **Turn mistakes into rules.** When something goes wrong, add one line to the project's `CLAUDE.md` the same day, so every later session follows it.
 
 A gate passes only when the human explicitly approves that document. After approval, its wording changes only if the human decides to change it.
@@ -26,7 +26,7 @@ A gate passes only when the human explicitly approves that document. After appro
 | **The human** | Sets the goal, approves the three gates, merges every PR, judges how things look | — |
 | **Orchestrator**: the main Claude Code session, the one the human talks to | Writes the PRD and TDD, keeps the board, starts the builder and reviewer | Merges |
 | **Builder**: a separate Claude the orchestrator starts, from `agents/builder.md` | Writes tests, then code, for one issue; opens the PR | Merges |
-| **Reviewer**: a separate Claude the orchestrator starts, from `agents/reviewer.md` | Reviews the PR and the live site | Writes code |
+| **Reviewer**: a separate Claude the orchestrator starts, from `agents/reviewer.md` | Reviews the PR and the live product | Writes code |
 | **Advisor** (optional): Claude in Cowork, outside the repo | Talks through the idea, does research, gives a second opinion; posts on GitHub issues | Writes to the repo |
 
 The builder and reviewer each start fresh, with their own instructions, and can't see each other's work. The main safety rule: whoever writes the code never reviews or merges it.

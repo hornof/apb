@@ -8,7 +8,7 @@ The workflow has been in use since July 2026 (it built [hornof.org](https://horn
 
 ```
 Idea → PRD → TDD → Task board → Build loop → PR → Review → Merge → Deploy → Verify
-        ▲gate1  ▲gate2                              ▲gate3              (live site)
+        ▲gate1  ▲gate2                              ▲gate3              (live product)
 ```
 Humans supply the idea, comment at the gates, review and merge PRs. Claude does the rest: drafting the docs, writing tests and code, reviewing, verifying the deployed result. Full detail: `docs/playbook.md`.
 ## What's in the box

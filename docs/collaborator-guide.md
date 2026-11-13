@@ -18,4 +18,4 @@ You'll build a real project. AI agents do most of the design and coding; you giv
 
 6. **Session 0.** By prompting only: make a small change, open a PR, have a reviewer who didn't write it approve, merge it, see it deploy. ~2 hours; you'll have touched the whole pipeline.
 
-7. **Build.** Tell Claude "build the next card." It takes the top card from the project board, writes tests first, then code, and opens a PR. A reviewer who didn't write it approves; you merge; check the live site.
+7. **Build.** Tell Claude "build the next card." It takes the top card from the project board, writes tests first, then code, and opens a PR. A reviewer who didn't write it approves; you merge; check the live product.
