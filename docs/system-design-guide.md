@@ -212,14 +212,22 @@ Write in the TDD: the monthly estimate, the item that grows fastest, and where t
 
 The TDD's test plan maps 1:1 to the PRD's checks. Design so each part can be tested on its own.
 
-Ask:
-- For each PRD check: which test proves it, at which level (unit, integration, end-to-end against the preview URL, post-deploy against the live site)?
-- Can the store be swapped for a local copy of the same engine in tests (SQLite for D1, a Postgres container, Miniflare for Workers)? Mocking the store means persistence is never tested.
-- Where are the seams for external services, so tests can stub them and one contract test hits the real thing?
-- Which invariants hold for any input? ("Every image in the manifest exists on disk", "adding then removing an item leaves the manifest unchanged".) Those become property-based tests.
-- What does the post-merge check on the live site look at?
+Kinds of test, from smallest to biggest:
+- **Unit test:** checks one function on its own.
+- **Integration test:** checks parts working together, with a real database.
+- **End-to-end test:** uses the whole product the way a person would, for example by driving a browser or running the tool from the terminal.
+- **Smoke test:** a quick check, after each release, that the basics of the live product work.
 
-For a small project, usually: unit tests for the add script, a Playwright test of the gallery against the PR's preview URL, and a post-deploy smoke test of the live URL.
+Ask:
+- For each PRD check: which test proves it, at which level, and where does it run (on the PR's preview build, or on the live product)?
+- Can tests use a local copy of the real database (SQLite, a Postgres container) instead of a fake? With a fake, nothing proves the data is really saved.
+- Where does each outside service plug in? Tests can swap in a fake stand-in there, plus one test that calls the real service to make sure it still behaves as expected.
+- Which rules hold for any input? ("Every item the index lists actually exists", "adding then removing an item leaves the data unchanged".) Each becomes a property-based test: a test tool tries many random inputs against the rule.
+- Is each action tested in both directions? Add then remove, undo then redo, forward then back.
+- Would the tests catch a bug? Mutation testing plants small bugs in the code on purpose and checks that some test fails each time.
+- What does the smoke test of the live product look at?
+
+For a small project, usually: unit tests for the core logic, one end-to-end test of the main thing a user does, and a smoke test of the live product after each release.
 
 Write in the TDD: the test plan table, PRD check → test → level → where it runs.
 
