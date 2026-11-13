@@ -161,7 +161,7 @@ Turn each relevant non-functional requirement into a number a test or a check ca
 | Cost | Monthly ceiling? See step 10. | "$0, free tier" | Host usage page, checked after launch |
 | Operability | Can the operator see errors and roll back? | "Host's deploy log; roll back by reverting the commit" | One rollback tried before launch |
 
-Two cautions from the Google SRE book: do not set a target just because the system meets it today, and start loose and tighten later. Keep the list short.
+Two cautions from Google's *Site Reliability Engineering* book: do not set a target just because the system meets it today, and start loose and tighten later. Keep the list short.
 
 Write in the TDD: the filled table, rows the PRD does not need marked "n/a".
 
@@ -295,5 +295,5 @@ For more depth on each step:
 
 - donnemartin/system-design-primer on GitHub: component overviews and latency tables.
 - Martin Kleppmann, *Designing Data-Intensive Applications*: storage, replication, consistency.
-- Google SRE book, chapter "Service Level Objectives": how to set and measure targets.
+- *Site Reliability Engineering* (Google), chapter "Service Level Objectives": how to set and measure targets.
 - AWS Well-Architected Framework: six pillars (operational excellence, security, reliability, performance efficiency, cost optimization, sustainability) as a checklist for step 7.
