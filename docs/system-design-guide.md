@@ -236,14 +236,16 @@ Write in the TDD: the test plan table, PRD check → test → level → where it
 Rules of thumb, adapted from Dinesh Varyani's widely reposted "Golden Rules" list for system design interviews:
 
 - Read-heavy? Add a cache.
-- Need low latency for users far away? Add a CDN (and a cache).
+- Slow responses for users far away? Add a CDN: copies of your files on servers around the world.
 - Write-heavy or slow work? Put a queue in front and process in the background.
-- Need transactions (ACID)? Use a relational database.
+- Changes that must all happen or none at all (transactions)? Use a relational database.
 - Images, video, files? Use object storage.
 - Searching lots of text? Use a search index.
-- Single point of failure? Add redundancy for that component.
+- One part whose failure takes everything down? Add a second copy that takes over.
 
 Each rule needs a measured or estimated reason from step 2. On a small project, the host already gives you most of them.
+
+For products on the user's machine, the usual equivalents: save results on disk instead of recomputing them; do slow work in the background so the app stays responsive; use SQLite for transactions and for text search.
 
 | Need | Tool | Examples | Skip it when |
 |---|---|---|---|
@@ -251,7 +253,7 @@ Each rule needs a measured or estimated reason from step 2. On a small project, 
 | Host a site with no server | Static hosting | Cloudflare Pages, GitHub Pages, Netlify | You need per-request logic or user data |
 | A little server logic | Serverless functions | Cloudflare Workers, Vercel/Netlify Functions, AWS Lambda | You need long-running work, local state, or a persistent connection |
 | Structured records, transactions | Relational database | Postgres (Supabase, Neon), SQLite (D1, Turso) | The data is a handful of files the owner edits by hand |
-| Lookups by ID, flags, counters | Key-value store | Cloudflare KV, Upstash Redis, DynamoDB | You need queries across fields or strong consistency (Cloudflare KV is eventually consistent) |
+| Lookups by ID, flags, counters | Key-value store | Cloudflare KV, Upstash Redis, DynamoDB | You need queries across fields, or every reader must see a change at once (in Cloudflare KV, a change can take a while to show everywhere) |
 | Big files, uploads | Object storage | R2, S3, GCS | A few small files that fit in the repo |
 | Faster reads of the same data | Cache | HTTP cache headers, CDN cache, Redis | Reads are already fast, or stale data would be wrong. Every cache needs an invalidation rule. |
 | Slow queries | Database index | `CREATE INDEX` on the filtered or sorted column | The table is small; every index slows writes |
@@ -259,10 +261,10 @@ Each rule needs a measured or estimated reason from step 2. On a small project, 
 | Scheduled work | Cron / scheduled job | Cloudflare Cron Triggers, GitHub Actions schedule | Nothing needs to run on a timer |
 | Full-text or faceted search | Search index | Postgres full-text, SQLite FTS5, Meilisearch, Typesense, OpenSearch | Fewer than a few thousand items: filter in the browser |
 | Spread load over servers | Load balancer | Built into every managed host | You have one server or use serverless |
-| Stop abuse of an endpoint | Rate limiter | Cloudflare rate limiting rules, a token bucket in KV/Redis | No public write endpoints |
+| Stop abuse of an endpoint | Rate limiter | Cloudflare rate limiting rules, a counter in Redis | No public write endpoints |
 | More read capacity on one database | Read replicas | Managed Postgres replicas | One database is not yet busy. Replicas lag, so reads can be stale. |
-| Data too big for one database | Sharding / partitioning | By tenant or user ID | Almost always on apb projects. Revisit at hundreds of GB or thousands of writes per second. |
-| Server pushes updates to the browser | WebSocket / SSE | Durable Objects, Supabase Realtime, Pusher | Polling every few seconds is good enough |
+| Data too big for one database | Split the data across databases (sharding) | By tenant or user ID | Almost always on apb projects. Revisit at hundreds of GB or thousands of writes per second. |
+| Server pushes updates to the browser | A live connection (WebSocket or SSE) | Durable Objects, Supabase Realtime, Pusher | Polling every few seconds is good enough |
 | Login | Auth provider | Cloudflare Access, Clerk, Supabase Auth, Auth0 | No logins (public read-only site) |
 | Secrets | Secret store | Host env vars, GitHub Actions secrets, Doppler | Never skip if there are secrets |
 | Know when it breaks | Logs, error tracking, uptime check | Host logs, Sentry, an uptime pinger | Never fully skip; on a small site, the host's deploy log and one uptime ping are enough |
