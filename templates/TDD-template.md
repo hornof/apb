@@ -1,4 +1,5 @@
 # TDD — `<project>`   (status: DRAFT | APPROVED `<date>`)
+<!-- Design with the apb system design guide (docs/system-design-guide.md in the apb plugin): 11 steps, scaled to the project's size. -->
 ## Stack & architecture
 `<components, APIs, data/stores, hosting, and why — simplest that meets the PRD>`
 ## Test plan
