@@ -64,21 +64,35 @@ The human never types git commands; the orchestrator does. The advisor never giv
 
 ## Helping the human keep track
 
-- **Project map** (`docs/MAP.md`): every piece of the project, where it lives (GitHub, Claude pages, the human's computer, outside services), what it's for and when it's used. The current stage is at the top. Whenever Claude adds a new piece (a page, a folder, a scheduled task, an outside account), it updates the map at the same time.
+- **Project map** (`docs/MAP.md`): every piece of the project, where it lives (GitHub, Claude pages, local files, outside services), what it's for and when it's used. The current stage is at the top. Whenever Claude adds a new piece (a page, a folder, a scheduled task, an outside account), it updates the map at the same time.
 - **Project story** (`docs/STORY.md`): one entry per stage, with the date, the PR and what was decided, so someone new can see what happened.
 - **One question at a time.** Settle every part of the current question before asking the next. Ask in the chat, not with pop-up buttons, so the human can answer in their own words.
 - **Plain English.** No made-up terms, no unexplained jargon, one instruction per sentence.
 - **Show everything visual.** Mockups, generated images and layouts go on a page the human can see, including the ones Claude rejected and why. The human makes the final call on how things look.
 - **One link per thing.** Don't link files or folders the human doesn't need to open.
 
-## Making lots of generated content
+## Work that has to be spread out over time
 
-When a project needs many generated items, such as placeholder images or sample text:
-- **Keep a list of every item to make.** That list is the record of what exists and what's next.
+Some work can't be done in one sitting. Claude does it in small pieces on a schedule instead.
+
+When that happens:
+- **A service limits how much you can do in a given time.** For example, making lots of generated content, such as placeholder images. ChatGPT's image tool made a limited number of images in a row, then refused until a reset time it named, often an hour or more later. Near the limit it also got worse, putting several images into one picture. A batch of up to four images every 20 minutes stayed under the limit.
+- **Waiting on something outside the project.** For example, an app store review, a new domain name starting to work, or a slow job at another service. A task checks every so often and carries on when it's ready.
+- **Recurring checks.** For example, a weekly check for broken links on the live product, or for outdated libraries.
+- **A long job that outlasts one session.** For example, processing thousands of files in chunks, or downloading from a site that allows only so many requests a minute.
+
+How to set it up:
+- **Use a scheduled task.** The Claude desktop app has a Scheduled tasks page. Tasks that run on your computer run only while it's awake and online.
+- **Write down the steps (a runbook) and keep a log.** Every run starts fresh with no memory of the last one. The task's instructions point to the runbook, and each run adds a line to the log.
+- **Keep a list of every item to do.** That list is the record of what's done and what's next.
+- **Do one small batch per run, and check what already exists first.** Then a run that happens twice does no harm.
+- **On a limit or an error, stop at once.** Log it, and leave the work for the next run.
+- **Give the task a stop condition.** Each run first checks whether everything is finished. If it is, the run pauses the task itself (a scheduled task can do that) and notifies the human. Logging "done" isn't enough: nobody reads the log, and the task keeps running.
+- **Add a backup stop.** If several runs in a row find nothing to do, pause and notify anyway, in case the finish check is wrong.
+
+For generated content, also:
 - **Put information the product needs in the file name,** for example the date: `2025-10-07.jpg`. Don't rely on file dates; git changes them.
 - **Keep a review page** that shows everything made so far, plus the rejected items and why, updated after each batch.
-- **Write down the steps** (a runbook) and keep a log, so any Claude session can pick up the work.
-- **If a service limits how much you can make, schedule it.** A scheduled task makes a small batch every 20 minutes or so. Under a limit, image tools may squeeze several images into one picture; small batches avoid that.
 - **Check images on a real page.** Color profiles and near-white backgrounds can show as a gray box on a white page. Convert to sRGB and turn near-white into pure white.
 
 ## Unattended builds
