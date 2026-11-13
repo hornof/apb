@@ -168,14 +168,15 @@ Write in the TDD: the filled table, rows the PRD does not need marked "n/a".
 ### Step 8. Failure modes: what breaks first
 
 Ask:
-- Which external dependency fails most often (third-party API, LLM provider, email service)? What does the user see when it is down or slow? Every external call needs a timeout.
+- Which external dependency fails most often (an outside API, an AI model provider, an email service)? What does the user see when it is down or slow? Every external call needs a timeout.
 - Which limit do you hit first as usage grows (free-tier quota, file count, database size, rate limit)?
 - What happens with bad input: an empty field, a huge file, a duplicate name, a wrong file type?
 - What happens if a background job runs twice, or not at all?
 - If a deploy is broken, how do you roll back, and how long does it take?
-- If retries pile up on a sick service, what stops them? (Backoff with jitter and a retry cap.)
+- If you publish a package or an app, a broken release can't just be reverted. Can you publish a fixed version quickly? App stores can take days to review one.
+- If retries pile up on a sick service, what stops them? (Wait longer after each retry, add a little randomness so clients don't all retry at once, and stop after a few tries.)
 
-For a small project, usually: "the host is down: nothing to do. A bad image file breaks the build: the add script validates files first. A broken deploy: revert the commit."
+For a small project, usually: "the host is down: nothing to do. Bad input breaks the build or crashes the tool: check input first and show a clear error. A broken deploy: revert the commit."
 
 Write in the TDD, in "Risks": the top three failures, the effect on users, the mitigation, and the check that catches each one early.
 
@@ -184,13 +185,13 @@ Write in the TDD, in "Risks": the top three failures, the effect on users, the m
 Ask:
 - Who are the users and roles? What can each one do? (Authentication: who you are. Authorization: what you may do.)
 - Use a hosted auth provider (Cloudflare Access, Clerk, Supabase Auth, Auth0) instead of building login.
-- Where do secrets live? In the host's secret store or environment variables, never in the repo, never in the client bundle. Which secrets exist, and who can rotate them?
+- Where do secrets live? In the host's secret store or environment variables, never in the repo, never in code that ships to users (web pages, apps, packages): anyone can dig it out. Which secrets exist, and who can replace them if they leak?
 - What input crosses the trust boundary? Validate it on the server side.
 - Can one user ever see another user's data? If so, test that they cannot.
 - Is there personal data? What is the minimum you need to keep?
-- If an LLM reads user content, treat that content as untrusted. It must not be able to trigger tools or reach secrets.
+- If an AI model reads user content, treat that content as untrusted. It must not be able to trigger tools or reach secrets.
 
-For a small project, usually: "no logins, no user data, no secrets. The host deploys straight from GitHub, so there's no deploy token to store."
+For a small project, usually: "no logins, no user data, no secrets. The host deploys straight from GitHub, so there's no deploy token to store." A published package's upload token lives in GitHub's secret store.
 
 Write in the TDD: roles and permissions, the list of secrets and where each is stored, and the security tests in the test plan.
 
@@ -198,9 +199,10 @@ Write in the TDD: roles and permissions, the list of secrets and where each is s
 
 Ask:
 - What does it cost per month at the step-2 numbers, and at 10 times those numbers?
-- Which item scales with usage (bandwidth, function calls, LLM tokens, database rows)?
+- Which item scales with usage (bandwidth, function calls, AI model usage, database rows)?
 - Is there a hard cap or a billing alert? Set one before launch.
-- For LLM calls: is there a per-run cap on steps, tokens and time?
+- For AI model calls: is there a per-run cap on steps, tokens and time?
+- For products on the user's machine: app store fees (Apple charges yearly, Google once) and code-signing certificates.
 
 For a small project, usually: "$0 on the free tier; the domain costs about $10 a year."
 
