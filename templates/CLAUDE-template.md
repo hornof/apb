@@ -14,11 +14,11 @@
 - Approved PRD/TDD wording is immutable except by the human's explicit choice.
 - Permissions: sessions run in auto mode (set in each human's `~/.claude/settings.json`; never put `defaultMode` in a repo file). At session start the orchestrator confirms the mode is auto (desktop: `get_session` "self"); if not, it tells the human in one line before anything else. One plain command per shell call: no `$(…)`, loops or `curl | grep` chains. Use WebFetch for web pages and a script file for multi-step logic. Every subagent brief (builder, reviewer, research) repeats this command rule, since a subagent's prompts land on the human too. A permission prompt mid-session is an incident: add the missing rule to `.claude/settings.json` the same day.
 - `LOG.md` is append-only. A question for a human or the advisor goes on the card's issue — nothing important lives only in chat.
-- Working with the human (playbook, "Gates" and "Keeping the human in the picture"): run the handoff checklist before every "your turn"; one question at a time, asked in plain chat; only an explicit "approved" passes a gate; every visual goes on a page the human can see, rejects included; one link per thing.
-- Every new place (page, folder, scheduled task, outside account) goes into `docs/MAP.md` the same turn. Each gate gets an entry in `docs/STORY.md`.
-- Render-check every markdown doc with `gh api markdown` before handing it off.
-- Never name a third party (anyone not on the repo) in a public repo.
-- Claude acts on GitHub through the human's login, so sign every PR body and comment Claude writes with its role on the last line, e.g. `— Claude (orchestrator)`, `— Claude (builder)`, `— Claude (reviewer)`. Commits already carry a Co-Authored-By line. (Until a separate Claude identity is set up; see hornof/apb#3.)
-- Friction with the apb process itself becomes one issue per problem on hornof/apb, labeled `from-<this repo>`.
+- Working with the human: follow the playbook's "How the human reviews" and "Helping the human keep track". In short: one question at a time, in plain chat; only "approved" is approval; show everything visual; one link per thing.
+- When you add a new piece (a page, a folder, a scheduled task, an outside account), add it to `docs/MAP.md` at the same time. After each stage, add a line to `docs/STORY.md`.
+- Before showing the human a markdown doc, check how GitHub displays it: `gh api markdown -F mode=gfm -F text=@<file>`.
+- In a public repo, never name anyone who isn't on the repo.
+- Claude uses the human's GitHub login, so GitHub can't tell who did what. End every PR description and comment Claude writes with its role, for example `— Claude (orchestrator)`. (Until Claude has its own GitHub account; see hornof/apb#3.)
+- Problems with the apb process itself go on hornof/apb as one issue per problem, labeled `from-<this repo>`.
 ## Project rules
 (none yet — add one line per rule as incidents happen)

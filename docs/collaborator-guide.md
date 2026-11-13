@@ -8,7 +8,11 @@ You'll build a real project. AI agents do most of the design and coding; you giv
 
 3. **Brain dump.** Write everything you want built as a comment on the brain-dump ticket on the project board; the ticket lists the questions to answer. Then tell Claude: "I posted the brain dump on issue #N; draft the PRD." It writes `docs/PRD.md`, makes clickable mockups of the main screens, and opens a PR.
 
-4. **Review the PRD.** Claude tells you exactly what to read and where to click. Everything for this step lives on the PR: answer the open questions there or just tell Claude in chat (it posts your answers on the PR). Each question comes with Claude's recommended answer, so "ok" is a fine reply. Line comments work in the PR's "Files changed" tab with the *source* view. GitHub won't let you approve your own PR, so submit a review as **Comment**. When it says what you mean, tell Claude "approved" (only that counts as approval), then merge the PR: that's gate 1. Nothing gets built before that. Lost track of the pieces? `docs/MAP.md` lists them all.
+4. **Review the PRD.** Claude tells you what to read and where to click.
+   - Answer the open questions in chat or on the PR. Each one has Claude's suggestion, so "ok" is a fine answer.
+   - To comment on a specific line, use the PR's "Files changed" tab.
+   - When the PRD says what you mean, tell Claude "approved", then click **Merge**. That's gate 1. Nothing gets built before it.
+   - Lost track of what's where? `docs/MAP.md` lists every piece of the project.
 
 5. **TDD.** Tell Claude: "PRD approved; draft the TDD." It writes `docs/TDD.md` — architecture, where data lives, how each requirement is tested — and opens a PR. Same review loop; merging is gate 2. Right after, Claude sets up hosting and CI per the TDD.
 

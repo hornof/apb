@@ -6,7 +6,17 @@ This skill belongs in the orchestrator (the main Claude Code session, opened in 
 
 0. Prerequisites: verify `git` and `gh` are installed and `gh auth status` shows a logged-in account with the `project` scope — fix these first (install, then `gh auth login`; if `gh auth status` lacks the `project` scope, run `gh auth refresh -h github.com -s project` — a one-time human step with a browser login; Claude cannot do it), because every later step that touches GitHub assumes Claude can act there without the human clicking through the website.
 1. Repo: ask whether it should be public or private (never decide this yourself), then create it with `gh repo create`, then create the board (step 3) before the initial commit, so README.md's board link is filled in and no placeholder is ever committed. Push an initial commit with: templates/CLAUDE-template.md as CLAUDE.md; docs/collaborator-guide.md adapted for this project; templates/README-template.md as README.md with the project name and one-sentence description filled in; templates/LOG-template.md as LOG.md; templates/LESSONS-template.md as LESSONS.md; templates/gitignore-template as .gitignore; templates/MAP-template.md as docs/MAP.md; templates/STORY-template.md as docs/STORY.md. No angle-bracket placeholders may remain in any committed file, except inside a code block.
-1b. Brain-dump issue: open an issue titled "Brain dump" whose body lists the questions to answer: what should it do; who is it for, and who is the real stakeholder; **is this a trial run or stand-in for someone else** (if so, who builds the real one, and where); what similar sites or products do you like, with links; must-haves vs. nice-to-haves; public or private; where it should live (domain); any deadline. Link it from docs/MAP.md and docs/STORY.md.
+1b. Brain-dump issue: open an issue called "Brain dump" that lists these questions for the human to answer:
+   - What should it do?
+   - Who is it for?
+   - Is this a trial run for someone else? If so, who builds the real one, and where?
+   - What similar sites or apps do you like? Include links.
+   - What's a must-have, and what's a nice-to-have?
+   - Public or private?
+   - What web address should it have?
+   - Any deadline?
+
+   Link the issue from docs/MAP.md and docs/STORY.md.
 2. Collaborators: ask for each teammate's GitHub username; invite them.
 3. Projects board: create with columns Todo / In progress / In review / Done; link the repo. Then put the board's URL into README.md's last line.
 4. Permissions. The goal is zero mid-session prompts. Five parts:
