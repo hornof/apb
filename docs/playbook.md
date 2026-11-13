@@ -65,6 +65,9 @@ The human never types git commands; the orchestrator does. The advisor never giv
 ## Helping the human keep track
 
 - **Project map** (`docs/MAP.md`): every piece of the project, where it lives (GitHub, Claude pages, local files, outside services), what it's for and when it's used. The current stage is at the top. Whenever Claude adds a new piece (a page, a folder, a scheduled task, an outside account), it updates the map at the same time.
+  - **Keeping it current is Claude's job, not the human's.** After every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand, Claude checks every row against the real state and fixes it before replying. A map that only gets new rows goes stale: a PR shown as waiting after it was merged, a step shown as next after it was done.
+  - **One copy.** The map page is built from `docs/MAP.md` by `scripts/map-page.py`, never edited by hand, so the page and the file can't disagree.
+  - **Link, don't copy.** For status that changes often, like open PRs or cards, the map links GitHub's live list.
 - **Project story** (`docs/STORY.md`): one entry per stage, with the date, the PR and what was decided, so someone new can see what happened.
 - **One question at a time.** Settle every part of the current question before asking the next. Ask in the chat, not with pop-up buttons, so the human can answer in their own words.
 - **Plain English.** No made-up terms, no unexplained jargon, one instruction per sentence.

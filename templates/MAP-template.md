@@ -1,6 +1,9 @@
 # `<project>`: project map
 
-Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists.
+Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists, and checks the whole map after every merge, whenever a PR opens, at the end of each stage, and whenever someone asks where things stand. The map page (`<map page link>`) is built from this file.
+
+<!-- Don't copy status that changes often, like whether a PR is open or merged. Link GitHub's live list instead; a copied status goes out of date the moment it changes. -->
+
 
 **Now:** `<current stage, for example "PRD in review">`
 
@@ -11,6 +14,7 @@ Every piece of this project, where it lives, and when it's used. Claude adds eac
 |---|---|---|
 | Repo: `<repo link>` | The code, docs and content | Every stage |
 | Board: `<board link>` | Progress, one card per piece of work | From the board stage on |
+| Open PRs: `<link to the repo's pull requests>` | Work waiting for review or merge. GitHub keeps this list current. | Every stage |
 | Brain dump: `<issue link>` | The original description of the project | Start |
 
 ## Claude pages
@@ -28,6 +32,7 @@ Pages Claude makes and hosts. Each one is private to its creator until shared. K
 
 | Piece | What it is | When it's used |
 |---|---|---|
+| Map page: `<map page link>` | This map, as a page. Built from this file by `scripts/map-page.py`; never edited by hand. | Any time |
 | `<page name and link>` | `<for example: clickable mockups of the main screens>` | `<for example: PRD review>` |
 
 ## Local files
