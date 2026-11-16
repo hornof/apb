@@ -8,7 +8,7 @@
 ## Rules
 - Tests before code; one feature per flat PR off freshly-fetched main; never stack branches or push to a merged branch.
 - Only humans merge. The reviewer is a separate session; it writes no code.
-- Every PR gets one review round from the reviewer before the human sees it, whether it holds code or only docs. The reviewer reads `docs/reviewer-notes.md` first. The Fix items are fixed and checked before the human looks. Fix items go in one post and Notes in one post or a section of the Fix post; only Decisions get threads, one thread each. With no Decisions, the hand-off is one line: "PR #N: nothing for you to decide, merge-ready." The orchestrator adds each of the human's overrides and new rules to `docs/reviewer-notes.md`.
+- Every PR gets one review round from the reviewer before the human sees it, whether it holds code or only docs. The reviewer reads `docs/reviewer-notes.md` first. The Fix items are fixed and checked before the human looks. Fix items go in one post and Notes in one post or a section of the Fix post; only Decisions get threads, one thread each. With no Decisions, the hand-off is one line: "PR #N: nothing for you to decide, merge-ready.", plus `Preview: <link>` if the PR changes how the product looks. The orchestrator adds each of the human's overrides and new rules to `docs/reviewer-notes.md`.
 - After every merge, check the live product (the site, the published package, the released app), not just CI.
 - The Projects board is the single progress tracker; PRs reference their issue.
 - When something goes wrong, add a rule here the same day.
