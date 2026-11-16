@@ -11,14 +11,14 @@ Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Che
 
 1. **PRD** (what and why). Claude writes it from the human's description: goals, user journeys, requirements that each end with a check ("loads in under 1 second", "works on a phone"), mockups, and the look. The human reviews and approves: **gate 1**.
 2. **TDD** (how it's built and tested). Architecture, where data lives, the test plan, risks, and the work split into PR-sized pieces. Use `docs/system-design-guide.md` for the design part. The human approves: **gate 2**.
-3. **Board.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues.
+3. **Board.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues. The same board holds one issue each for the brain dump, the PRD and the TDD from setup on, so it always shows where the project stands.
 4. **Build.** For each piece: Claude writes the tests first, then the code until the tests pass, then opens one small PR.
 5. **Review and merge.** A second Claude reviews the PR. The human reads the review, checks the PR's preview site, and merges: **gate 3**. Tests must pass first.
 
    Every PR gets this review before the human sees it, whether it holds code or only docs. There is one review round. The reviewer sorts each item into one of three buckets:
    - **Fix**: the reviewer is sure. It is fixed straight away, and the orchestrator checks the fix.
    - **Note**: the reviewer isn't sure. The human skims it.
-   - **Decision**: taste or a trade-off. It comes with a recommended answer, which stands unless the human overrides it.
+   - **Decision**: taste or a trade-off. It comes with a recommended answer. Nothing changes for it until the human answers or resolves its thread with no reply, which accepts the recommendation.
 
    The human's overrides and new rules go in the project's `docs/reviewer-notes.md`, which the reviewer reads before every review.
 6. **Check the live product** after every merge: for example, the site's content, layout and links, or that the package installs and runs. Passing tests don't prove the product works.
@@ -71,7 +71,7 @@ The human never types git commands; the orchestrator does. The advisor never giv
 
 ## Helping the human keep track
 
-- **Project map** (`docs/MAP.md`): every piece of the project, where it lives (GitHub, Claude pages, local files, outside services), what it's for and when it's used. The current stage is at the top. Whenever Claude adds a new piece (a page, a folder, a scheduled task, an outside account), it updates the map at the same time.
+- **Project map** (`docs/MAP.md`): every piece of the project, where it lives (GitHub, Claude pages, local files, outside services), what it's for and when it's used. It lists only things that rarely change. It never copies a status, such as the current stage. The board shows where the project stands. Claude checks every row after every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand. Whenever Claude adds a new piece (a page, a folder, a scheduled task, an outside account), it updates the map at the same time.
 - **Project story** (`docs/STORY.md`): one entry per stage, with the date, the PR and what was decided, so someone new can see what happened.
 - **One question at a time.** Settle every part of the current question before asking the next. Ask in the chat, not with pop-up buttons, so the human can answer in their own words.
 - **Plain English.** No made-up terms, no unexplained jargon, one instruction per sentence.

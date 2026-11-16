@@ -4,6 +4,8 @@ description: Turn an approved PRD into a technical design doc (TDD) — architec
 ---
 Input: the approved PRD. Output: `docs/TDD.md` from `templates/TDD-template.md`.
 
+Before step 1: open an issue called "TDD" and add it to the project's board in In progress. The TDD's PR description says "Closes #N" for the TDD issue, so the merge at gate 2 moves it to Done.
+
 1. Design the system with `docs/system-design-guide.md`. Choose the simplest stack that meets the PRD. Name the real hosting, CI and the store for each kind of data. Don't default to local files or in-memory data: hosts often wipe both on every deploy.
 2. Test plan maps 1:1 to the PRD's acceptance criteria.
 3. Break work into PR-sized pieces (each shippable alone, ordered by dependency).

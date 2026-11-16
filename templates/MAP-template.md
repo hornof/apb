@@ -1,16 +1,18 @@
 # `<project>`: project map
 
-Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists.
+Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists. Claude checks every row after every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand. Claude fixes any row that is wrong.
 
-**Now:** `<current stage, for example "PRD in review">`
+The map lists only things that rarely change. It never copies a status, such as the current stage or whether a PR is open, because a copied status goes out of date. To see where the project stands now, open the board: `<board link>`.
 
-**Stages:** brain dump → PRD (gate 1) → TDD (gate 2) → board → build → review and merge (gate 3) → check the live product
+**Stages, in order:** brain dump → PRD (gate 1) → TDD (gate 2) → board → build → review and merge (gate 3) → check the live product
+
+<!-- Where a row needs a status, link GitHub's live list, for example the list of open PRs. -->
 
 ## GitHub
 | Piece | What it is | When it's used |
 |---|---|---|
 | Repo: `<repo link>` | The code, docs and content | Every stage |
-| Board: `<board link>` | Progress, one card per piece of work | From the board stage on |
+| Board: `<board link>` | Progress: one issue per early stage (brain dump, PRD, TDD), then one card per piece of work | Every stage |
 | Brain dump: `<issue link>` | The original description of the project | Start |
 
 ## Claude pages

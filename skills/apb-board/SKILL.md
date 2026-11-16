@@ -7,5 +7,5 @@ description: Turn an approved TDD's work pieces into GitHub Issues on a Projects
    - Name the issues it can be built at the same time as: "Can be built at the same time as #N, #M", or "Can be built at the same time as: none".
    - Create all the issues first, then add the Needs and Can be built at the same time lines, using the real issue numbers.
    - If the TDD marks the piece "Early look", add this line to the issue: "Early look: post the preview link here once a first version is up."
-2. Add all issues to the repo's Projects board with columns: Todo / In progress / In review / Done. Create the board if missing (setup skill covers it).
+2. Add all issues to the repo's Projects board with columns: Todo / In progress / In review / Done. Create the board if missing (setup skill covers it). Use the same board that holds the Brain dump, PRD and TDD issues; a project has one board, never more.
 3. The board is the single source of truth for progress — no separate ROADMAP file. PRs reference their issue so merges move cards automatically.
