@@ -4,7 +4,7 @@ description: Turn a stakeholder's brain dump into a PRD with checkable requireme
 ---
 Input: the brain-dump issue. Output: one PR with `docs/PRD.md` (from `templates/PRD-template.md`), mockups, and any supporting docs in `docs/`.
 
-Before step 1: open an issue called "PRD" and add it to the project's board in In progress. Move the Brain dump issue to Done. The PRD's PR description says "Closes #N" for the PRD issue, so the merge at gate 1 moves it to Done.
+Before step 1: open an issue called "PRD" and add it to the project's board in In progress. Close the Brain dump issue; the board moves it to Done. The PRD's PR description says "Closes #N" for the PRD issue, so the merge at gate 1 moves it to Done.
 
 1. **Find out who it's for.** Who is the real stakeholder? Is this a trial run for someone else? If the brain dump doesn't say, ask before writing anything. Never name someone who isn't on the repo in a public repo.
 2. **Fill in every section of the template.**
