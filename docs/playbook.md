@@ -97,7 +97,7 @@ For generated content, also:
 
 ## Unattended builds
 
-The build can run one piece at a time with the human, or unattended, for example overnight. Unattended runs need these rules:
+The build can run with the human watching, or unattended, for example overnight. Unattended runs need these rules:
 
 - **Saying "go" doesn't start anything.** The kickoff must actually start a background worker (Agent Teams, or a worktree per feature), and Claude names what it started.
 - **A new commit every 30–60 minutes is the only sign the work is running.** Not a status message, not "the process is alive".
@@ -132,4 +132,4 @@ Every project keeps a public record of how it was built:
 
 apb's PRD and TDD are a written spec, the same idea as "spec-driven development" and [GitHub Spec Kit](https://github.com/github/spec-kit). apb writes the spec as plain prose with checkable requirements instead of using Spec Kit's templates.
 
-Claude Code features apb can use but doesn't depend on: worktrees for parallel work, Agent Teams, hooks that run lint and tests automatically, and plugins.
+Claude Code features apb can use but doesn't depend on: Agent Teams, hooks that run lint and tests automatically, and plugins.
