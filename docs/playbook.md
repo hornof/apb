@@ -133,8 +133,8 @@ The apb plugin keeps a log of what every Claude session and agent does in the pr
 
 - **For logic-heavy code, go beyond example tests:**
   - property-based tests checked against an independent second implementation
-  - mutation testing to measure how good the tests are
-  - a deliberate-bug check: put one real bug back in, to prove the tests catch it. Do it once per build stage, not on every PR.
+  - mutation testing to measure how good the tests are. It runs automatically, as the TDD sets it up.
+  - a deliberate-bug check: by hand, separate from mutation testing, put one real bug back in, to prove the tests catch it. Do it once per project, on the first build PR with real logic. It shows early whether the tests catch real bugs, while there is still time to fix them.
 - **Run each test only where it's needed.** Most of a build's time goes to running tests.
   - While building, the builder runs only the tests for the code it's changing, in one browser at one screen width.
   - Before pushing, it runs the test files it changed in every browser, at one width.
