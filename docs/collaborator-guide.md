@@ -29,9 +29,9 @@ Claude proposes every change as a pull request (PR) on GitHub. You approve a PR 
 4. **Review the PRD.** Claude tells you what to read and where to click.
    - Answer the open questions in chat or on the PR. Each one has Claude's suggestion, so "ok" is a fine answer.
    - To comment on a specific line, use the PR's "Files changed" tab.
-   - When the PRD says what you mean, tell Claude "approved", then click **Merge**. That's gate 1. Nothing gets built before it.
+   - When the PRD says what you mean, tell Claude so in plain words, such as "yes, that's it". Claude makes its last updates to the PR and asks you to merge. Click **Merge**. That's gate 1. Nothing gets built before it.
    - Lost track of what's where? `docs/MAP.md` lists every piece of the project.
 
-5. **TDD.** Tell Claude: "PRD approved; draft the TDD." Claude writes `docs/TDD.md`: the parts of the system, where data is stored, and how each requirement is tested. It opens a PR. Review it the same way as the PRD. Saying "approved" and merging is gate 2. Then Claude sets up two things the TDD chose: where the product runs or is published, and automatic tests that run on every PR. Claude proves the setup works with one small PR for you to merge.
+5. **TDD.** Tell Claude: "PRD approved; draft the TDD." Claude writes `docs/TDD.md`: the parts of the system, where data is stored, and how each requirement is tested. It opens a PR. Review it the same way as the PRD. Saying yes and then merging is gate 2. Then Claude sets up two things the TDD chose: where the product runs or is published, and automatic tests that run on every PR. Claude proves the setup works with one small PR for you to merge.
 
 6. **Build.** The repo's project board lists the work as items, one per feature. Tell Claude "build the next item." Claude takes the top item, writes the tests first, then the code, and opens a PR. A separate Claude reviewer that didn't write the code checks it. You merge it (gate 3), then check the live product.

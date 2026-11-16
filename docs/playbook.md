@@ -73,7 +73,8 @@ The human never types git commands; the orchestrator does. The advisor never giv
   - that the link points to the latest version
 
   Then Claude sends one short message: what to do, one link per thing, nothing else.
-- **Only "approved" is approval.** "Looks good" is not. If unsure, ask.
+- **A merge or a clear yes is approval.** Praise that comes with open questions is not. Ask only when it's genuinely unclear.
+- **At a gate, get the yes before the merge.** Then the updates that follow approval (the approved marker, the `docs/STORY.md` entry, the map) go into the same PR, and the merge closes the gate's issue.
 
 ## Helping the human keep track
 
