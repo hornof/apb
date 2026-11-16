@@ -1,6 +1,6 @@
 # Repo rules (apb)
 ## Who does what
-- **Orchestrator** — the main Claude Code session, the one the human talks to. It drafts the PRD and TDD, keeps the board, and runs the build loop: take the top card → spawn the builder on it → when the PR is open, spawn the reviewer → hand the PR to the human → after the merge, check the live product. It does not write feature code itself and never merges.
+- **Orchestrator** — the main Claude Code session, the one the human talks to. It drafts the PRD and TDD, keeps the board, and runs the build loop: take the top unblocked issue, and any others that can be built at the same time → start a builder on each → when the PR is open, spawn the reviewer → hand the PR to the human → after the merge, check the live product. It does not write feature code itself and never merges.
 - **Builder** — a subagent the orchestrator spawns (`agents/builder.md` in the apb plugin). Writes the tests, then the code, opens one flat PR. Starts with no memory of the chat.
 - **Reviewer** — a subagent the orchestrator spawns in a fresh context (`agents/reviewer.md`). Reviews the PR and the live product; writes no code.
 - **Advisor** — optional; a Claude session outside the repo (Cowork) with broad access: thinking through the idea, research, independent reads. Never writes to the repo; its input is a comment on the relevant issue.
@@ -8,6 +8,7 @@
 ## Rules
 - Tests before code; one feature per flat PR off freshly-fetched main; never stack branches or push to a merged branch.
 - Only humans merge. The reviewer is a separate session; it writes no code.
+- Every PR gets one review round from the reviewer before the human sees it, whether it holds code or only docs. The reviewer reads `docs/reviewer-notes.md` first. The Fix items are fixed and checked before the human looks. The orchestrator adds each of the human's overrides and new rules to `docs/reviewer-notes.md`.
 - After every merge, check the live product (the site, the published package, the released app), not just CI.
 - The Projects board is the single progress tracker; PRs reference their issue.
 - When something goes wrong, add a rule here the same day.
