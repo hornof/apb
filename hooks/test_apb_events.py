@@ -4,6 +4,8 @@ Each test runs the script the way Claude Code does: a JSON payload on stdin, the
 CLAUDE_PROJECT_DIR. It then reads .apb/events.jsonl back as JSON and compares it with the payload.
 """
 import calendar
+import importlib.util
+import io
 import json
 import os
 import random
@@ -161,6 +163,44 @@ class Writes(unittest.TestCase):
         run(base("Stop"), self.project)
         with open(os.path.join(self.project, ".apb", ".gitignore")) as f:
             self.assertEqual(f.read().strip(), "*")
+
+    def test_hooks_running_at_once_on_a_fresh_project_lose_nothing(self):
+        for attempt in range(5):
+            project = apb_project()
+            env = dict(os.environ, CLAUDE_PROJECT_DIR=project)
+            procs = [subprocess.Popen([sys.executable, SCRIPT], stdin=subprocess.PIPE, env=env)
+                     for _ in range(8)]
+            for i, proc in enumerate(procs):
+                proc.stdin.write(json.dumps(base("TaskCreated", task_id=str(i), task_subject="s")).encode())
+                proc.stdin.close()
+            for proc in procs:
+                self.assertEqual(proc.wait(timeout=10), 0)
+            self.assertEqual(sorted(g["task_id"] for g in lines(project)), [str(i) for i in range(8)])
+            with open(os.path.join(project, ".apb", ".gitignore")) as f:
+                self.assertEqual(f.read().strip(), "*")
+
+    def test_the_loser_of_a_race_to_make_the_folder_still_writes(self):
+        # Another hook makes .apb/ between this hook's check and its own attempt to make it.
+        spec = importlib.util.spec_from_file_location("apb_events", SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        old_env, old_stdin, old_mkdir = os.environ.get("CLAUDE_PROJECT_DIR"), sys.stdin, os.mkdir
+
+        def other_hook_wins(path, *args, **kwargs):
+            old_mkdir(path)  # the other hook makes the folder first
+            raise FileExistsError(path)
+        os.environ["CLAUDE_PROJECT_DIR"] = self.project
+        sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps(base("Stop")).encode()))
+        os.mkdir = other_hook_wins
+        try:
+            mod.main()
+        finally:
+            os.mkdir, sys.stdin = old_mkdir, old_stdin
+            if old_env is None:
+                os.environ.pop("CLAUDE_PROJECT_DIR")
+            else:
+                os.environ["CLAUDE_PROJECT_DIR"] = old_env
+        self.assertEqual(len(lines(self.project)), 1)
 
     def test_project_comes_from_cwd_when_the_variable_is_missing(self):
         r = run(base("Stop", cwd=self.project), None)

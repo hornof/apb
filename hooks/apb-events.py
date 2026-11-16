@@ -66,9 +66,10 @@ def main():
     if line is None:
         return
     folder = os.path.join(project, ".apb")
-    if not os.path.isdir(folder):
-        os.mkdir(folder)
-        with open(os.path.join(folder, ".gitignore"), "w") as f:
+    os.makedirs(folder, exist_ok=True)  # several hooks can run at once; none may fail here
+    ignore = os.path.join(folder, ".gitignore")
+    if not os.path.exists(ignore):
+        with open(ignore, "w") as f:
             f.write("*\n")
     with open(os.path.join(folder, "events.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps(line, ensure_ascii=False) + "\n")
