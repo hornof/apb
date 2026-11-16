@@ -11,7 +11,7 @@ Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Che
 
 1. **PRD** (what and why). Claude writes it from the human's description: goals, user journeys, requirements that each end with a check ("loads in under 1 second", "works on a phone"), mockups, and the look. The human reviews and approves: **gate 1**.
 2. **TDD** (how it's built and tested). Architecture, where data lives, the test plan, risks, and the work split into PR-sized pieces. Use `docs/system-design-guide.md` for the design part. The human approves: **gate 2**.
-3. **Board.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues.
+3. **Board.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues. The same board holds one issue each for the brain dump, the PRD and the TDD from setup on, so it always shows where the project stands.
 4. **Build.** For each piece: Claude writes the tests first, then the code until the tests pass, then opens one small PR.
 5. **Review and merge.** A second Claude reviews the PR. The human reads the review, checks the PR's preview site, and merges: **gate 3**. Tests must pass first.
 

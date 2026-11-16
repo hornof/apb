@@ -12,7 +12,7 @@ The map lists only things that rarely change. It never copies a status, such as 
 | Piece | What it is | When it's used |
 |---|---|---|
 | Repo: `<repo link>` | The code, docs and content | Every stage |
-| Board: `<board link>` | Progress, one card per piece of work | From the board stage on |
+| Board: `<board link>` | Progress: one issue per early stage (brain dump, PRD, TDD), then one card per piece of work | Every stage |
 | Brain dump: `<issue link>` | The original description of the project | Start |
 
 ## Claude pages

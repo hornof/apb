@@ -15,11 +15,14 @@ This skill belongs in the orchestrator (the main Claude Code session, opened in 
    - Where will people use it: a website, a phone app, a command-line tool, something else? If it's online, what address?
    - Any deadline?
 
-   Link the issue from docs/MAP.md and docs/STORY.md.
+   Link the issue from docs/MAP.md and docs/STORY.md. Add the issue to the board (step 3) in In progress. It moves to Done when the PRD stage starts.
 2. Collaborators: ask whether anyone else will work on the project.
    - If not, remove the collaborator-guide row from README.md and go on to step 3.
    - If so, ask for each teammate's GitHub username and invite them. Then copy docs/collaborator-guide.md into the project's docs/ folder, adapted for this project.
 3. Projects board: create with columns Todo / In progress / In review / Done; link the repo. Then put the board's URL into README.md's last line.
+   - A project has one board, never more.
+   - From setup on, the board holds one issue per early stage: the Brain dump issue (step 1b), then the PRD issue (apb-prd) and the TDD issue (apb-tdd). After the TDD, apb-board adds the build issues to the same board. So the board always shows where the project stands.
+   - Each stage issue moves through the columns like any other issue. The PRD and TDD issues go to Done when their gates are approved. The Brain dump issue goes to Done when the PRD stage starts.
 4. Permissions. The goal is zero mid-session prompts. Five parts:
    a. **Auto mode lives in the human's own settings, never in the repo.** Read `~/.claude/settings.json`. If `permissions.defaultMode` isn't `"auto"`, show the human that one line and offer to add it (it's their file, so ask first). Repo files can't turn auto on, and a `defaultMode` in a repo file overrides the user's `auto`, which brings back a permission prompt for every command. Never write `defaultMode` into any repo file.
    b. **In the desktop app, the mode picker remembers a mode per folder and outranks the settings.** Tell the human to pick **Auto** in the picker for this folder once.
