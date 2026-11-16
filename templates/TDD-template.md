@@ -6,6 +6,8 @@
 `<per PRD acceptance criterion: how it's tested>`
 
 `<which tests depend on screen width: they run at every width; the rest run at one width>`
+
+`<every child process the code or tests start has a time limit: how each one gets it>`
 ## Work pieces
 `<numbered, PR-sized, dependency-ordered>`
 

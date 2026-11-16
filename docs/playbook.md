@@ -48,6 +48,7 @@ The human never types git commands; the orchestrator does. The advisor never giv
 - **Use auto mode.** Each human sets it once in their own `~/.claude/settings.json` (`"permissions": {"defaultMode": "auto"}`), and picks **Auto** once per folder in the desktop app. "Accept edits" mode only covers file edits, so every command still asks for permission. Never put `defaultMode` in a repo file: it overrides each person's own setting.
 - **The repo's `.claude/settings.json`** holds the shared rules: an allow list (used when auto mode isn't available) and a deny list (no merging, no force-pushing, no pushing to main).
 - **If a permission prompt appears mid-session,** add the missing rule to `.claude/settings.json` the same day.
+- **Never type commands into the desktop app's Terminal panel.** It asks the human every time, even in auto mode. To run something in another folder, use the command's own folder option (`git -C <folder>`) or a script that changes folder itself.
 - **Write commands auto mode can approve.** One plain command per shell call. Use WebFetch for web pages, not `curl | grep`. Put multi-step logic in a script file and run that file. Avoid `$(…)`, loops and chained commands: they trigger prompts, and "Always allow" on them saves the exact command, which never matches again.
 - **The advisor** should run where it can reach files, a browser and email; that's its job. It still never writes to the repo.
 
@@ -108,6 +109,26 @@ For generated content, also:
 - **Put information the product needs in the file name,** for example the date: `2025-10-07.jpg`. Don't rely on file dates; git changes them.
 - **Keep a review page** that shows everything made so far, plus the rejected items and why, updated after each batch.
 - **Check images on a real page.** Color profiles and near-white backgrounds can show as a gray box on a white page. Convert to sRGB and turn near-white into pure white.
+
+## While Claude waits
+
+The orchestrator acts only when something wakes it: a message from the human, an agent's report, or a background command finishing. A merge on GitHub or a frozen test run wakes nothing. So the orchestrator never waits without the watcher, and never states anything it hasn't just checked.
+
+- **The watcher** is `scripts/apb-watch.py` in the apb plugin. Whenever the orchestrator waits (on a builder or reviewer, on the human, or on GitHub), it runs the watcher in the background in its own shell. The watcher checks every 20 seconds. It exits, saying what it found, when:
+  - a PR is opened, merged or closed, its checks finish, it gets new comments, or all its review comments are resolved
+  - an issue named with `--issue N` gets a new comment
+  - a command started from Claude's shells has used no CPU for 10 minutes
+  - a running agent has written nothing to the events file for 15 minutes
+  - 5 minutes have passed, with `--check-in 5`. Use it while agents run, to compare their progress with the time they should take.
+  - an hour has passed with no change, so it never runs forever.
+- **What the watcher doesn't do.** It only reads. Stopping a stuck process is the orchestrator's call. It saves what it saw in its `--state` file, so a change made while it was stopped is reported on the next start, and nothing is reported twice.
+- **After each exit,** the orchestrator acts on what the watcher printed, then starts it again.
+- **Fix it, then tell the human.** If something is stuck, the orchestrator stops it, restarts the step, and then tells the human. It never waits for the human to ask.
+- **Check before stating.** Every status, time or "still waiting" comes from a check in the same turn: `gh pr view` for a PR, `date` for a clock time. If nothing was checked, say "I don't know yet".
+- **Say when each step should finish.** Each status line gives the time the step should finish, worked out from `date`.
+- **An honest task list.** When the orchestrator stops, the task list shows no step running. Its last line says what it's waiting for, and since when.
+- **Time limits in code.** Every child process the code or tests start has a time limit. Without one, a single stuck child stalls the whole run, and the test runner's own limit can't fire. The TDD's test plan says how each one gets its limit, and the reviewer checks it.
+- **Deadlines for background runs.** Before a builder or reviewer starts a run in the background, it notes how long the run should take and a deadline, about twice that. Past the deadline, it checks the run's processes, stops what's stuck, and reports it.
 
 ## Unattended builds
 

@@ -18,8 +18,12 @@ Tests and pushes:
 - In the PR description, list what you couldn't test. The reviewer checks those points on the preview.
 - Run the deliberate-bug check (see the playbook's "Testing and models") only when the orchestrator asks. It runs once per project, on the first build PR with real logic.
 
+Time limits:
+- Every child process your code or tests start has a time limit, for example `timeout` on `spawnSync`, `execSync` or `subprocess.run`. Without one, a single stuck child stalls the whole run, and the test runner's own time limit can't fire.
+- Before you start a run in the background, note how long it should take and a deadline, about twice that. Past the deadline, check its processes with `ps`, stop what's stuck, and say so in your report. Never wait on a background run without a deadline.
+
 If the issue has an "Early look" line, push the branch as soon as a first version works, so the host builds a preview. Then post the preview link as a comment on the issue, before the PR is done. Keep building; don't wait for a reply. Before you open the PR, read the issue's comments, and act on any from the human.
 
 Keep every file you write outside the repo (the PR description, scripts, notes) in the scratch folder your brief names. Other agents may be running at the same time and using the same file names. If the brief names none, make one named after your issue inside the session's scratch folder, for example `scratchpad/issue-14/`.
 
-Shell: one plain command per call; no `$(…)`, loops or `curl | grep` chains (they trigger permission prompts). Use WebFetch for web pages, and a script file for multi-step logic.
+Shell: one plain command per call; no `$(…)`, loops or `curl | grep` chains (they trigger permission prompts). Use WebFetch for web pages, and a script file for multi-step logic. Never type commands into the desktop app's Terminal panel: it asks the human every time, even in auto mode. To run something in another folder, use the command's own folder option (`git -C <folder>`) or a script that changes folder itself.
