@@ -59,7 +59,7 @@ The human never types git commands; the orchestrator does. The advisor never giv
   - Fix items are in one post, already fixed before the human sees the PR, each with its commit. To disagree with one, comment on that post with its number.
   - Note items are in one post, or a section of the Fix post. They are only things the human might act on.
   - Decision items get one thread each, on the line they concern. Resolving a thread with no comment accepts the recommended answer. A comment (a question, a disagreement, or a yes with a note) is for the orchestrator to read and act on.
-- **No Decisions, no reading.** When a PR has no Decisions, the hand-off is one line: "PR #N: nothing for you to decide, merge-ready." If the PR changes how the product looks, the line ends with the preview link: `Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to. If the project alerts the human when it's their turn, it alerts only when there is a Decision.
+- **No Decisions, no reading.** When a PR has no Decisions, the hand-off is one line: "PR #N: nothing for you to decide, merge-ready." If the PR changes how the product looks, the line ends with the preview link: `Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to. If the project alerts the human when it's their turn, alert once when the PR is handed to them, with or without Decisions. Never alert for progress.
 - **Give the human one thing to do.** Don't offer a choice of ways to review. Give each open question a recommended answer, so "ok" is a valid reply.
 - **Give exact clicks.**
   - To comment on a line, use the PR's "Files changed" tab in source view (not the formatted view).

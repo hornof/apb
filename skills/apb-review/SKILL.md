@@ -14,5 +14,5 @@ Every PR gets one review before the human sees it: code PRs, docs-only PRs, setu
 5. Hand the PR to the human.
    - No Decisions: the hand-off is one line, "PR #N: nothing for you to decide, merge-ready." If the PR changes how the product looks, add the preview link: `PR #N: nothing for you to decide, merge-ready. Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
    - Decisions: say how many and which, with the PR link. The human rules on each one: resolving its thread with no comment accepts the recommendation. A comment on the thread is for you to read and act on.
-   - If the project alerts the human when it's their turn, alert only when there is a Decision.
+   - If the project alerts the human when it's their turn, alert once when the PR is handed to them, with or without Decisions. Never alert for progress.
 6. Add each override, and each new rule the human sets, as one line in `docs/reviewer-notes.md`, with the PR it came from.
