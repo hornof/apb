@@ -12,7 +12,7 @@ Input: the brain-dump issue. Output: one PR with `docs/PRD.md` (from `templates/
 3. **Make mockups before the review.** Draw the main screens on a Claude Design canvas, clickable where it matters, and link it from the PRD. Without pictures, a build can match the words but not what the human imagined.
 4. **Keep the PRD short.** Long lists, research and comparisons go in separate files in `docs/`, linked from the PRD. Private links (Claude pages, chats) can't be the only record, because other people can't open them.
 5. **Check how GitHub displays it** before showing it to the human: `gh api markdown -F mode=gfm -F text=@docs/PRD.md -F context=<owner>/<repo>`. Look for broken numbered lists and for `#5`-style links pointing to the wrong repo.
-6. **Ask for the review** as described in the playbook's "How the human reviews" section.
+6. **Run `apb-review` on the PR**, then ask for the human's review as described in the playbook's "How the human reviews" section.
 7. **Update the PRD as answers come in.** If the human answers in chat, copy the answer to the PR. Put each decision where it belongs in the PRD, and add a one-line entry to section 11.
 8. **Wait for "approved".** "Looks good" isn't approval; if unsure, ask. After approval:
    - Export each mockup screen as a PNG into `docs/mockups/`, with a short README.

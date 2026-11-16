@@ -8,7 +8,7 @@ Input: the approved PRD. Output: `docs/TDD.md` from `templates/TDD-template.md`.
 2. Test plan maps 1:1 to the PRD's acceptance criteria.
 3. Break work into PR-sized pieces (each shippable alone, ordered by dependency).
 4. Get it reviewed, the same way as the PRD:
-   - First, a second Claude that didn't write the TDD checks it against the PRD.
+   - First, run `apb-review`: the reviewer checks the TDD against the PRD.
    - Then the human reviews the PR, following the steps in the playbook's "How the human reviews" section.
    - Only "approved" counts as approval. "Looks good" doesn't.
    - After approval: mark the TDD approved at the top, add a line to `docs/STORY.md`, update `docs/MAP.md`, and ask the human to merge. Merging is gate 2.

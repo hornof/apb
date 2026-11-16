@@ -3,7 +3,7 @@
 The human's rulings on past reviews. The reviewer reads this file before every review and follows it. When the human overrides a review item or sets a new rule, the orchestrator adds one line here, with the PR it came from. Newest at the bottom of each section.
 
 ## How to write a review
-Rules that change how reviews are written, on top of `agents/reviewer.md` in the apb plugin.
+Rules that add to or override `agents/reviewer.md` in the apb plugin.
 
 (none yet)
 
