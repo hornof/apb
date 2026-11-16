@@ -9,7 +9,7 @@ Input: the approved PRD. Output: `docs/TDD.md` from `templates/TDD-template.md`.
 3. Break work into PR-sized pieces (each shippable alone, ordered by dependency).
    - For each piece, name the pieces that must be merged before it starts.
    - Say which pieces can be built at the same time. They must touch different code.
-   - Mark the pieces whose result is mostly a matter of taste, such as the look or how something feels. Those get an early look from the human during the build.
+   - Mark the pieces whose result is mostly a matter of taste, such as the look or how something feels, with "Early look". The human looks at these during the build.
    - For each piece, say what the human will look at on its PR: usually the preview link and one check that takes a minute or two. If there is no preview, name a command to try instead.
 4. Get it reviewed, the same way as the PRD:
    - First, a second Claude that didn't write the TDD checks it against the PRD.

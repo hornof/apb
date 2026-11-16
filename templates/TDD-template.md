@@ -7,7 +7,7 @@
 ## Work pieces
 `<numbered, PR-sized, dependency-ordered>`
 
-`<For each piece: which pieces must be merged before it starts, and which pieces can be built at the same time because they touch different code. Mark the pieces whose result is mostly a matter of taste (the look, how something feels), so the human gets an early look.>`
+`<For each piece: which pieces must be merged before it starts, and which pieces can be built at the same time because they touch different code. Mark the pieces whose result is mostly a matter of taste (the look, how something feels) with "Early look".>`
 
 `<For each piece: what the human looks at on its PR, usually the preview link and one check that takes a minute or two.>`
 ## Risks
