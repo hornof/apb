@@ -18,9 +18,9 @@ Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Che
    Every PR gets this review before the human sees it, whether it holds code or only docs. There is one review round. The reviewer sorts each item into one of three buckets:
    - **Fix**: the reviewer is sure. It is fixed straight away, and the orchestrator checks the fix.
    - **Note**: the reviewer isn't sure. The human skims it.
-   - **Decision**: taste or a trade-off. It comes with a recommended answer. Nothing changes for it until the human answers or resolves its thread with no reply, which accepts the recommendation.
+   - **Decision**: taste or a trade-off. It comes with a recommended answer. Nothing changes for it until the human answers. Resolving its thread with no comment accepts the recommendation.
 
-   The human's overrides and new rules go in the project's `docs/reviewer-notes.md`, which the reviewer reads before every review.
+   How the review looks on the PR is in "How the human reviews" below. The human's overrides and new rules go in the project's `docs/reviewer-notes.md`, which the reviewer reads before every review.
 6. **Check the live product** after every merge: for example, the site's content, layout and links, or that the package installs and runs. Passing tests don't prove the product works.
 7. **Turn mistakes into rules.** When something goes wrong, add one line to the project's `CLAUDE.md` the same day, so every later session follows it.
 
@@ -54,6 +54,12 @@ The human never types git commands; the orchestrator does. The advisor never giv
 ## How the human reviews
 
 - **Everything for a review goes on the PR.** Questions, answers and comments all go there. If a question needs background, put the background in the doc or link it from the question.
+- **The review has few clicks.** Only Decisions get threads:
+  - An index at the top gives the count of each kind of item and names the Decisions: "2 decisions for you: 16, 17."
+  - Fix items are in one post, already fixed before the human sees the PR, each with its commit. To disagree with one, comment on that post with its number.
+  - Note items are in one post, or a section of the Fix post. They are only things the human might act on.
+  - Decision items get one thread each, on the line they concern. Resolving a thread with no comment accepts the recommended answer. A comment (a question, a disagreement, or a yes with a note) is for the orchestrator to read and act on.
+- **No Decisions, no reading.** When a PR has no Decisions, the hand-off is one line: "PR #N: nothing for you to decide, merge-ready." The merge accepts the Fix items. The human opens the PR only if they want to. If the project alerts the human when it's their turn, it alerts only when there is a Decision.
 - **Give the human one thing to do.** Don't offer a choice of ways to review. Give each open question a recommended answer, so "ok" is a valid reply.
 - **Give exact clicks.**
   - To comment on a line, use the PR's "Files changed" tab in source view (not the formatted view).
