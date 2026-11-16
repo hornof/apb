@@ -14,6 +14,13 @@ Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Che
 3. **Board.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues.
 4. **Build.** For each piece: Claude writes the tests first, then the code until the tests pass, then opens one small PR.
 5. **Review and merge.** A second Claude reviews the PR. The human reads the review, checks the PR's preview site, and merges: **gate 3**. Tests must pass first.
+
+   Every PR gets this review before the human sees it, whether it holds code or only docs. There is one review round. The reviewer sorts each item into one of three buckets:
+   - **Fix**: the reviewer is sure. It is fixed straight away, and the orchestrator checks the fix.
+   - **Note**: the reviewer isn't sure. The human skims it.
+   - **Decision**: taste or a trade-off. It comes with a recommended answer, which stands unless the human overrides it.
+
+   The human's overrides and new rules go in the project's `docs/reviewer-notes.md`, which the reviewer reads before every review.
 6. **Check the live product** after every merge: for example, the site's content, layout and links, or that the package installs and runs. Passing tests don't prove the product works.
 7. **Turn mistakes into rules.** When something goes wrong, add one line to the project's `CLAUDE.md` the same day, so every later session follows it.
 

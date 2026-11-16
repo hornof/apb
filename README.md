@@ -21,9 +21,9 @@ Humans supply the idea, comment at the gates, review and merge PRs. Claude does 
 | `skills/apb-board` | Turns an approved TDD into GitHub Issues on a Projects board |
 | `skills/apb-build` | The orchestrator (the main Claude Code session) takes the next card from the board and spawns the builder subagent on it |
 | `skills/apb-loop` | Runs the loop unattended over several cards — launch protocol, liveness by commit age, halt conditions |
-| `skills/apb-review` | The orchestrator spawns the reviewer subagent — a separate context that did not write the code |
+| `skills/apb-review` | Runs one review round on every PR, code or docs, in a separate context that did not write it |
 | `agents/builder`, `agents/reviewer` | The two subagents the orchestrator spawns; the separated roles |
-| `templates/` | PRD, TDD, repo-CLAUDE.md, README, LOG, LESSONS, MAP, STORY and .gitignore starters |
+| `templates/` | PRD, TDD, repo-CLAUDE.md, README, LOG, LESSONS, MAP, STORY, reviewer-notes and .gitignore starters |
 | `docs/collaborator-guide.md` | Step-by-step onboarding for a teammate new to AI-assisted building |
 | `docs/system-design-guide.md` | The design steps for the TDD, with common patterns and red flags |
 
