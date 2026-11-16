@@ -16,6 +16,7 @@
 - `LOG.md` is append-only. A question for a human or the advisor goes on the card's issue — nothing important lives only in chat.
 - Working with the human: follow the sections "How the human reviews" and "Helping the human keep track" in the playbook (`docs/playbook.md` in the apb plugin). In short: one question at a time, in plain chat; only "approved" is approval; show everything visual; one link per thing.
 - When you add a new piece (a page, a folder, a scheduled task, an outside account), add it to `docs/MAP.md` at the same time. After each stage, add an entry to `docs/STORY.md`: the stage's decisions, surprises and changes of mind.
+- After every merge, check every row of `docs/MAP.md` against the real state and fix any row that is wrong. The map never copies a status, such as the current stage or whether a PR is open. Link the board or GitHub's live list instead.
 - Before showing the human a markdown doc, check how GitHub displays it: `gh api markdown -F mode=gfm -F text=@<file>`.
 - In a public repo, never name anyone who isn't on the repo.
 - Claude uses the human's GitHub login, so GitHub can't tell who did what. End every PR description and comment Claude writes with its role, for example `— Claude (orchestrator)`. Skip this once Claude has its own GitHub account.
