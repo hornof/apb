@@ -117,16 +117,31 @@ The build can run with the human watching, or unattended, for example overnight.
 
 Every project keeps a public record of how it was built:
 
-- **`LOG.md`**: one line per build step (what changed, test results). Never edit old lines.
+- **`LOG.md`**: one line per build step (what changed, test results). Never edit old lines. The line goes in the same commit as the code: a commit of its own would run the whole test suite again.
 - **`LESSONS.md`**: what the debugging and testing taught, written as it happens.
 - **A final writeup**: how long it took, what it cost, number of PRs and tests, what worked and what didn't.
+
+## The events file
+
+The apb plugin keeps a log of what every Claude session and agent does in the project: `.apb/events.jsonl`. It writes it only in an apb project, which is a project with `docs/MAP.md`. Git ignores the folder.
+
+- **What it holds:** one line each time an agent starts or stops, a shell command finishes, a checklist item is created or done, a turn ends, or Claude Code shows a notification, such as a permission prompt.
+- **What each line holds:** the time, the event, and the agent's id and type. For a shell command, also the command and its exit status, but not its output.
+- **Who reads it:** the orchestrator. It reads the file to see what the builder and reviewer are doing, to notice a step that has gone quiet, and to time each step. Agents' own time estimates are often wrong; the file's times are not.
 
 ## Testing and models
 
 - **For logic-heavy code, go beyond example tests:**
   - property-based tests checked against an independent second implementation
   - mutation testing to measure how good the tests are
-  - one test that puts a real bug back in, to prove the tests catch it
+  - one test that puts a real bug back in, to prove the tests catch it. Do this once per build stage, not on every PR.
+- **Run each test only where it's needed.** Most of a build's time goes to running tests.
+  - While building, the builder runs only the tests for the code it's changing, in one browser at one screen width.
+  - Before pushing, it runs the test files it changed in every browser, at one width.
+  - GitHub runs the whole suite on every push. The reviewer doesn't run it again; it checks the builder's untested points on the preview.
+  - Tests that depend on screen width run at every width. The rest run at one width.
+  - A push that changes only docs skips the browser tests.
+  - Never start a test suite while another one is running.
 - **Strongest model for thinking, faster model for typing.** Planning, the PRD and TDD, and reviews run on the strongest model available. Writing lots of code runs fine on a faster model. Claude Code usually picks well by default.
 
 ## One-time setup

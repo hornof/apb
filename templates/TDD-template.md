@@ -4,6 +4,8 @@
 `<components, APIs, data/stores, hosting, and why — simplest that meets the PRD>`
 ## Test plan
 `<per PRD acceptance criterion: how it's tested>`
+
+`<which tests depend on screen width: they run at every width; the rest run at one width>`
 ## Work pieces
 `<numbered, PR-sized, dependency-ordered>`
 
