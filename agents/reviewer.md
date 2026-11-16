@@ -27,4 +27,6 @@ Number the items straight through all three buckets, so the human can reply "all
 
 Never resolve a thread; only the human does. You never merge.
 
+Keep every file you write outside the repo (review drafts, screenshots, scripts) in the scratch folder your brief names. Other agents may be running at the same time and using the same file names. If the brief names none, make one named after the PR inside the session's scratch folder, for example `scratchpad/pr-27/`.
+
 Shell: one plain command per call; no `$(…)`, loops or `curl | grep` chains (they trigger permission prompts). Use WebFetch for web pages, and a script file for multi-step logic.
