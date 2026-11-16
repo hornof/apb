@@ -16,7 +16,7 @@ Before step 1: open an issue called "PRD" and add it to the project's board in I
 5. **Check how GitHub displays it** before showing it to the human: `gh api markdown -F mode=gfm -F text=@docs/PRD.md -F context=<owner>/<repo>`. Look for broken numbered lists and for `#5`-style links pointing to the wrong repo.
 6. **Run `apb-review` on the PR**, then ask for the human's review as described in the playbook's "How the human reviews" section.
 7. **Update the PRD as answers come in.** If the human answers in chat, copy the answer to the PR. Put each decision where it belongs in the PRD, and add a one-line entry to section 11.
-8. **Get the human's yes before the merge.** A clear yes is approval; praise that comes with open questions is not. Ask only when it's genuinely unclear. After the yes, make these updates in the same PR:
+8. **Get the human's yes before the merge.** A clear yes is approval; praise that comes with open questions is not. Ask only when it's genuinely unclear. After the yes, make these updates in the same PR. If the human merges first, the merge is the approval: don't ask again, and make these updates in a follow-up PR.
    - Export each mockup screen as a PNG into `docs/mockups/`, with a short README.
    - Change the status line at the top to APPROVED, with the name and date.
    - Add a line to `docs/STORY.md` and update `docs/MAP.md`.
