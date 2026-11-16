@@ -1,3 +1,4 @@
 .claude/settings.local.json
+.apb/
 .DS_Store
 node_modules/
