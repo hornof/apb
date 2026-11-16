@@ -1,0 +1,29 @@
+{
+  "description": "apb: append one line per event to .apb/events.jsonl in an apb project, so the orchestrator can see what agents are doing and time each step.",
+  "hooks": {
+    "SubagentStart": [
+      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ],
+    "SubagentStop": [
+      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ],
+    "TaskCreated": [
+      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ],
+    "TaskCompleted": [
+      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ]
+  }
+}
