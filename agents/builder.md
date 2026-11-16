@@ -20,4 +20,6 @@ Tests and pushes:
 
 If the issue has an "Early look" line, push the branch as soon as a first version works, so the host builds a preview. Then post the preview link as a comment on the issue, before the PR is done. Keep building; don't wait for a reply. Before you open the PR, read the issue's comments, and act on any from the human.
 
+Keep every file you write outside the repo (the PR description, scripts, notes) in the scratch folder your brief names. Other agents may be running at the same time and using the same file names. If the brief names none, make one named after your issue inside the session's scratch folder, for example `scratchpad/issue-14/`.
+
 Shell: one plain command per call; no `$(…)`, loops or `curl | grep` chains (they trigger permission prompts). Use WebFetch for web pages, and a script file for multi-step logic.
