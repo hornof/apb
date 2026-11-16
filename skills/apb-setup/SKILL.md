@@ -21,7 +21,7 @@ This skill belongs in the orchestrator (the main Claude Code session, opened in 
    - If so, ask for each teammate's GitHub username and invite them. Then copy docs/collaborator-guide.md into the project's docs/ folder, adapted for this project.
 3. Projects board: create with columns Todo / In progress / In review / Done; link the repo. Then put the board's URL into README.md's last line.
    - A project has one board, never more.
-   - Turn on the board's "Item closed" automation (the board's Workflows menu), so a closed issue moves its card to Done. A card moves to Done only when its issue closes; nobody moves a card to Done by hand.
+   - Turn on the board's "Item closed" automation, so a closed issue moves its card to Done. It isn't always on by default, and GitHub's API can't turn it on. In the browser, on the board: Workflows → Item closed → Edit → set Status to Done → Save and turn on. The orchestrator can do this itself. A card moves to Done only when its issue closes; nobody moves a card to Done by hand.
    - From setup on, the board holds one issue per early stage: the Brain dump issue (step 1b), then the PRD issue (apb-prd) and the TDD issue (apb-tdd). After the TDD, apb-board adds the build issues to the same board. So the board always shows where the project stands.
    - Each stage issue moves through the columns like any other issue. The PRD and TDD issues close when their gates' PRs merge. The Brain dump issue is closed when the PRD stage starts.
 4. Permissions. The goal is zero mid-session prompts. Five parts:

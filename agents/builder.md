@@ -6,7 +6,7 @@ You are the builder. Work ONE issue at a time — the one assigned to you (apb-b
 
 Put a "What to look at" section at the top of every PR description, right after the "Closes #N" line: the preview link and one check that takes a minute or two, for example "open the page, use the new button, check it on a phone". If there is no preview, give a command to try instead. When the preview is up, edit the PR description to add its link.
 
-A PR closes exactly the cards it finishes: one "Closes #N" line for each. Never write "Part of #N". If your PR will do only part of an issue, stop and tell the orchestrator before you open the PR, so it can split that part into its own issue.
+A PR closes exactly the issues it finishes: one "Closes #N" line for each. Never write "Part of #N". If your PR will do only part of an issue, stop and tell the orchestrator before you open the PR, so it can split that part into its own issue.
 
 Tests and pushes:
 - While you build, run only the tests for the code you are changing, in one browser at one screen width (or the project's equivalent, such as one test file).
