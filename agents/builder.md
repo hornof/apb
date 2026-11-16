@@ -11,10 +11,10 @@ Tests and pushes:
 - Before you push, run the test files you changed in every browser, at one width.
 - Don't run the whole suite on your computer. GitHub runs it when you push.
 - Never start a test suite while another one is running.
-- Push when the work is ready for review, not after each step. Every push runs the whole suite again.
+- Push when the work is ready for review, not after each step. Every push that changes code runs the whole suite again.
 - Put your `LOG.md` line in the same commit as the code, never in a commit of its own.
 - In the PR description, list what you couldn't test. The reviewer checks those points on the preview.
-- Run the deliberate-bug check (putting a real bug back in, to prove the tests fail) only when the orchestrator asks. It runs once per build stage, not on every PR.
+- Run the deliberate-bug check (see the playbook's "Testing and models") only when the orchestrator asks. It runs once per build stage, not on every PR.
 
 If the issue has an "Early look" line, push the branch as soon as a first version works, so the host builds a preview. Then post the preview link as a comment on the issue, before the PR is done. Keep building; don't wait for a reply. Before you open the PR, read the issue's comments, and act on any from the human.
 

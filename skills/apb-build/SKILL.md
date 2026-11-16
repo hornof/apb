@@ -8,6 +8,7 @@ description: Build the next unblocked issues from the project board, tests-first
    - Give each builder its own git worktree, made from freshly fetched main.
    - Give each builder its own scratch folder.
    - Don't start an issue early, even if its dependency's PR is open. Wait for the merge.
-4. For an issue marked "Early look", the builder posts the preview link on the issue as soon as a first version is up. Don't stop the build to wait for the human. If they comment, the builder takes it into account.
-5. When the PR is open, move the card to In review and run `apb-review`. It runs one review round, and the builder fixes the Fix items before the human sees the PR.
-6. When you hand the PR to the human, point to its "What to look at" section. The human may have watched along the way, so don't present the PR as new. If the issue had an early look, say what changed since then.
+4. Once per build stage, tell one builder to run the deliberate-bug check (see the playbook's "Testing and models") on its PR. Builders don't run it otherwise.
+5. For an issue marked "Early look", the builder posts the preview link on the issue as soon as a first version is up. Don't stop the build to wait for the human. If they comment, the builder takes it into account.
+6. When the PR is open, move the card to In review and run `apb-review`. It runs one review round, and the builder fixes the Fix items before the human sees the PR.
+7. When you hand the PR to the human, point to its "What to look at" section. The human may have watched along the way, so don't present the PR as new. If the issue had an early look, say what changed since then.

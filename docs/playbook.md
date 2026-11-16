@@ -117,7 +117,7 @@ The build can run with the human watching, or unattended, for example overnight.
 
 Every project keeps a public record of how it was built:
 
-- **`LOG.md`**: one line per build step (what changed, test results). Never edit old lines. The line goes in the same commit as the code: a commit of its own would run the whole test suite again.
+- **`LOG.md`**: one line per build step (what changed, test results). Never edit old lines. The line goes in the same commit as the code: pushed on its own, it starts GitHub's checks again.
 - **`LESSONS.md`**: what the debugging and testing taught, written as it happens.
 - **A final writeup**: how long it took, what it cost, number of PRs and tests, what worked and what didn't.
 
@@ -134,7 +134,7 @@ The apb plugin keeps a log of what every Claude session and agent does in the pr
 - **For logic-heavy code, go beyond example tests:**
   - property-based tests checked against an independent second implementation
   - mutation testing to measure how good the tests are
-  - one test that puts a real bug back in, to prove the tests catch it. Do this once per build stage, not on every PR.
+  - a deliberate-bug check: put one real bug back in, to prove the tests catch it. Do it once per build stage, not on every PR.
 - **Run each test only where it's needed.** Most of a build's time goes to running tests.
   - While building, the builder runs only the tests for the code it's changing, in one browser at one screen width.
   - Before pushing, it runs the test files it changed in every browser, at one width.
