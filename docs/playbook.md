@@ -18,7 +18,7 @@ Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Che
    Every PR gets this review before the human sees it, whether it holds code or only docs. There is one review round. The reviewer sorts each item into one of three buckets:
    - **Fix**: the reviewer is sure. It is fixed straight away, and the orchestrator checks the fix.
    - **Note**: the reviewer isn't sure. The human skims it.
-   - **Decision**: taste or a trade-off. It comes with a recommended answer, which stands unless the human overrides it.
+   - **Decision**: taste or a trade-off. It comes with a recommended answer. Nothing changes for it until the human answers or resolves its thread with no reply, which accepts the recommendation.
 
    The human's overrides and new rules go in the project's `docs/reviewer-notes.md`, which the reviewer reads before every review.
 6. **Check the live product** after every merge: for example, the site's content, layout and links, or that the package installs and runs. Passing tests don't prove the product works.
