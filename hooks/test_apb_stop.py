@@ -422,6 +422,98 @@ class Reminder(unittest.TestCase):
         self.assertIn("Reminder, your turn: " + thing, got[0])
 
 
+class ReminderLifetime(unittest.TestCase):
+    """The reminder is the one process apb lets outlive the script that starts it. It is given a
+    deadline and ends there, whatever it is doing (scripts/test_apb_watch.py, TimeLimits)."""
+
+    def setUp(self):
+        self.project = apb_project()
+        self.bin, self.calls = fake_osascript()
+
+    def remind(self, deadline, wait="30", bin_folder=None):
+        env = dict(os.environ, APB_REMIND_AFTER_SECONDS=wait,
+                   PATH=(bin_folder or self.bin) + os.pathsep + os.environ["PATH"])
+        start = time.time()
+        r = subprocess.run([sys.executable, SCRIPT, "remind", self.project, "s1", "merge PR #44", "0",
+                            "%.3f" % deadline], env=env, capture_output=True, timeout=15)
+        return r, time.time() - start
+
+    def test_a_long_wait_ends_at_the_deadline(self):
+        r, took = self.remind(time.time() + 1.5)
+        self.assertGreater(took, 1.0)
+        self.assertLess(took, 4.0)
+        self.assertFalse(os.path.exists(self.calls))  # ended without an alert
+
+    def test_a_deadline_already_past_ends_at_once(self):
+        r, took = self.remind(time.time() - 5)
+        self.assertLess(took, 2.0)
+        self.assertFalse(os.path.exists(self.calls))
+
+    def test_a_stuck_alert_ends_at_the_deadline(self):
+        folder = tempfile.mkdtemp()
+        stuck = os.path.join(folder, "osascript")
+        with open(stuck, "w") as f:
+            f.write("#!/bin/sh\nexec sleep 29.4817\n")  # an odd length, to find it in ps
+        os.chmod(stuck, os.stat(stuck).st_mode | stat.S_IEXEC)
+        # Pass or fail, the fake alert does not outlive the test.
+        self.addCleanup(subprocess.run, ["pkill", "-f", "sleep 29.4817"], capture_output=True, timeout=10)
+        r, took = self.remind(time.time() + 2.5, wait="0.5", bin_folder=folder)
+        self.assertGreater(took, 2.0)
+        self.assertLess(took, 5.0)
+        ps = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=10)
+        self.assertEqual([l for l in ps.stdout.splitlines() if "sleep 29.4817" in l], [])  # it ended too
+
+    def test_the_hook_gives_the_reminder_a_deadline_after_its_wait(self):
+        started = []
+
+        class FakePopen:
+            def __init__(self, args, **kwargs):
+                started.append((args, kwargs))
+
+        old_popen, old_env = stop.subprocess.Popen, os.environ.get("APB_REMIND_AFTER_SECONDS")
+        stop.subprocess.Popen = FakePopen
+        os.environ["APB_REMIND_AFTER_SECONDS"] = "7"
+        try:
+            now = time.time()
+            stop.start_reminder(self.project, "s1", "merge PR #44", 123)
+        finally:
+            stop.subprocess.Popen = old_popen
+            if old_env is None:
+                os.environ.pop("APB_REMIND_AFTER_SECONDS")
+            else:
+                os.environ["APB_REMIND_AFTER_SECONDS"] = old_env
+        self.assertEqual(len(started), 1)
+        args, kwargs = started[0]
+        self.assertEqual(args[2:7], ["remind", self.project, "s1", "merge PR #44", "123"])
+        deadline = float(args[7])
+        self.assertGreater(deadline, now + 7 + 10)  # room for the alert's own 10 s limit
+        self.assertLess(deadline, now + 7 + stop.LIFETIME_MARGIN + 1)
+        self.assertTrue(kwargs.get("start_new_session"))
+
+
+def reminders_left():
+    """Lines of `ps` for reminders this test file started (their project is a temporary folder)."""
+    r = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=10)
+    temp = os.path.realpath(tempfile.gettempdir())
+    return [l for l in r.stdout.splitlines()
+            if SCRIPT in l and " remind " in l and (temp in l or tempfile.gettempdir() in l)]
+
+
+def tearDownModule():
+    """No test leaves a reminder running: each ends by itself, at the latest at its deadline."""
+    deadline = time.time() + 20
+    while reminders_left() and time.time() < deadline:
+        time.sleep(0.5)
+    left = reminders_left()
+    for line in left:
+        try:
+            os.kill(int(line.split()[0]), 9)
+        except (OSError, ValueError):
+            pass
+    if left:
+        raise AssertionError("reminders still running after the tests:\n" + "\n".join(left))
+
+
 class Properties(unittest.TestCase):
     """Random session histories. A simulation tracks running agents, how each turn started and
     what happened in it; its answer must match the hook's, which only reads the events file."""

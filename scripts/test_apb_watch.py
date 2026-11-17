@@ -740,21 +740,66 @@ class RealScript(unittest.TestCase):
 class TimeLimits(unittest.TestCase):
     """apb's own scripts follow the rule apb sets: every child process they start has a time limit."""
 
-    def test_every_subprocess_call_has_a_timeout(self):
+    # The only processes allowed to outlive the script that starts them, by (file, function).
+    # Each one must end itself at a deadline it is given, and have a test that checks it does.
+    DETACHED = {
+        ("hooks/apb-stop.py", "start_reminder"):
+            "the reminder outlives the Stop hook; it ends at the deadline it is given "
+            "(hooks/test_apb_stop.py, ReminderLifetime)",
+    }
+
+    def calls(self):
+        """(file, enclosing function, call name, call node) for every call in apb's own scripts."""
         files = [f for f in glob.glob(os.path.join(REPO, "*", "*.py")) if not os.path.basename(f).startswith("test_")]
         self.assertIn(SCRIPT, files)
         for path in files:
             with open(path, encoding="utf-8") as f:
                 tree = ast.parse(f.read())
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Call):
-                    continue
-                name = ast.unparse(node.func)
-                if name in ("os.system", "os.popen", "subprocess.Popen", "subprocess.call",
-                            "subprocess.check_call", "subprocess.check_output", "subprocess.getoutput"):
-                    self.fail("%s:%d uses %s; use subprocess.run with a timeout" % (path, node.lineno, name))
-                if name == "subprocess.run":
-                    self.assertIn("timeout", [k.arg for k in node.keywords], "%s:%d" % (path, node.lineno))
+            rel = os.path.relpath(path, REPO).replace(os.sep, "/")
+            for func, node in self.calls_by_function(tree):
+                yield rel, func, ast.unparse(node.func), node
+
+    @staticmethod
+    def calls_by_function(tree):
+        """(name of the innermost function holding the call, or None, call node) for every call."""
+        def walk(node, func):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    yield from walk(child, child.name)
+                else:
+                    if isinstance(child, ast.Call):
+                        yield func, child
+                    yield from walk(child, func)
+        return list(walk(tree, None))
+
+    def test_every_subprocess_call_has_a_timeout(self):
+        for rel, func, name, node in self.calls():
+            where = "%s:%d" % (rel, node.lineno)
+            if name == "subprocess.Popen" and (rel, func) in self.DETACHED:
+                continue
+            if name in ("os.system", "os.popen", "subprocess.Popen", "subprocess.call",
+                        "subprocess.check_call", "subprocess.check_output", "subprocess.getoutput"):
+                self.fail("%s uses %s; use subprocess.run with a timeout" % (where, name))
+            if name == "subprocess.run":
+                self.assertIn("timeout", [k.arg for k in node.keywords], where)
+
+    def test_each_detached_process_is_still_started_where_the_list_says(self):
+        found = {(rel, func) for rel, func, name, _ in self.calls() if name == "subprocess.Popen"}
+        for place in self.DETACHED:
+            self.assertIn(place, found, "stale entry in DETACHED: %s, %s" % place)
+
+    def test_each_call_is_credited_to_its_innermost_function(self):
+        tree = ast.parse("import subprocess\n"
+                         "subprocess.Popen(['top'])\n"
+                         "def start_reminder():\n"
+                         "    def helper():\n"
+                         "        subprocess.Popen(['inner'])\n"
+                         "    subprocess.Popen(['outer'])\n"
+                         "def other():\n"
+                         "    subprocess.Popen(['other'])\n")
+        got = {(func, ast.literal_eval(node.args[0])[0])
+               for func, node in self.calls_by_function(tree) if ast.unparse(node.func) == "subprocess.Popen"}
+        self.assertEqual(got, {(None, "top"), ("helper", "inner"), ("start_reminder", "outer"), ("other", "other")})
 
 
 if __name__ == "__main__":

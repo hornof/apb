@@ -16,6 +16,8 @@ which hooks/apb-events.py writes.
 - If the human holds the ball, it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
   new first line ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
+  The reminder outlives the hook, so it is given a deadline (the wait plus LIFETIME_MARGIN) and
+  ends there, with any alert it started.
 
 Any error lets the stop through: the hook never stops Claude from finishing.
 """
@@ -23,12 +25,14 @@ import calendar
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
 
 ABANDONED = 3 * 3600  # an agent silent this long is taken to be gone; same as scripts/apb-watch.py
 REMIND_AFTER = 30 * 60  # seconds the human holds the ball, with no action, before one reminder
+LIFETIME_MARGIN = 60  # seconds the reminder may run past its wait before its deadline ends it
 MAX = 300  # longest string kept in a line, in characters
 
 REASON = ("Say who holds the ball. Your work just ran out, so start the message with one of these "
@@ -224,10 +228,36 @@ def handle(p, project, now):
     return {"send_back": False, "remind": todo if holder == "human" else None, "end": end}
 
 
+def remind_after():
+    """Seconds to wait before the reminder; tests shorten it with APB_REMIND_AFTER_SECONDS."""
+    return float(os.environ.get("APB_REMIND_AFTER_SECONDS", REMIND_AFTER))
+
+
 def start_reminder(project, session, todo, start):
-    subprocess.Popen([sys.executable, os.path.abspath(__file__), "remind", project, session, todo, str(start)],
+    """Start the reminder in the background. It is the one process apb lets outlive the script that
+    starts it, so it gets a deadline: the wait plus LIFETIME_MARGIN. It ends there, whatever it is doing."""
+    deadline = time.time() + remind_after() + LIFETIME_MARGIN
+    subprocess.Popen([sys.executable, os.path.abspath(__file__), "remind", project, session, todo, str(start),
+                      "%.3f" % deadline],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      start_new_session=True, close_fds=True)
+
+
+class Deadline(BaseException):
+    """Raised by the alarm at the reminder's deadline. subprocess.run kills its child when it sees it."""
+
+
+def stop_at(deadline):
+    """End this process at deadline (seconds since the epoch). Returns False if it has already passed."""
+    left = deadline - time.time()
+    if left <= 0:
+        return False
+
+    def ring(signum, frame):
+        raise Deadline()
+    signal.signal(signal.SIGALRM, ring)
+    signal.setitimer(signal.ITIMER_REAL, left)
+    return True
 
 
 def human_acted(project, session, start):
@@ -238,10 +268,12 @@ def human_acted(project, session, start):
                for e in read_events(project, start))
 
 
-def remind(project, session, todo, start):
-    """Wait REMIND_AFTER seconds; if the human did nothing in that time, alert once."""
-    wait = float(os.environ.get("APB_REMIND_AFTER_SECONDS", REMIND_AFTER))
-    end = time.time() + wait
+def remind(project, session, todo, start, deadline):
+    """Wait REMIND_AFTER seconds; if the human did nothing in that time, alert once.
+    Ends at deadline, wherever it has got to."""
+    if not stop_at(deadline):
+        return
+    end = time.time() + remind_after()
     while time.time() < end:
         time.sleep(min(5.0, max(0.0, end - time.time())))
         if human_acted(project, session, start):
@@ -257,8 +289,11 @@ def remind(project, session, todo, start):
 
 
 def main():
-    if len(sys.argv) == 6 and sys.argv[1] == "remind":
-        remind(sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]))
+    if len(sys.argv) == 7 and sys.argv[1] == "remind":
+        try:
+            remind(sys.argv[2], sys.argv[3], sys.argv[4], int(sys.argv[5]), float(sys.argv[6]))
+        except Deadline:
+            pass
         return
     p = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     if not isinstance(p, dict):
