@@ -7,7 +7,8 @@ description: Turn an approved TDD's work pieces into GitHub Issues on a Projects
    - Name the issues it can be built at the same time as: "Can be built at the same time as #N, #M", or "Can be built at the same time as: none".
    - Create all the issues first, then add the Needs and Can be built at the same time lines, using the real issue numbers.
    - If the TDD marks the piece "Early look", add this line to the issue: "Early look: post the preview link here once a first version is up."
-2. Add all issues to the repo's Projects board with columns: Todo / In progress / In review / Done. Create the board if missing (setup skill covers it). Use the same board that holds the Brain dump, PRD and TDD issues; a project has one board, never more.
+   - Label every build issue `build` (create the label first if it's missing: `gh label create build --force`). The map artifact counts the build issues by this label, to show "7 of 9 cards done" for the build stage. To drop a card, close its issue as "not planned"; it then counts in neither number. Only build issues get it; the PRD input, PRD and TDD issues don't.
+2. Add all issues to the repo's Projects board with columns: Todo / In progress / In review / Done. Create the board if missing (setup skill covers it). Use the same board that holds the PRD input, PRD and TDD issues; a project has one board, never more.
    - Add the cards to Todo oldest first, so the first card to build is on top. Todo stays in the order the cards will be built in, with the next card on top.
    - Check that the board's "Item closed" automation is on. It isn't always on by default, and GitHub's API can't turn it on. In the browser, on the board: Workflows → Item closed → Edit → set Status to Done → Save and turn on. The orchestrator can do this itself.
 3. The board is the single source of truth for progress — no separate ROADMAP file.

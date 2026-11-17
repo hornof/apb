@@ -13,9 +13,9 @@ Added once there's something to use.
 | File | What it is | Who reads it |
 |---|---|---|
 | docs/collaborator-guide.md | For invited teammates: the steps, in order | teammates |
-| docs/MAP.md | Every piece of the project and where it lives | anyone |
-| docs/STORY.md | The project's turning points for people: decisions, surprises, changes of mind. Start here to learn the project's history | anyone |
-| docs/PRD.md | What it does and for whom (written after the brain dump), with any mockups in docs/mockups/ | collaborator, Claude |
+| docs/MAP.md | Every piece of the project and where it lives. The map artifact is built from it | anyone |
+| docs/HISTORY.md | The project's turning points for people, oldest first: decisions, surprises, changes of mind. Start here to learn the project's history | anyone |
+| docs/PRD.md | What it does and for whom (written from the PRD input), with any mockups in docs/mockups/ | collaborator, Claude |
 | docs/TDD.md | How it's built and tested (written after the PRD is approved) | collaborator, Claude |
 | CLAUDE.md | Rules every Claude session follows in this repo | Claude |
 | .claude/settings.json | What Claude is allowed to do here, shared by everyone | Claude |
