@@ -23,7 +23,7 @@ Humans supply the idea, comment at the gates, review and merge PRs. Claude does 
 | `skills/apb-loop` | Runs the loop unattended over several cards — launch protocol, liveness by commit age, halt conditions |
 | `skills/apb-review` | Runs one review round on every PR, code or docs, in a separate context that did not write it |
 | `agents/builder`, `agents/reviewer` | The two subagents the orchestrator spawns; the separated roles |
-| `hooks/` | Writes `.apb/events.jsonl` in each apb project: one line per message from the human, agent start and stop, shell command, checklist item, turn end and notification, so the orchestrator can see and time each step. A Stop hook makes the orchestrator say who holds the ball when its work runs out, and reminds the human once if they've held it for 30 minutes |
+| `hooks/` | Writes `.apb/events.jsonl` in each apb project: one line per prompt (the human's messages, and the ones Claude Code sends itself, such as a background agent reporting back), agent start and stop, shell command, checklist item, turn end and notification, so the orchestrator can see and time each step. A Stop hook makes the orchestrator say who holds the ball when its work runs out, and reminds the human once if they've held it for 30 minutes |
 | `scripts/apb-watch.py` | Runs in the background while the orchestrator waits. It exits when something needs it: a PR merged, opened or commented on, checks finished, a command stuck with no CPU, an agent gone quiet, or a check-in time |
 | `templates/` | PRD, TDD, repo-CLAUDE.md, README, LOG, LESSONS, MAP, STORY, reviewer-notes and .gitignore starters |
 | `docs/collaborator-guide.md` | Step-by-step onboarding for a teammate new to AI-assisted building |
