@@ -455,6 +455,8 @@ class ReminderLifetime(unittest.TestCase):
         with open(stuck, "w") as f:
             f.write("#!/bin/sh\nexec sleep 29.4817\n")  # an odd length, to find it in ps
         os.chmod(stuck, os.stat(stuck).st_mode | stat.S_IEXEC)
+        # Pass or fail, the fake alert does not outlive the test.
+        self.addCleanup(subprocess.run, ["pkill", "-f", "sleep 29.4817"], capture_output=True, timeout=10)
         r, took = self.remind(time.time() + 2.5, wait="0.5", bin_folder=folder)
         self.assertGreater(took, 2.0)
         self.assertLess(took, 5.0)
