@@ -100,6 +100,7 @@ The human never types git commands; the orchestrator does. The advisor never giv
   - After the first line, one line per card in In progress and In review: what's running, or what it's waiting on, and when it should finish. These lines match the board; a card left out makes the message disagree with the board.
   - Normal case, never all caps.
   - Never a list of maybes. No "left to do" or "optional" sections.
+  - The apb plugin's Stop hook checks this. When the orchestrator's work has just run out and its message doesn't start with one of the three lines, the hook sends it back once, with a quiet note to Claude that starts "Say who holds the ball". The human sees it as hook feedback, not as an error. If the human sends no message for 30 minutes after a "1 thing" or "N things" line, the hook sends one desktop alert (Mac only).
 - **Alert only when it's the human's turn.** Send one desktop alert with a sound with a "1 thing" or "N things" line, when the human gets something new to do. Never alert with "Nothing for you to do right now." On a Mac: `osascript -e 'display notification "Your turn: <what>" with title "Claude Code" sound name "Glass"'`. The human works in other windows while agents run, and the alert tells them when to come back.
   - Never alert for progress, check-ins or agent reports. Alerts that fire on every step look the same as the real one, so the real one gets ignored.
   - If an alert doesn't arrive, check the Mac's Focus mode first: it silences notifications.
@@ -192,8 +193,8 @@ Every project keeps a public record of how it was built:
 
 The apb plugin keeps a log of what every Claude session and agent does in the project: `.apb/events.jsonl`. It writes it only in an apb project, which is a project with `docs/MAP.md`. Git ignores the folder.
 
-- **What it holds:** one line each time an agent starts or stops, a shell command finishes, a checklist item is created or done, a turn ends, or Claude Code shows a notification, such as a permission prompt.
-- **What each line holds:** the time, the event, and the agent's id and type. For a shell command, also the command and its exit status, but not its output.
+- **What it holds:** one line each time a prompt starts a turn: a message from the human, or one Claude Code sends itself, such as a background agent reporting back; an agent starts or stops; a shell command finishes, a checklist item is created or done, a turn ends, or Claude Code shows a notification, such as a permission prompt.
+- **What each line holds:** the time, the event, and the agent's id and type. For a shell command, also the command and its exit status, but not its output. For a prompt, not its text. For a turn's end, who holds the ball, if the message said so, and whether the Stop hook sent the message back.
 - **Who reads it:** the orchestrator. It reads the file to see what the builder and reviewer are doing, to notice a step that has gone quiet, and to time each step. Agents' own time estimates are often wrong; the file's times are not.
 
 ## Testing and models

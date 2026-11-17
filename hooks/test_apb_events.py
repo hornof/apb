@@ -18,9 +18,8 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "apb-events.py")
 HOOKS_JSON = os.path.join(HERE, "hooks.json")
-EVENTS = ["SubagentStart", "SubagentStop", "PostToolUse", "PostToolUseFailure",
+EVENTS = ["UserPromptSubmit", "SubagentStart", "SubagentStop", "PostToolUse", "PostToolUseFailure",
           "TaskCreated", "TaskCompleted", "Stop", "Notification"]
-
 
 def run(payload, project, cwd=None):
     """Run the hook. payload is a dict (sent as JSON) or raw bytes. Returns the finished process."""
@@ -144,6 +143,11 @@ class Writes(unittest.TestCase):
         line = self.one(base("Stop", stop_hook_active=False, last_assistant_message="done"))
         self.assertEqual(line["event"], "Stop")
         self.assertNotIn("agent_id", line)
+
+    def test_prompt_is_logged_without_its_text(self):
+        line = self.one(base("UserPromptSubmit", prompt="my secret plan " * 50))
+        self.assertEqual(line["event"], "UserPromptSubmit")
+        self.assertNotIn("secret", json.dumps(line))
 
     def test_time_is_now_in_utc(self):
         before = time.time()
@@ -313,6 +317,8 @@ class HooksFile(unittest.TestCase):
 
     def test_every_hook_runs_the_script_in_the_background(self):
         for event, groups in self.hooks.items():
+            if event == "Stop":
+                continue  # the Stop hook can send a message back, so Claude Code waits for it
             for hook in groups[0]["hooks"]:
                 self.assertEqual(hook["type"], "command")
                 self.assertEqual(hook["command"], "python3")
