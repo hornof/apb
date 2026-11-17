@@ -15,6 +15,7 @@ Every PR gets one review before the human sees it: code PRs, docs-only PRs, setu
    - No Decisions: "1 thing for you to do right now: merge PR #N." If the PR changes how the product looks, add the preview link: `1 thing for you to do right now: merge PR #N. Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
    - Decisions: "1 thing for you to do right now: 2 decisions on PR #N." The human rules on each one: resolving its thread with no comment accepts the recommendation. A comment on the thread is for you to read and act on. If the human resolves a thread that had nothing to accept, reopen it and ask.
    - Two PRs ready at once: "2 things for you to do right now:" and a numbered list, one PR per line.
+   - Say the hand-off once, when you hand the PR over. Say it again only when the thing changes, for example when a second PR is ready. In between, an answer to a question is just the answer, with no first line.
    - Don't repeat the review items in chat; they are on the PR.
    - Alert the human once, in the same turn, with or without Decisions (see the playbook's "Alert only when it's the human's turn"). Never alert for progress.
 6. Add each override, and each new rule the human sets, as one line in `docs/reviewer-notes.md`, with the PR it came from.
