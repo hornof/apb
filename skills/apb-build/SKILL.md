@@ -7,7 +7,7 @@ description: Build the next unblocked issues from the project board, tests-first
 3. Build independent issues in parallel. If other unblocked issues can be built at the same time (its "Can be built at the same time as" line names them), start a builder on each one now.
    - Give each builder its own git worktree, made from freshly fetched main.
    - Don't start an issue early, even if its dependency's PR is open. Wait for the merge.
-4. Never wait without the watcher (see the playbook's "While Claude waits"). While a builder or reviewer runs, or a PR waits on the human or on GitHub, keep it running in the background in your own shell:
+4. Never wait without the watcher (see the playbook's "While Claude waits"). While a builder or reviewer runs, or a PR waits on the human or on GitHub, keep the watcher running in the background in your own shell:
    `python3 <apb plugin folder>/scripts/apb-watch.py --state <your scratch folder>/watch.json --check-in 5`
    - The apb plugin folder is two folders above this skill's base directory.
    - Leave out `--check-in 5` when no agent is running. Add `--issue N` to watch an issue's comments too.

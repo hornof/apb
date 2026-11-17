@@ -1,8 +1,9 @@
 """Wait in the background, and exit as soon as something needs the orchestrator.
 
 It exits, printing what it found, when:
-- GitHub: a PR is opened, merged or closed, a PR's checks finish, a PR gets new comments or
-  review comments, all of a PR's review comments are resolved, or a watched issue gets new comments.
+- GitHub: a PR is opened, merged or closed, a PR's checks finish, a PR gets new comments, review
+  comments, replies on review comments or reviews, all of a PR's review comments are resolved, or a
+  watched issue gets new comments.
 - Stuck: a command started from one of Claude Code's shells has used no CPU for --stuck-minutes.
 - Quiet: an agent that is still running has written nothing to .apb/events.jsonl for --quiet-minutes.
 - Check-in: --check-in minutes have passed (use it while agents run, to look at their progress).
@@ -151,7 +152,8 @@ def build_query(issues):
     return """query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
     open: pullRequests(first: 50, states: OPEN) { nodes { number title
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-      reviewThreads(first: 100) { nodes { isResolved } } comments { totalCount } } }
+      reviewThreads(first: 100) { nodes { isResolved comments { totalCount } } }
+      comments { totalCount } reviews { totalCount } } }
     merged: pullRequests(first: 20, states: MERGED, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title } }
     closed: pullRequests(first: 20, states: CLOSED, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title } }""" \
         + asks + "\n} }"
@@ -167,7 +169,10 @@ def normalize(repo, issues):
         snap["open"][str(p["number"])] = {
             "title": p["title"], "checks": (rollup or {}).get("state", "NONE"), "threads": len(threads),
             "open_threads": sum(1 for t in threads if not t["isResolved"]),
-            "comments": p["comments"]["totalCount"]}
+            "comments": p["comments"]["totalCount"],
+            # comments in a thread after its first one: replies, for example on a Decision thread
+            "replies": sum(t["comments"]["totalCount"] - 1 for t in threads),
+            "reviews": p["reviews"]["totalCount"]}
         numbers.append(p["number"])
     for kind in ("merged", "closed"):
         for p in repo[kind]["nodes"]:
@@ -200,8 +205,8 @@ def gh_repo():
     return out.stdout.strip()
 
 
-def count(n, word):
-    return "%d %s%s" % (n, word, "" if n == 1 else "s")
+def count(n, word, plural=None):
+    return "%d %s" % (n, word if n == 1 else plural or word + "s")
 
 
 def gh_changes(old, new):
@@ -224,6 +229,12 @@ def gh_changes(old, new):
             out.append("PR #%s: %s" % (n, count(p["threads"] - o["threads"], "new review comment")))
         if p["comments"] > o["comments"]:
             out.append("PR #%s: %s" % (n, count(p["comments"] - o["comments"], "new comment")))
+        # A state saved by an older version has no replies or reviews yet: compare from now on.
+        if p.get("replies", 0) > o.get("replies", p.get("replies", 0)):
+            out.append("PR #%s: %s on a review comment" % (
+                n, count(p["replies"] - o["replies"], "new reply", "new replies")))
+        if p.get("reviews", 0) > o.get("reviews", p.get("reviews", 0)):
+            out.append("PR #%s: %s" % (n, count(p["reviews"] - o["reviews"], "new review")))
         if o["open_threads"] > 0 and p["open_threads"] == 0 and p["threads"] > 0:
             out.append("PR #%s: all review comments resolved" % n)
     for n, i in new["issues"].items():
@@ -344,9 +355,10 @@ def watch(opts, snapshot, ps_text, now, sleep, me):
         found = []
         try:
             new = snapshot(opts.repo, opts.issue)
-            if state.get("github") is not None and state.get("issues") == opts.issue:
+            if state.get("github") is not None:
+                # An issue not watched last time has no old count, so gh_changes leaves it out this once.
                 found += ["GitHub: " + c for c in gh_changes(state["github"], new)]
-            state["github"], state["issues"] = new, opts.issue
+            state["github"] = new
         except Exception as e:  # GitHub down or slow: try again next round
             failures, last_error = failures + 1, str(e)
         procs = {}

@@ -291,7 +291,8 @@ def random_snapshot(rng):
             threads = rng.randint(0, 4)
             snap["open"][str(n)] = {"title": "pr %d" % n, "checks": rng.choice(["NONE", "PENDING", "SUCCESS", "FAILURE"]),
                                     "threads": threads, "open_threads": rng.randint(0, threads),
-                                    "comments": rng.randint(0, 5)}
+                                    "comments": rng.randint(0, 5), "replies": rng.randint(0, 5),
+                                    "reviews": rng.randint(0, 3)}
         else:
             snap[kind][str(n)] = "pr %d" % n
     for n in rng.sample(range(100, 120), rng.randint(0, 3)):
@@ -305,7 +306,7 @@ def mutate(rng, old):
     new = json.loads(json.dumps(old))
     choices = ["opened"]
     if old["open"]:
-        choices += ["merged", "closed", "checks", "threads", "comments"]
+        choices += ["merged", "closed", "checks", "threads", "comments", "replies", "reviews"]
         if any(p["open_threads"] for p in old["open"].values()):
             choices.append("resolved")
     if old["issues"]:
@@ -332,6 +333,10 @@ def mutate(rng, old):
         p["open_threads"] += 1
     elif kind == "comments":
         p["comments"] += 2
+    elif kind == "replies":
+        p["replies"] += 1
+    elif kind == "reviews":
+        p["reviews"] += 1
     elif kind == "resolved":
         p["open_threads"] = 0
     return new, kind, n
@@ -348,6 +353,7 @@ class GitHubChanges(unittest.TestCase):
         rng = random.Random(7)
         words = {"opened": "opened", "merged": "merged", "closed": "closed without merging",
                  "checks": "checks finished", "threads": "new review comment", "comments": "new comment",
+                 "replies": "new reply on a review comment", "reviews": "new review",
                  "resolved": "all review comments resolved"}
         for _ in range(2000):
             old = random_snapshot(rng)
@@ -378,6 +384,31 @@ class GitHubChanges(unittest.TestCase):
         self.assertEqual(w.gh_changes(old, new), ["PR #5: 1 new review comment", "PR #5: 2 new comments",
                                                   "Issue #25: 1 new comment (C)"])
 
+    def test_a_reply_on_a_review_thread_is_news(self):
+        old = {"open": {"5": {"title": "A", "checks": "NONE", "threads": 2, "open_threads": 1, "comments": 0,
+                              "replies": 1, "reviews": 1}},
+               "merged": {}, "closed": {}, "issues": {}, "max": 5}
+        new = json.loads(json.dumps(old))
+        new["open"]["5"]["replies"] = 2
+        self.assertEqual(w.gh_changes(old, new), ["PR #5: 1 new reply on a review comment"])
+        new["open"]["5"]["replies"] = 3
+        self.assertEqual(w.gh_changes(old, new), ["PR #5: 2 new replies on a review comment"])
+
+    def test_a_submitted_review_is_news(self):
+        old = {"open": {"5": {"title": "A", "checks": "NONE", "threads": 0, "open_threads": 0, "comments": 0,
+                              "replies": 0, "reviews": 0}},
+               "merged": {}, "closed": {}, "issues": {}, "max": 5}
+        new = json.loads(json.dumps(old))
+        new["open"]["5"]["reviews"] = 1
+        self.assertEqual(w.gh_changes(old, new), ["PR #5: 1 new review"])
+
+    def test_a_state_saved_before_replies_were_counted_still_works(self):
+        old = {"open": {"5": {"title": "A", "checks": "NONE", "threads": 1, "open_threads": 1, "comments": 0}},
+               "merged": {}, "closed": {}, "issues": {}, "max": 5}
+        new = json.loads(json.dumps(old))
+        new["open"]["5"].update(replies=3, reviews=2)
+        self.assertEqual(w.gh_changes(old, new), [])
+
     def test_deleted_comments_are_not_news(self):
         old = {"open": {"5": {"title": "A", "checks": "NONE", "threads": 3, "open_threads": 2, "comments": 4}},
                "merged": {}, "closed": {}, "issues": {"25": {"title": "C", "state": "OPEN", "comments": 3}}, "max": 5}
@@ -396,16 +427,20 @@ class GitHubChanges(unittest.TestCase):
     def test_normalize_reads_the_graphql_answer(self):
         data = {"open": {"nodes": [
             {"number": 5, "title": "A", "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]},
-             "reviewThreads": {"nodes": [{"isResolved": True}, {"isResolved": False}, {"isResolved": False}]},
-             "comments": {"totalCount": 3}},
+             "reviewThreads": {"nodes": [{"isResolved": True, "comments": {"totalCount": 3}},
+                                         {"isResolved": False, "comments": {"totalCount": 1}},
+                                         {"isResolved": False, "comments": {"totalCount": 2}}]},
+             "comments": {"totalCount": 3}, "reviews": {"totalCount": 4}},
             {"number": 6, "title": "B", "commits": {"nodes": [{"commit": {"statusCheckRollup": None}}]},
-             "reviewThreads": {"nodes": []}, "comments": {"totalCount": 0}},
-            {"number": 7, "title": "C", "commits": {"nodes": []}, "reviewThreads": {"nodes": []}, "comments": {"totalCount": 0}}]},
+             "reviewThreads": {"nodes": []}, "comments": {"totalCount": 0}, "reviews": {"totalCount": 0}},
+            {"number": 7, "title": "C", "commits": {"nodes": []}, "reviewThreads": {"nodes": []},
+             "comments": {"totalCount": 0}, "reviews": {"totalCount": 0}}]},
             "merged": {"nodes": [{"number": 4, "title": "M"}]},
             "closed": {"nodes": [{"number": 3, "title": "X"}]},
             "i25": {"title": "Coordination", "state": "OPEN", "comments": {"totalCount": 12}}}
         snap = w.normalize(data, [25])
-        self.assertEqual(snap["open"]["5"], {"title": "A", "checks": "SUCCESS", "threads": 3, "open_threads": 2, "comments": 3})
+        self.assertEqual(snap["open"]["5"], {"title": "A", "checks": "SUCCESS", "threads": 3, "open_threads": 2, "comments": 3,
+                                            "replies": 3, "reviews": 4})
         self.assertEqual(snap["open"]["6"]["checks"], "NONE")
         self.assertEqual(snap["open"]["7"]["checks"], "NONE")
         self.assertEqual(snap["merged"], {"4": "M"})
@@ -543,6 +578,21 @@ class Loop(unittest.TestCase):
         self.assertEqual(out[1:], ["GitHub: PR #5 checks finished: FAILURE"])
         self.assertEqual(self.clock.t, 1_000_000.0 + 60)  # no sleep before the first check
 
+    def test_watching_a_new_issue_keeps_the_pr_changes_made_meanwhile(self):
+        base = {"open": {"5": {"title": "A", "checks": "SUCCESS", "threads": 0, "open_threads": 0, "comments": 0}},
+                "merged": {}, "closed": {}, "issues": {}, "max": 5}
+        self.snaps = [base]
+        self.run_watch("--limit", "1")
+        merged = {"open": {}, "merged": {"5": "A"}, "closed": {},
+                  "issues": {"25": {"title": "C", "state": "OPEN", "comments": 7}}, "max": 5}
+        more = json.loads(json.dumps(merged))
+        more["issues"]["25"]["comments"] = 8
+        self.snaps = [merged, more]
+        out = self.run_watch("--issue", "25")
+        self.assertEqual(out[1:], ["GitHub: PR #5 merged: A"])  # the issue's 7 old comments are not news
+        out = self.run_watch("--issue", "25")
+        self.assertEqual(out[1:], ["GitHub: Issue #25: 1 new comment (C)"])
+
     def test_nothing_happens_until_the_limit(self):
         self.snaps = [{"open": {}, "merged": {}, "closed": {}, "issues": {}, "max": 0}]
         out = self.run_watch("--limit", "5")
@@ -608,7 +658,8 @@ print(json.dumps({"data": {"repository": a}}))
 
 def gh_answer(open_prs=(), merged=()):
     return {"open": {"nodes": [{"number": n, "title": "pr %d" % n, "commits": {"nodes": []},
-                                "reviewThreads": {"nodes": []}, "comments": {"totalCount": 0}} for n in open_prs]},
+                                "reviewThreads": {"nodes": []}, "comments": {"totalCount": 0},
+                                "reviews": {"totalCount": 0}} for n in open_prs]},
             "merged": {"nodes": [{"number": n, "title": "pr %d" % n} for n in merged]},
             "closed": {"nodes": []}}
 
