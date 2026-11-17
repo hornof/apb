@@ -1,0 +1,505 @@
+"""Tests for apb-stop.py, the Stop hook. Run from the repo root: python3 -m unittest discover hooks
+
+The hook decides, when the orchestrator's turn ends, whether its work just ran out and, if so,
+whether the message starts with one of the playbook's three first lines. Example tests check each
+rule; property tests build random session histories and compare the hook's decision with a separate
+simulation that tracks the same state while it writes the events.
+"""
+import importlib.util
+import json
+import os
+import random
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+SCRIPT = os.path.join(HERE, "apb-stop.py")
+HOOKS_JSON = os.path.join(HERE, "hooks.json")
+
+spec = importlib.util.spec_from_file_location("apb_stop", SCRIPT)
+stop = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(stop)
+
+NOTHING = "Nothing for you to do right now. Waiting on GitHub checks for PR #40, about 8 minutes."
+ONE = "1 thing for you to do right now: merge PR #44."
+MANY = "2 things for you to do right now:\n1. Merge PR #44.\n2. Answer the question on #41."
+
+
+def apb_project():
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "docs"))
+    with open(os.path.join(d, "docs", "MAP.md"), "w") as f:
+        f.write("# map\n")
+    return d
+
+
+def stamp(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".000Z"
+
+
+def write_events(project, events):
+    os.makedirs(os.path.join(project, ".apb"), exist_ok=True)
+    with open(os.path.join(project, ".apb", "events.jsonl"), "a", encoding="utf-8") as f:
+        for e in events:
+            e = dict(e)
+            e.setdefault("time", stamp(time.time()))
+            e.setdefault("session", "s1")
+            f.write(json.dumps(e) + "\n")
+
+
+def read_events(project):
+    path = os.path.join(project, ".apb", "events.jsonl")
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        return [json.loads(line) for line in f.read().splitlines()]
+
+
+def payload(message, **extra):
+    p = {"session_id": "s1", "transcript_path": "/none.jsonl", "cwd": "/somewhere",
+         "hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": message}
+    p.update(extra)
+    return p
+
+
+def fake_osascript():
+    """A folder holding an osascript that records its arguments, so tests never alert the Mac.
+    Returns (folder, the file it records to)."""
+    folder = tempfile.mkdtemp()
+    calls = os.path.join(folder, "calls.txt")
+    fake = os.path.join(folder, "osascript")
+    with open(fake, "w") as f:
+        f.write("#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> '%s'; done\n"
+                "echo --- >> '%s'\n" % (calls, calls))
+    os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC)
+    return folder, calls
+
+
+DEFAULT_BIN, _ = fake_osascript()
+
+
+def run(p, project, env_extra=None):
+    data = p if isinstance(p, bytes) else json.dumps(p).encode()
+    env = dict(os.environ)
+    env.pop("CLAUDE_PROJECT_DIR", None)
+    if project is not None:
+        env["CLAUDE_PROJECT_DIR"] = project
+    env["PATH"] = DEFAULT_BIN + os.pathsep + env["PATH"]
+    env["APB_REMIND_AFTER_SECONDS"] = "1"
+    env.update(env_extra or {})
+    return subprocess.run([sys.executable, SCRIPT], input=data, capture_output=True, env=env,
+                          cwd=tempfile.gettempdir(), timeout=10)
+
+
+def blocked(r):
+    if not r.stdout.strip():
+        return False
+    out = json.loads(r.stdout)
+    return out.get("decision") == "block"
+
+
+# The events of one finished builder: the orchestrator started it, it ran a command, it stopped.
+FINISHED_AGENT = [{"event": "UserPromptSubmit"},
+                  {"event": "SubagentStart", "agent_id": "b1", "agent_type": "apb:builder"},
+                  {"event": "PostToolUse", "agent_id": "b1", "command": "npm test", "exit": 0},
+                  {"event": "SubagentStop", "agent_id": "b1", "agent_type": "apb:builder"}]
+
+
+class FirstLine(unittest.TestCase):
+    def test_the_three_forms(self):
+        self.assertEqual(stop.first_line(NOTHING), ("claude", None))
+        self.assertEqual(stop.first_line(ONE), ("human", "merge PR #44"))
+        self.assertEqual(stop.first_line(MANY), ("human", "2 things"))
+
+    def test_text_after_the_first_line_is_allowed(self):
+        self.assertEqual(stop.first_line(ONE + "\n\nPR #44 (Card #41): in review.")[0], "human")
+        self.assertEqual(stop.first_line(NOTHING + "\nPR #40: checks running.")[0], "claude")
+
+    def test_bold_and_leading_blank_lines_are_ignored(self):
+        self.assertEqual(stop.first_line("\n\n**" + ONE + "**")[0], "human")
+
+    def test_any_count_with_a_matching_list(self):
+        for n in [2, 3, 9, 10, 12]:
+            message = "%d things for you to do right now:\n" % n + "\n".join(
+                "%d. Thing %d." % (i, i) for i in range(1, n + 1))
+            self.assertEqual(stop.first_line(message), ("human", "%d things" % n))
+
+    def test_the_count_must_match_the_list(self):
+        self.assertIsNone(stop.first_line("3 things for you to do right now:\n1. A.\n2. B."))
+        self.assertIsNone(stop.first_line("2 things for you to do right now:\n1. A.\n2. B.\n3. C."))
+        self.assertIsNone(stop.first_line("2 things for you to do right now:"))
+        self.assertIsNone(stop.first_line("2 things for you to do right now:\n1. A.\n3. B."))
+
+    def test_wrong_forms(self):
+        for message in [None, "", "PR #37: nothing for you to decide, merge-ready.",
+                        "Done. The builder finished.",
+                        "Nothing for you to do right now.",  # no "Waiting on"
+                        "Nothing for you to do right now. Waiting on CI.",  # no time
+                        "1 things for you to do right now: merge PR #44.",
+                        "1 things for you to do right now:\n1. Merge PR #44.",
+                        "Nothing for you to do right now. Waiting on CI, about soon.",
+                        "0 things for you to do right now:",
+                        "1 thing for you to do right now:",
+                        "NOTHING FOR YOU TO DO RIGHT NOW. Waiting on CI, about 5 minutes.",
+                        "Here is the summary.\n" + ONE,  # not the first line
+                        "2 things for you to do right now: merge and answer."]:
+            self.assertIsNone(stop.first_line(message), message)
+
+
+class WorkRanOut(unittest.TestCase):
+    now = time.time()
+
+    def events(self, *groups):
+        out = []
+        for g in groups:
+            out.extend(dict(e, session=e.get("session", "s1"), time=stamp(self.now)) for e in g)
+        return out
+
+    def test_last_agent_finished_in_this_turn(self):
+        self.assertTrue(stop.work_ran_out(self.events(FINISHED_AGENT), "s1", self.now))
+
+    def test_an_agent_still_running(self):
+        evs = self.events(FINISHED_AGENT, [{"event": "SubagentStart", "agent_id": "r1"}])
+        self.assertFalse(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_an_agent_running_in_another_session_counts(self):
+        evs = self.events(FINISHED_AGENT, [{"event": "SubagentStart", "agent_id": "r1", "session": "s2"}])
+        self.assertFalse(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_an_agent_silent_for_hours_is_taken_to_be_gone(self):
+        old = dict(event="SubagentStart", agent_id="x", session="s1", time=stamp(self.now - 4 * 3600))
+        self.assertTrue(stop.work_ran_out([old] + self.events(FINISHED_AGENT), "s1", self.now))
+
+    def test_an_answer_after_the_stop_is_not_a_stop(self):
+        evs = self.events(FINISHED_AGENT, [{"event": "Stop"}, {"event": "UserPromptSubmit"}])
+        self.assertFalse(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_a_blocked_stop_does_not_end_the_turn(self):
+        evs = self.events(FINISHED_AGENT[1:], [{"event": "Stop", "blocked": True}])
+        self.assertTrue(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_another_sessions_prompt_does_not_start_this_turn(self):
+        evs = self.events([{"event": "UserPromptSubmit"}, {"event": "Stop"},
+                           {"event": "UserPromptSubmit", "session": "s2"}])
+        self.assertTrue(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_background_tasks_from_claude_code_decide_what_is_running(self):
+        evs = self.events(FINISHED_AGENT)
+        shell = [{"id": "t1", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
+        self.assertFalse(stop.work_ran_out(evs, "s1", self.now, shell))
+        self.assertTrue(stop.work_ran_out(evs, "s1", self.now, []))
+        # A watcher started in this turn, already gone by the time the turn ends: nothing runs.
+        evs2 = self.events(FINISHED_AGENT, [{"event": "PostToolUse", "command": "w", "background": True}])
+        self.assertTrue(stop.work_ran_out(evs2, "s1", self.now, []))
+        # An agent the events file still thinks is running, but Claude Code says is gone.
+        evs3 = self.events(FINISHED_AGENT, [{"event": "SubagentStart", "agent_id": "r1"}])
+        self.assertTrue(stop.work_ran_out(evs3, "s1", self.now, []))
+
+    def test_another_sessions_stop_does_not_end_this_turn(self):
+        evs = self.events(FINISHED_AGENT, [{"event": "Stop", "session": "s2"}])
+        self.assertTrue(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_a_watcher_finishing_wakes_a_turn_with_no_prompt(self):
+        evs = self.events([{"event": "UserPromptSubmit"},
+                           {"event": "PostToolUse", "command": "python3 apb-watch.py", "background": True},
+                           {"event": "Stop"}])
+        self.assertTrue(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_a_watcher_started_in_this_turn_is_still_running(self):
+        evs = self.events(FINISHED_AGENT,
+                          [{"event": "PostToolUse", "command": "python3 apb-watch.py", "background": True}])
+        self.assertFalse(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_a_plain_question_and_answer(self):
+        evs = self.events([{"event": "UserPromptSubmit"}, {"event": "Stop"}, {"event": "UserPromptSubmit"},
+                           {"event": "PostToolUse", "command": "git status", "exit": 0}])
+        self.assertFalse(stop.work_ran_out(evs, "s1", self.now))
+
+    def test_without_any_prompt_lines_a_turn_with_no_agent_is_not_a_stop(self):
+        # Prompts not logged (an older plugin wrote the file): don't guess.
+        self.assertFalse(stop.work_ran_out(self.events([{"event": "Stop"}]), "s1", self.now))
+
+
+class Hook(unittest.TestCase):
+    """The hook run the way Claude Code runs it."""
+
+    def setUp(self):
+        self.project = apb_project()
+
+    def test_blocks_when_the_work_ran_out_and_the_line_is_missing(self):
+        write_events(self.project, FINISHED_AGENT)
+        r = run(payload("PR #44 is ready. The reviewer found nothing."), self.project)
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)
+        self.assertEqual(out["decision"], "block")
+        self.assertIn("say who holds the ball", out["reason"].lower())
+        for form in ["Nothing for you to do right now.", "1 thing for you to do right now:",
+                     "things for you to do right now:"]:
+            self.assertIn(form, out["reason"])
+        last = read_events(self.project)[-1]
+        self.assertEqual((last["event"], last["blocked"]), ("Stop", True))
+
+    def test_allows_each_of_the_three_forms(self):
+        for message in [NOTHING, ONE, MANY]:
+            project = apb_project()
+            write_events(project, FINISHED_AGENT)
+            r = run(payload(message), project)
+            self.assertFalse(blocked(r), message)
+            last = read_events(project)[-1]
+            self.assertEqual(last["event"], "Stop")
+            self.assertNotIn("blocked", last)
+
+    def test_the_stop_line_records_who_holds_the_ball(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(ONE), self.project)
+        last = read_events(self.project)[-1]
+        self.assertEqual((last["holder"], last["todo"]), ("human", "merge PR #44"))
+
+    def test_never_blocks_twice_in_a_row(self):
+        write_events(self.project, FINISHED_AGENT)
+        self.assertTrue(blocked(run(payload("Done."), self.project)))
+        self.assertFalse(blocked(run(payload("Done.", stop_hook_active=True), self.project)))
+
+    def test_does_not_block_an_answer_between_stops(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(NOTHING), self.project)
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        self.assertFalse(blocked(run(payload("The PR changes two files."), self.project)))
+
+    def test_does_not_block_while_an_agent_runs(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"},
+                                    {"event": "SubagentStart", "agent_id": "b1", "agent_type": "apb:builder"}])
+        self.assertFalse(blocked(run(payload("Started the builder."), self.project)))
+
+    def test_does_not_block_while_claude_code_lists_background_work(self):
+        write_events(self.project, FINISHED_AGENT)
+        tasks = [{"id": "t1", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
+        self.assertFalse(blocked(run(payload("Watching PR #44.", background_tasks=tasks), self.project)))
+        self.assertTrue(blocked(run(payload("Done.", background_tasks=[]), self.project)))
+
+    def test_reads_the_message_from_the_transcript_when_it_is_not_given(self):
+        write_events(self.project, FINISHED_AGENT)
+        transcript = os.path.join(self.project, "t.jsonl")
+        with open(transcript, "w") as f:
+            f.write(json.dumps({"type": "user", "message": {"content": "go"}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "Working on it."}]}}) + "\n")
+            f.write(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "text", "text": NOTHING}]}}) + "\n")
+        p = payload(None, transcript_path=transcript)
+        del p["last_assistant_message"]
+        self.assertFalse(blocked(run(p, self.project)))
+        p_bad = dict(p)
+        with open(transcript, "a") as f:
+            f.write(json.dumps({"type": "assistant", "message": {"content": [
+                {"type": "text", "text": "All done."}]}}) + "\n")
+        self.assertTrue(blocked(run(p_bad, self.project)))
+
+    def test_non_apb_folder_gets_nothing(self):
+        d = tempfile.mkdtemp()
+        r = run(payload("Done."), d)
+        self.assertEqual((r.returncode, r.stdout, r.stderr), (0, b"", b""))
+        self.assertEqual(os.listdir(d), [])
+
+    def test_bad_input_never_blocks(self):
+        for bad in [b"", b"not json", b"[1]", b"null", b"{", b"\xff\xfe",
+                    b'{"hook_event_name": "Stop"}', b'{"hook_event_name": "Stop", "session_id": 5}',
+                    b'{"hook_event_name": "Stop", "last_assistant_message": 7}']:
+            r = run(bad, self.project)
+            self.assertEqual((r.returncode, r.stdout, r.stderr), (0, b"", b""), bad)
+
+    def test_a_broken_events_file_never_blocks(self):
+        os.makedirs(os.path.join(self.project, ".apb"))
+        with open(os.path.join(self.project, ".apb", "events.jsonl"), "wb") as f:
+            f.write(b"\xff not json\n{\"event\": 5}\n[]\n")
+        r = run(payload("Done."), self.project)
+        self.assertEqual(r.returncode, 0)
+        self.assertFalse(blocked(r))
+
+    def test_it_is_fast_on_a_long_events_file(self):
+        write_events(self.project, FINISHED_AGENT * 5000)
+        start = time.time()
+        run(payload(NOTHING), self.project)
+        self.assertLess(time.time() - start, 3.0)
+
+
+class Reminder(unittest.TestCase):
+    """Rule 4: the human has held the ball for a while with no action: one reminder."""
+
+    def setUp(self):
+        self.project = apb_project()
+        self.bin, self.calls = fake_osascript()
+        self.env = {"APB_REMIND_AFTER_SECONDS": "1", "PATH": self.bin + os.pathsep + os.environ["PATH"]}
+
+    def alerts(self, wait):
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            time.sleep(0.2)
+        if not os.path.exists(self.calls):
+            return []
+        with open(self.calls) as f:
+            return [a for a in f.read().split("---\n") if a.strip()]
+
+    def test_one_reminder_when_the_human_holds_the_ball(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(ONE), self.project, self.env)
+        got = self.alerts(3.5)
+        self.assertEqual(len(got), 1)
+        self.assertIn("Reminder, your turn: merge PR #44", got[0])
+        self.assertIn("Glass", got[0])
+
+    def test_reminder_for_several_things(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(MANY), self.project, self.env)
+        got = self.alerts(3.5)
+        self.assertEqual(len(got), 1)
+        self.assertIn("Reminder, your turn: 2 things", got[0])
+
+    def test_no_reminder_when_claude_holds_the_ball(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(NOTHING), self.project, self.env)
+        self.assertEqual(self.alerts(3), [])
+
+    def test_no_reminder_after_the_human_acts(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(ONE), self.project, self.env)
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        self.assertEqual(self.alerts(3), [])
+
+    def test_an_answer_while_the_human_holds_the_ball_starts_a_new_wait(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(ONE), self.project, {"APB_REMIND_AFTER_SECONDS": "30"})  # cancelled by the next line
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        run(payload("The PR changes two files."), self.project, self.env)
+        got = self.alerts(3.5)
+        self.assertEqual(len(got), 1)
+        self.assertIn("merge PR #44", got[0])
+
+    def test_agent_activity_does_not_cancel_it(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(ONE), self.project, self.env)
+        write_events(self.project, [{"event": "SubagentStart", "agent_id": "r9"}])
+        self.assertEqual(len(self.alerts(3.5)), 1)
+
+    def test_the_text_cannot_break_out_of_the_alert(self):
+        write_events(self.project, FINISHED_AGENT)
+        thing = 'say "hi" & `rm -rf x` $(boom) \\ it'
+        run(payload("1 thing for you to do right now: %s." % thing), self.project, self.env)
+        got = self.alerts(3.5)
+        self.assertEqual(len(got), 1)
+        self.assertIn("Reminder, your turn: " + thing, got[0])
+
+
+class Properties(unittest.TestCase):
+    """Random session histories. A simulation tracks running agents, how each turn started and
+    what happened in it; its answer must match the hook's, which only reads the events file."""
+
+    def message(self, rng):
+        """A random message and whether it starts with a valid first line, known by construction."""
+        kind = rng.randrange(6)
+        thing = rng.choice(["merge PR #4", "answer #9", "sign in to Cloudflare"])
+        if kind == 0:
+            return NOTHING, True
+        if kind == 1:
+            return "1 thing for you to do right now: %s." % thing, True
+        n = rng.randint(2, 6)
+        items = ["%d. %s." % (i, thing) for i in range(1, n + 1)]
+        if kind == 2:
+            return "%d things for you to do right now:\n" % n + "\n".join(items), True
+        if kind == 3:
+            return "%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False
+        if kind == 4:
+            return "Progress: " + thing, False
+        return "", False
+
+    def test_random_histories(self):
+        rng = random.Random(41)
+        for history in range(40):
+            project = apb_project()
+            sim_running = set()
+            next_id = [0]
+            checks = 0
+            prompts_logged = rng.random() < 0.9
+            seen_prompt = False
+            sends_tasks = rng.random() < 0.5
+            for turn in range(rng.randint(3, 12)):
+                events = []
+                # Background agents may finish before the turn; one finishing wakes the turn.
+                woken = False
+                for a in sorted(sim_running):
+                    if rng.random() < 0.4:
+                        events.append({"event": "SubagentStop", "agent_id": a})
+                        sim_running.discard(a)
+                        woken = True
+                by_prompt = not woken and rng.random() < 0.8
+                if by_prompt and prompts_logged:
+                    events.append({"event": "UserPromptSubmit"})
+                stopped_now = woken
+                background_bash = False
+                for _ in range(rng.randint(0, 3)):
+                    action = rng.randrange(4)
+                    if action == 0:  # a foreground agent: starts and stops within the turn
+                        next_id[0] += 1
+                        a = "f%d" % next_id[0]
+                        events += [{"event": "SubagentStart", "agent_id": a},
+                                   {"event": "PostToolUse", "agent_id": a, "command": "x", "exit": 0},
+                                   {"event": "SubagentStop", "agent_id": a}]
+                        stopped_now = True
+                    elif action == 1:  # a background agent: keeps running after the turn
+                        next_id[0] += 1
+                        a = "b%d" % next_id[0]
+                        events.append({"event": "SubagentStart", "agent_id": a})
+                        sim_running.add(a)
+                    elif action == 2:
+                        events.append({"event": "PostToolUse", "command": "watch", "background": True})
+                        background_bash = True
+                    else:
+                        events.append({"event": "PostToolUse", "command": "ls", "exit": 0})
+                write_events(project, events)
+                if by_prompt and prompts_logged:
+                    seen_prompt = True
+                message, valid = self.message(rng)
+                # A turn that no prompt started counts only once prompts are known to be logged.
+                ran_out = (not sim_running and not background_bash
+                           and (stopped_now or (not by_prompt and seen_prompt)))
+                hook_active = False
+                extra = {}
+                if sends_tasks:  # Claude Code lists what's in flight
+                    extra["background_tasks"] = (
+                        [{"id": a, "type": "subagent", "status": "running"} for a in sorted(sim_running)]
+                        + ([{"id": "w", "type": "shell", "status": "running"}] if background_bash else []))
+                while True:
+                    want_block = ran_out and not valid and not hook_active
+                    r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time())
+                    checks += 1
+                    self.assertEqual(r["block"], want_block, (history, turn, message, events))
+                    if not r["block"]:
+                        break
+                    hook_active = True  # Claude Code tries again; it may still have no line
+                    message, valid = self.message(rng)
+            self.assertGreater(checks, 0)
+
+
+class HooksFile(unittest.TestCase):
+    def setUp(self):
+        with open(HOOKS_JSON) as f:
+            self.hooks = json.load(f)["hooks"]
+
+    def test_stop_runs_this_hook_and_waits_for_it(self):
+        groups = self.hooks["Stop"]
+        self.assertEqual(len(groups), 1)
+        hooks = groups[0]["hooks"]
+        self.assertEqual(len(hooks), 1)
+        hook = hooks[0]
+        self.assertFalse(hook.get("async", False))
+        self.assertLessEqual(hook["timeout"], 30)
+        path = hook["args"][0].replace("${CLAUDE_PLUGIN_ROOT}", os.path.dirname(HERE))
+        self.assertTrue(os.path.samefile(path, SCRIPT))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,6 +1,9 @@
 {
-  "description": "apb: append one line per event to .apb/events.jsonl in an apb project, so the orchestrator can see what agents are doing and time each step.",
+  "description": "apb: append one line per event to .apb/events.jsonl in an apb project, so the orchestrator can see what agents are doing and time each step. When the orchestrator's work runs out, its message must say who holds the ball.",
   "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+    ],
     "SubagentStart": [
       { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
     ],
@@ -20,7 +23,7 @@
       { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
     ],
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
+      { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-stop.py"], "timeout": 10 } ] }
     ],
     "Notification": [
       { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
