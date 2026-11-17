@@ -65,7 +65,7 @@ The human never types git commands; the orchestrator does. The advisor never giv
   - No Decisions: "1 thing for you to do right now: merge PR #N." If the PR changes how the product looks, the line ends with the preview link: `Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
   - Decisions: the count, for example "1 thing for you to do right now: 2 decisions on PR #N."
   - Two PRs ready at once: "2 things for you to do right now:" and a numbered list, one PR per line.
-  - Say the hand-off once, when the PR is handed over. Say it again only when the thing changes, for example when a second PR is ready. In between, an answer to a question is just the answer, with no first line.
+  - Say the hand-off once, when the PR is handed over, and again only when it changes, for example when a second PR is ready. Answer any question in the meantime with no first line.
   - Don't repeat the review items in chat. They are already on the PR, and repeating them doubles what the human reads.
   - Alert the human once when the PR is handed to them, with or without Decisions (see "Alert only when it's the human's turn").
 - **Give the human one way to review.** Don't offer a choice of ways to review. Give each open question a recommended answer, so "ok" is a valid reply.
@@ -89,13 +89,13 @@ The human never types git commands; the orchestrator does. The advisor never giv
 
 ## Helping the human keep track
 
-- **The human and Claude are never both idle at once.** When the orchestrator stops working, its message says who holds the ball. Stopping means the turn ends with nothing running: no builder, no reviewer, no watcher action pending. Then the message starts with one of three lines:
+- **The human and Claude are never both idle at once.** When the orchestrator stops working, its message says who holds the ball. Stopping means the turn in which the work runs out: the last builder, reviewer or watcher action has finished. A later turn that only answers a question is not a stop. Then the message starts with one of three lines:
   - `Nothing for you to do right now. Waiting on <what>, about M minutes.`, for example "Waiting on GitHub checks for PR #40, about 8 minutes."
   - `1 thing for you to do right now: <the thing>.`
   - `N things for you to do right now:` followed by a numbered list, one thing per line, for any N.
 
-  The count is the real count. Nothing is left for the human to work out from other messages, PRs or the board. The trigger is "is anything still running?", not "is this a hand-off?": a hand-off that isn't recognized as one reads like a progress report, and then the human and Claude each wait on the other.
-  - Say the line once, when Claude stops working. Say it again only when the thing changes: a new PR is ready, a decision appears, or the wait ends. Repeated on every message, it turns into noise and stops being read.
+  The count is the real count. Nothing is left for the human to work out from other messages, PRs or the board. The trigger is "did the work just run out?", not "is this a hand-off?": a hand-off that isn't recognized as one reads like a progress report, and then the human and Claude each wait on the other.
+  - Say the line once, when the orchestrator stops working. Say it again only when the thing changes: a new PR is ready, a decision appears, or the wait ends. Repeated on every message, it turns into noise and stops being read.
   - In between, an answer to a question is just the answer, with no first line.
   - After the first line, one line per card in In progress and In review: what's running, or what it's waiting on, and when it should finish. These lines match the board; a card left out makes the message disagree with the board.
   - Normal case, never all caps.
