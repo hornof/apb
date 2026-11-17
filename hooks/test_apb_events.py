@@ -318,7 +318,7 @@ class HooksFile(unittest.TestCase):
     def test_every_hook_runs_the_script_in_the_background(self):
         for event, groups in self.hooks.items():
             if event == "Stop":
-                continue  # the Stop hook can block a stop, so Claude Code waits for it
+                continue  # the Stop hook can send a message back, so Claude Code waits for it
             for hook in groups[0]["hooks"]:
                 self.assertEqual(hook["type"], "command")
                 self.assertEqual(hook["command"], "python3")

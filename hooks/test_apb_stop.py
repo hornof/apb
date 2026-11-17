@@ -95,11 +95,12 @@ def run(p, project, env_extra=None):
                           cwd=tempfile.gettempdir(), timeout=10)
 
 
-def blocked(r):
+def sent_back(r):
     if not r.stdout.strip():
         return False
     out = json.loads(r.stdout)
-    return out.get("decision") == "block"
+    note = out.get("hookSpecificOutput", {})
+    return note.get("hookEventName") == "Stop" and bool(note.get("additionalContext"))
 
 
 # The events of one finished builder: the orchestrator started it, it ran a command, it stopped.
@@ -178,8 +179,8 @@ class WorkRanOut(unittest.TestCase):
         evs = self.events(FINISHED_AGENT, [{"event": "Stop"}, {"event": "UserPromptSubmit"}])
         self.assertFalse(stop.work_ran_out(evs, "s1", self.now))
 
-    def test_a_blocked_stop_does_not_end_the_turn(self):
-        evs = self.events(FINISHED_AGENT[1:], [{"event": "Stop", "blocked": True}])
+    def test_a_stop_sent_back_does_not_end_the_turn(self):
+        evs = self.events(FINISHED_AGENT[1:], [{"event": "Stop", "sent_back": True}])
         self.assertTrue(stop.work_ran_out(evs, "s1", self.now))
 
     def test_another_sessions_prompt_does_not_start_this_turn(self):
@@ -230,28 +231,30 @@ class Hook(unittest.TestCase):
     def setUp(self):
         self.project = apb_project()
 
-    def test_blocks_when_the_work_ran_out_and_the_line_is_missing(self):
+    def test_sends_the_message_back_when_the_work_ran_out_and_the_line_is_missing(self):
         write_events(self.project, FINISHED_AGENT)
         r = run(payload("PR #44 is ready. The reviewer found nothing."), self.project)
         self.assertEqual(r.returncode, 0)
         out = json.loads(r.stdout)
-        self.assertEqual(out["decision"], "block")
-        self.assertIn("say who holds the ball", out["reason"].lower())
+        self.assertNotIn("decision", out)  # a quiet note, not a block
+        note = out["hookSpecificOutput"]
+        self.assertEqual(note["hookEventName"], "Stop")
+        self.assertTrue(note["additionalContext"].startswith("Say who holds the ball"))
         for form in ["Nothing for you to do right now.", "1 thing for you to do right now:",
                      "things for you to do right now:"]:
-            self.assertIn(form, out["reason"])
+            self.assertIn(form, note["additionalContext"])
         last = read_events(self.project)[-1]
-        self.assertEqual((last["event"], last["blocked"]), ("Stop", True))
+        self.assertEqual((last["event"], last["sent_back"]), ("Stop", True))
 
     def test_allows_each_of_the_three_forms(self):
         for message in [NOTHING, ONE, MANY]:
             project = apb_project()
             write_events(project, FINISHED_AGENT)
             r = run(payload(message), project)
-            self.assertFalse(blocked(r), message)
+            self.assertFalse(sent_back(r), message)
             last = read_events(project)[-1]
             self.assertEqual(last["event"], "Stop")
-            self.assertNotIn("blocked", last)
+            self.assertNotIn("sent_back", last)
 
     def test_the_stop_line_records_who_holds_the_ball(self):
         write_events(self.project, FINISHED_AGENT)
@@ -259,27 +262,27 @@ class Hook(unittest.TestCase):
         last = read_events(self.project)[-1]
         self.assertEqual((last["holder"], last["todo"]), ("human", "merge PR #44"))
 
-    def test_never_blocks_twice_in_a_row(self):
+    def test_never_sends_back_twice_in_a_row(self):
         write_events(self.project, FINISHED_AGENT)
-        self.assertTrue(blocked(run(payload("Done."), self.project)))
-        self.assertFalse(blocked(run(payload("Done.", stop_hook_active=True), self.project)))
+        self.assertTrue(sent_back(run(payload("Done."), self.project)))
+        self.assertFalse(sent_back(run(payload("Done.", stop_hook_active=True), self.project)))
 
-    def test_does_not_block_an_answer_between_stops(self):
+    def test_does_not_send_back_an_answer_between_stops(self):
         write_events(self.project, FINISHED_AGENT)
         run(payload(NOTHING), self.project)
         write_events(self.project, [{"event": "UserPromptSubmit"}])
-        self.assertFalse(blocked(run(payload("The PR changes two files."), self.project)))
+        self.assertFalse(sent_back(run(payload("The PR changes two files."), self.project)))
 
-    def test_does_not_block_while_an_agent_runs(self):
+    def test_does_not_send_back_while_an_agent_runs(self):
         write_events(self.project, [{"event": "UserPromptSubmit"},
                                     {"event": "SubagentStart", "agent_id": "b1", "agent_type": "apb:builder"}])
-        self.assertFalse(blocked(run(payload("Started the builder."), self.project)))
+        self.assertFalse(sent_back(run(payload("Started the builder."), self.project)))
 
-    def test_does_not_block_while_claude_code_lists_background_work(self):
+    def test_does_not_send_back_while_claude_code_lists_background_work(self):
         write_events(self.project, FINISHED_AGENT)
         tasks = [{"id": "t1", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
-        self.assertFalse(blocked(run(payload("Watching PR #44.", background_tasks=tasks), self.project)))
-        self.assertTrue(blocked(run(payload("Done.", background_tasks=[]), self.project)))
+        self.assertFalse(sent_back(run(payload("Watching PR #44.", background_tasks=tasks), self.project)))
+        self.assertTrue(sent_back(run(payload("Done.", background_tasks=[]), self.project)))
 
     def test_reads_the_message_from_the_transcript_when_it_is_not_given(self):
         write_events(self.project, FINISHED_AGENT)
@@ -292,12 +295,12 @@ class Hook(unittest.TestCase):
                 {"type": "text", "text": NOTHING}]}}) + "\n")
         p = payload(None, transcript_path=transcript)
         del p["last_assistant_message"]
-        self.assertFalse(blocked(run(p, self.project)))
+        self.assertFalse(sent_back(run(p, self.project)))
         p_bad = dict(p)
         with open(transcript, "a") as f:
             f.write(json.dumps({"type": "assistant", "message": {"content": [
                 {"type": "text", "text": "All done."}]}}) + "\n")
-        self.assertTrue(blocked(run(p_bad, self.project)))
+        self.assertTrue(sent_back(run(p_bad, self.project)))
 
     def test_non_apb_folder_gets_nothing(self):
         d = tempfile.mkdtemp()
@@ -305,20 +308,20 @@ class Hook(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout, r.stderr), (0, b"", b""))
         self.assertEqual(os.listdir(d), [])
 
-    def test_bad_input_never_blocks(self):
+    def test_bad_input_never_sends_back(self):
         for bad in [b"", b"not json", b"[1]", b"null", b"{", b"\xff\xfe",
                     b'{"hook_event_name": "Stop"}', b'{"hook_event_name": "Stop", "session_id": 5}',
                     b'{"hook_event_name": "Stop", "last_assistant_message": 7}']:
             r = run(bad, self.project)
             self.assertEqual((r.returncode, r.stdout, r.stderr), (0, b"", b""), bad)
 
-    def test_a_broken_events_file_never_blocks(self):
+    def test_a_broken_events_file_never_sends_back(self):
         os.makedirs(os.path.join(self.project, ".apb"))
         with open(os.path.join(self.project, ".apb", "events.jsonl"), "wb") as f:
             f.write(b"\xff not json\n{\"event\": 5}\n[]\n")
         r = run(payload("Done."), self.project)
         self.assertEqual(r.returncode, 0)
-        self.assertFalse(blocked(r))
+        self.assertFalse(sent_back(r))
 
     def test_it_is_fast_on_a_long_events_file(self):
         write_events(self.project, FINISHED_AGENT * 5000)
@@ -389,7 +392,7 @@ class Reminder(unittest.TestCase):
         # A watcher check-in wakes Claude; no prompt, no first line, the watcher still runs.
         tasks = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
         r = run(payload("PR #44: checks still running.", background_tasks=tasks), self.project, env)
-        self.assertFalse(blocked(r))
+        self.assertFalse(sent_back(r))
         # The original wait fires about 3 s after the first stop; a restarted one would fire at 4 s.
         got = self.alerts(start + 3.6 - time.time())
         self.assertEqual(len(got), 1)
@@ -498,11 +501,11 @@ class Properties(unittest.TestCase):
                         [{"id": a, "type": "subagent", "status": "running"} for a in sorted(sim_running)]
                         + ([{"id": "w", "type": "shell", "status": "running"}] if background_bash else []))
                 while True:
-                    want_block = ran_out and not valid and not hook_active
+                    want_send_back = ran_out and not valid and not hook_active
                     r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time())
                     checks += 1
-                    self.assertEqual(r["block"], want_block, (history, turn, message, events))
-                    if not r["block"]:
+                    self.assertEqual(r["send_back"], want_send_back, (history, turn, message, events))
+                    if not r["send_back"]:
                         break
                     hook_active = True  # Claude Code tries again; it may still have no line
                     message, valid = self.message(rng)

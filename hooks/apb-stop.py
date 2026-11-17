@@ -9,8 +9,9 @@ which hooks/apb-events.py writes.
   playbook's "Helping the human keep track". What's running comes from the Stop input's
   background_tasks; without it, from the events file (agents started and not stopped, and background
   commands started in this turn).
-- Then the message must start with one of the three first lines. If it doesn't, the hook blocks the
-  stop once, with the reason "Say who holds the ball", and Claude Code lets Claude add the line.
+- Then the message must start with one of the three first lines. If it doesn't, the hook sends the
+  message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
+  and Claude goes on to add the line.
 - It appends a Stop line to the events file, with who holds the ball when the message says so.
 - If the human holds the ball, it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
@@ -124,7 +125,7 @@ def this_turn(events, session):
     """This session's lines since its last stop that went through."""
     start = 0
     for i, e in enumerate(events):
-        if e.get("session") == session and e["event"] == "Stop" and not e.get("blocked"):
+        if e.get("session") == session and e["event"] == "Stop" and not e.get("sent_back"):
             start = i + 1
     return [e for e in events[start:] if e.get("session") == session]
 
@@ -195,32 +196,32 @@ def append(project, line):
 
 def handle(p, project, now):
     """Decide on one stop and log it.
-    Returns {"block": bool, "remind": what or None, "end": the events file's size after the line}."""
+    Returns {"send_back": bool, "remind": what or None, "end": the events file's size after the line}."""
     session = p.get("session_id")
     if not isinstance(session, str):
-        return {"block": False, "remind": None, "end": 0}
+        return {"send_back": False, "remind": None, "end": 0}
     events = read_events(project)
     said = first_line(last_message(p))
-    block = (said is None and not p.get("stop_hook_active")
+    send_back = (said is None and not p.get("stop_hook_active")
              and work_ran_out(events, session, now, p.get("background_tasks")))
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}
-    if block:
-        line["blocked"] = True
+    if send_back:
+        line["sent_back"] = True
     elif said:
         line["holder"] = said[0]
         if said[1]:
             line["todo"] = said[1][:MAX]
     end = append(project, line)
-    if block:
-        return {"block": True, "remind": None, "end": end}
+    if send_back:
+        return {"send_back": True, "remind": None, "end": end}
     if said:
         holder, todo = said
     elif any(e["event"] == "UserPromptSubmit" for e in this_turn(events, session)):
         holder, todo = holder_now(events, session)  # the prompt ended the last wait; start a new one
     else:
         holder, todo = None, None  # woken with no new line: the running wait carries on
-    return {"block": False, "remind": todo if holder == "human" else None, "end": end}
+    return {"send_back": False, "remind": todo if holder == "human" else None, "end": end}
 
 
 def start_reminder(project, session, todo, start):
@@ -266,8 +267,10 @@ def main():
     if not isinstance(project, str) or not os.path.isfile(os.path.join(project, "docs", "MAP.md")):
         return
     result = handle(p, project, time.time())
-    if result["block"]:
-        sys.stdout.write(json.dumps({"decision": "block", "reason": REASON}))
+    if result["send_back"]:
+        # A quiet note: Claude goes on with it, shown as "Stop hook feedback", not as an error.
+        sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop",
+                                                            "additionalContext": REASON}}))
         return
     if result["remind"]:
         start_reminder(project, p["session_id"], result["remind"], result["end"])
