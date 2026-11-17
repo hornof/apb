@@ -95,31 +95,45 @@ def describe(e):
 
 
 def agent_runs(events, now):
-    """(running, finished). running: agents started and not stopped, heard from in the last
-    ABANDONED seconds, oldest first. finished: agents that stopped, newest first.
-    Each is {"id", "type", "start", ...}; running ones have "last" and "what", finished ones "stop"."""
-    live, finished = {}, []
+    """(running, finished), one row per agent. The orchestrator can resume an agent after it stops,
+    so an agent's lines come in pieces, each ending with a stop line.
+    running: agents whose last line is not a stop, heard from in the last ABANDONED seconds, oldest
+    first. finished: agents whose last line is a stop, newest first.
+    Each is {"id", "type", "start": its first line}. Running ones also have "piece" (when the current
+    piece began), "last" and "what"; finished ones "stop" and "took", the time of all its pieces added up.
+    A piece that is only a stop line is Claude Code's own short helper, not real work: it is left out."""
+    agents = {}
     for e in events:
         a = e.get("agent_id")
         if not a:
             continue
         t = e["t"]
-        run = live.get(a)
-        if run is None:
-            run = live[a] = {"id": a, "type": "", "start": t, "last": t, "what": "", "lines": 0}
+        g = agents.setdefault(a, {"id": a, "type": "", "start": None, "piece": None, "lines": 0,
+                                  "took": 0, "last": t, "what": "", "stop": None})
         if e.get("agent_type"):
-            run["type"] = e["agent_type"]
-        run["last"] = t
-        run["lines"] += 1
+            g["type"] = e["agent_type"]
         if e.get("event") == "SubagentStop":
-            del live[a]
-            if run["lines"] > 1:  # a lone stop line is Claude Code's own short helper, not real work
-                finished.append({"id": a, "type": run["type"] or "agent", "start": run["start"], "stop": t})
+            if g["piece"] is not None:
+                g["took"] += t - g["piece"]
+                g["stop"], g["last"] = t, t
+            g["piece"] = None
             continue
-        run["what"] = describe(e)
-    running = [{k: v for k, v in r.items() if k != "lines"} for r in live.values() if now - r["last"] <= ABANDONED]
-    for r in running:
-        r["type"] = r["type"] or "agent"
+        if g["piece"] is None:
+            g["piece"] = t
+            if g["start"] is None:
+                g["start"] = t
+        g["last"], g["what"] = t, describe(e)
+    running, finished = [], []
+    for g in agents.values():
+        if g["start"] is None:
+            continue  # only lone stop lines
+        kind = g["type"] or "agent"
+        if g["piece"] is not None:
+            if now - g["last"] <= ABANDONED:
+                running.append({"id": g["id"], "type": kind, "start": g["start"], "piece": g["piece"],
+                                "last": g["last"], "what": g["what"]})
+        else:
+            finished.append({"id": g["id"], "type": kind, "start": g["start"], "stop": g["stop"], "took": g["took"]})
     running.sort(key=lambda r: r["start"])
     finished.sort(key=lambda f: f["stop"], reverse=True)
     return running, finished
@@ -129,8 +143,8 @@ def ball(events, running=()):
     """Who holds the ball in the latest orchestrator session, from the Stop hook's lines.
     {"state": "human" | "claude" | "working" | None, "todo", "since"}.
     "working": Claude is on it now. Either a turn is under way (a prompt came after the last turn
-    ended), or the human answered after the last "who holds the ball" line and an agent started
-    since then is still running. Otherwise the last such line holds: a question answered in between
+    ended), or the human answered after the last "who holds the ball" line and an agent started or
+    resumed since then is still running. Otherwise the last such line holds: a question answered in between
     doesn't change it."""
     nobody = {"state": None, "todo": None, "since": None}
     main = [e for e in events if not e.get("agent_id") and e.get("event") in ("UserPromptSubmit", "Stop")]
@@ -144,7 +158,7 @@ def ball(events, running=()):
     if said is None:
         return nobody
     prompts = [e["t"] for e in mine if e["event"] == "UserPromptSubmit" and e["t"] >= said["t"]]
-    if prompts and any(r["start"] >= prompts[0] for r in running):
+    if prompts and any(r.get("piece", r["start"]) >= prompts[0] for r in running):
         return {"state": "working", "todo": None, "since": prompts[0]}
     return {"state": said["holder"], "todo": said.get("todo"), "since": said["t"]}
 
@@ -175,10 +189,12 @@ def waiting_on(p):
     bodies += [c["body"] for t in threads for c in t["comments"]["nodes"]]
     if not any(REVIEWER in (b or "") for b in bodies):
         return "reviewer", "no review yet"
+    # Fix items have no threads, so the page can't tell whether they are done: it never says "ready to merge".
+    # Only Decisions get threads, so open threads are open decisions.
     open_items = sum(not t["isResolved"] for t in threads)
     if open_items:
-        return "you", "%d review item%s open" % (open_items, "" if open_items == 1 else "s")
-    return "you", "ready to merge"
+        return "you", "review posted, %d decision%s open" % (open_items, "" if open_items == 1 else "s")
+    return "you", "review posted"
 
 
 QUERY = """query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
@@ -244,15 +260,20 @@ def ball_html(b, now):
     return '<p class="ball">No turn has ended yet in the events file.</p>'
 
 
-def stages_html(names, count):
+def stages_html(names, count, map_path=mp.MAP, found=True):
+    """The stages, with the build count after the first word "build", the same rule as the map
+    artifact's (map-artifact.py, add_build_count)."""
+    if not found:
+        return '<p class="muted">%s not found, so no stages.</p>' % esc(map_path)
     if not names:
-        return '<p class="muted">No "Stages, in order" line in docs/MAP.md.</p>'
+        return '<p class="muted">No "Stages, in order" line in %s.</p>' % esc(map_path)
     done, total = count
-    out = []
+    out, counted = [], False
     for s in names:
         label = esc(s)
-        if s.lower() == "build" and total:
-            label += " (%d of %d cards done)" % (done, total)
+        if total and not counted:
+            label, n = re.subn(r"\b(build)\b", r"\1 (%d of %d cards done)" % (done, total), label, count=1, flags=re.I)
+            counted = n == 1
         out.append('<li>%s</li>' % label)
     return '<ol class="stages">%s</ol>' % "".join(out)
 
@@ -267,9 +288,9 @@ def agents_html(running, now):
     if not running:
         return '<p class="muted">No agents running, as far as the events file shows.</p>'
     rows = "".join(
-        "<tr><td>%s</td><td>running %s</td><td><code>%s</code></td><td>%s ago</td></tr>"
+        "<tr><td>%s</td><td>%s</td><td><code>%s</code></td><td>%s ago</td></tr>"
         % (esc(r["type"]), span(now - r["start"]), esc(r["what"]), span(now - r["last"])) for r in running)
-    return ("<table><thead><tr><th>Agent</th><th>Started</th><th>Last event</th><th>When</th></tr></thead>"
+    return ("<table><thead><tr><th>Agent</th><th>Running for</th><th>Last event</th><th>When</th></tr></thead>"
             "<tbody>%s</tbody></table>" % rows)
 
 
@@ -304,7 +325,7 @@ def finished_html(finished, now, limit=10):
     if not finished:
         return '<p class="muted">None yet.</p>'
     rows = "".join("<tr><td>%s</td><td>%s</td><td>took %s</td></tr>"
-                   % (esc(f["type"]), clock(f["start"], now), span(f["stop"] - f["start"]))
+                   % (esc(f["type"]), clock(f["start"], now), span(f["took"]))
                    for f in finished[:limit])
     return ("<table><thead><tr><th>Agent</th><th>Started</th><th>Time</th></tr></thead>"
             "<tbody>%s</tbody></table>" % rows)
@@ -370,7 +391,8 @@ This page is a snapshot; it is built again when something changes. Merge, commen
 })();
 </script>
 """ % {"name": esc(name), "style": STYLE, "extra": EXTRA, "ball": ball_html(d["ball"], now),
-       "stages": stages_html(d["stages"], d["build_count"]), "board_line": board_line,
+       "stages": stages_html(d["stages"], d["build_count"], d.get("map", mp.MAP), d.get("map_found", True)),
+       "board_line": board_line,
        "agents": agents_html(d["running"], now), "prs": prs_html(d["prs"]), "board": board_html(d["board"]),
        "finished": finished_html(d["finished"], now), "built": built, "events": esc(d["events"]),
        "repo": esc(d["repo"]), "now": int(now)}
@@ -386,15 +408,16 @@ def main(argv):
     repo = opts.repo or json.loads(mp.run(["gh", "repo", "view", "--json", "nameWithOwner"]))["nameWithOwner"]
     try:
         with open(opts.map, encoding="utf-8") as f:
-            names = stages(f.read())
+            names, found = stages(f.read()), True
     except OSError:
-        names = []
+        names, found = [], False
     b, prs, count = github(repo)
     now = time.time()
     events = watch.read_events(opts.events)
     running, finished = agent_runs(events, now)
     page = render({"repo": repo, "now": now, "ball": ball(events, running),"stages": names, "build_count": count,
-                   "board": b, "prs": prs, "running": running, "finished": finished, "events": opts.events})
+                   "board": b, "prs": prs, "running": running, "finished": finished, "events": opts.events,
+                   "map": opts.map, "map_found": found})
     with open(opts.output, "w", encoding="utf-8") as f:
         f.write(page)
     print("wrote", opts.output)

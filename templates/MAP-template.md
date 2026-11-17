@@ -9,7 +9,7 @@ The map lists only things that rarely change. It never copies a status, such as 
 **Stages, in order:** PRD input → PRD (gate 1) → TDD (gate 2) → split the TDD into cards → build → review and merge (gate 3) → check the live product
 
 <!-- Where a row needs a status, link GitHub's live list, for example the list of open PRs. -->
-<!-- Keep the "Stages, in order" line: the map artifact adds the build count after "build". -->
+<!-- Keep the "Stages, in order" line: the map artifact adds the build count after "build", and the progress page reads the stages from it. -->
 
 ## GitHub
 | Piece | What it is | When it's used |

@@ -144,23 +144,51 @@ class Agents(unittest.TestCase):
             events, plan = [], {}
             for i in range(rng.randint(0, 6)):
                 a = "ag%d" % i
-                start = NOW - rng.randint(0, 5 * 3600)
-                times = sorted(rng.randint(start, NOW) for _ in range(rng.randint(0, 4)))
-                stops = rng.random() < 0.5
-                lines = [ev(start, "SubagentStart", agent_id=a, agent_type="apb:builder")]
-                lines += [ev(t, "PostToolUse", agent_id=a, command="c%d" % t) for t in times]
-                if stops:
-                    lines.append(ev(max([start] + times) + 1, "SubagentStop", agent_id=a))
-                events += lines
-                plan[a] = lines
+                t = NOW - rng.randint(0, 6 * 3600)
+                pieces = []  # (start, stop or None): the orchestrator can resume an agent after it stops
+                for p in range(rng.randint(1, 3)):
+                    lines = [ev(t, "SubagentStart", agent_id=a, agent_type="apb:builder" if p == 0 else "")]
+                    piece_start = t
+                    for _ in range(rng.randint(0, 3)):
+                        t += rng.randint(1, 1200)
+                        lines.append(ev(t, "PostToolUse", agent_id=a, command="c%d" % t))
+                    stop = None
+                    if rng.random() < 0.6:
+                        t += rng.randint(1, 600)
+                        stop = t
+                        lines.append(ev(t, "SubagentStop", agent_id=a))
+                    events += lines
+                    pieces.append((piece_start, stop, lines[-1]["t"]))
+                    if stop is None:
+                        break
+                    t += rng.randint(1, 3600)
+                plan[a] = pieces
+            if rng.random() < 0.3:
+                events.append(ev(NOW - 5, "SubagentStop", agent_id="helper", agent_type=""))
             events.sort(key=lambda e: e["t"])
             running, finished = pp.agent_runs(events, NOW)
-            # Second way: an agent runs if its last line is not a stop and is recent; it finished if it has a stop.
-            want_running = sorted(a for a, ls in plan.items()
-                                  if ls[-1]["event"] != "SubagentStop" and NOW - ls[-1]["t"] <= pp.ABANDONED)
-            want_finished = {a: ls[-1]["t"] - ls[0]["t"] for a, ls in plan.items() if ls[-1]["event"] == "SubagentStop"}
+            # Second way, from the plan: one row per agent. It runs if its last piece has no stop and its
+            # last line is recent; it finished if its last piece stopped, and took the sum of its pieces.
+            want_running = sorted(a for a, ps in plan.items() if ps[-1][1] is None and NOW - ps[-1][2] <= pp.ABANDONED)
+            want_finished = {a: (ps[0][0], ps[-1][1], sum(s - b for b, s, _ in ps))
+                             for a, ps in plan.items() if ps[-1][1] is not None}
             self.assertEqual(sorted(r["id"] for r in running), want_running)
-            self.assertEqual({f["id"]: f["stop"] - f["start"] for f in finished}, want_finished)
+            for r in running:
+                self.assertEqual(r["start"], plan[r["id"]][0][0])
+                self.assertEqual(r["piece"], plan[r["id"]][-1][0])
+                self.assertEqual(r["type"], "apb:builder")
+            self.assertEqual({f["id"]: (f["start"], f["stop"], f["took"]) for f in finished}, want_finished)
+
+    def test_a_resumed_agent_is_one_row(self):
+        events = [ev(NOW - 900, "SubagentStart", agent_id="a", agent_type="apb:builder"),
+                  ev(NOW - 800, "SubagentStop", agent_id="a"),
+                  ev(NOW - 500, "SubagentStart", agent_id="a", agent_type="apb:builder"),
+                  ev(NOW - 300, "SubagentStop", agent_id="a")]
+        running, finished = pp.agent_runs(events, NOW)
+        self.assertEqual(running, [])
+        self.assertEqual([(f["start"], f["stop"], f["took"]) for f in finished], [(NOW - 900, NOW - 300, 300)])
+        running, _ = pp.agent_runs(events + [ev(NOW - 100, "SubagentStart", agent_id="a")], NOW)
+        self.assertEqual([(r["start"], r["piece"]) for r in running], [(NOW - 900, NOW - 100)])
 
 
 class Ball(unittest.TestCase):
@@ -227,9 +255,16 @@ class WaitingOn(unittest.TestCase):
         self.assertEqual(pp.waiting_on(pr(checks="FAILURE", bodies=REVIEWED))[0], "builder")
         self.assertEqual(pp.waiting_on(pr(checks="SUCCESS"))[0], "reviewer")
         self.assertEqual(pp.waiting_on(pr(checks=None))[0], "reviewer")
-        self.assertEqual(pp.waiting_on(pr(bodies=REVIEWED)), ("you", "ready to merge"))
-        self.assertEqual(pp.waiting_on(pr(threads=[True, False, False])), ("you", "2 review items open"))
-        self.assertEqual(pp.waiting_on(pr(threads=[False])), ("you", "1 review item open"))
+        self.assertEqual(pp.waiting_on(pr(threads=[True, False, False])), ("you", "review posted, 2 decisions open"))
+        self.assertEqual(pp.waiting_on(pr(threads=[False])), ("you", "review posted, 1 decision open"))
+
+    def test_fix_items_only_never_say_ready_to_merge(self):
+        # Fix and Note items go in one post with no threads, so the page can't tell if the fixes are made.
+        fix_post = ["## Fix items (1–3)\n\n1. Rename x.\n\n— Claude (reviewer)\n"]
+        self.assertEqual(pp.waiting_on(pr(bodies=fix_post)), ("you", "review posted"))
+        self.assertEqual(pp.waiting_on(pr(bodies=fix_post, threads=[True])), ("you", "review posted"))
+        for threads in ([], [True], [False], [True, False]):
+            self.assertNotIn("merge", pp.waiting_on(pr(bodies=REVIEWED, threads=threads))[1])
 
     def test_review_found_in_a_review_body(self):
         p = pr()
@@ -252,9 +287,10 @@ def data(**more):
          "stages": ["PRD", "build", "check the live product"], "build_count": (3, 10),
          "board": pp.board(project([(1, "Todo"), (2, "In progress"), (3, "Done")])),
          "prs": [{"number": 7, "title": "A PR", "url": "https://github.com/o/r/pull/7", "checks": "passed",
-                  "who": "you", "why": "ready to merge"}],
-         "running": [{"id": "a1", "type": "apb:builder", "start": NOW - 1800, "last": NOW - 60, "what": "npm test"}],
-         "finished": [{"id": "b1", "type": "apb:reviewer", "start": NOW - 4000, "stop": NOW - 3000}],
+                  "who": "you", "why": "review posted"}],
+         "running": [{"id": "a1", "type": "apb:builder", "start": NOW - 1800, "piece": NOW - 1800, "last": NOW - 60,
+                      "what": "npm test"}],
+         "finished": [{"id": "b1", "type": "apb:reviewer", "start": NOW - 4000, "stop": NOW - 3000, "took": 1000}],
          "events": ".apb/events.jsonl"}
     d.update(more)
     return d
@@ -267,9 +303,27 @@ class Page(unittest.TestCase):
         self.assertIn("Your turn: merge PR #7", page)
         self.assertIn("build (3 of 10 cards done)", page)
         self.assertIn("1 of 3 cards done", page)
-        for text in ["apb:builder", "running 30 min", "npm test", "1 min ago", "apb:reviewer", "took 16 min",
-                     'href="https://github.com/o/r/pull/7"', "ready to merge", "card 1", "card 2", "card 3"]:
+        for text in ["apb:builder", "<td>30 min</td>", "npm test", "1 min ago", "apb:reviewer", "took 16 min",
+                     'href="https://github.com/o/r/pull/7"', "review posted", "card 1", "card 2", "card 3"]:
             self.assertIn(text, page)
+
+    def test_running_column_header(self):
+        page = pp.render(data())
+        self.assertIn("<th>Running for</th>", page)
+        self.assertNotIn("<th>Started</th><th>Last event</th>", page)
+
+    def test_finished_time_is_the_sum_of_its_pieces(self):
+        # Started 4000 s ago, stopped 3000 s ago, but resumed in between: the row shows the work time.
+        page = pp.render(data(finished=[{"id": "b1", "type": "apb:reviewer", "start": NOW - 4000,
+                                         "stop": NOW - 3000, "took": 300}]))
+        self.assertIn("took 5 min", page)
+
+    def test_stages_message_names_the_map_file(self):
+        page = pp.render(data(stages=[], map="other/MAP.md"))
+        self.assertIn('No "Stages, in order" line in other/MAP.md.', page)
+        page = pp.render(data(stages=[], map="gone/MAP.md", map_found=False))
+        self.assertIn("gone/MAP.md not found", page)
+        self.assertNotIn("Stages, in order", page)
 
     def test_every_card_once(self):
         page = pp.render(data())
@@ -308,6 +362,28 @@ class Page(unittest.TestCase):
         self.assertIn("prefers-color-scheme: dark", page)
         self.assertIn(':root[data-theme="dark"]', page)
         self.assertIn("max-width", page)
+
+
+class BuildCountRule(unittest.TestCase):
+    """The count goes where the map artifact puts it: after the first word "build" in the stages."""
+
+    def same_as_the_map(self, names, done=3, total=10):
+        line = "<p><strong>Stages, in order:</strong> %s</p>" % " → ".join(names)
+        want = re.sub(r"<[^>]+>", "", pp.mp.add_build_count(line, done, total)).replace("Stages, in order: ", "")
+        got = re.findall(r"<li>(.*?)</li>", pp.stages_html(names, (done, total)))
+        self.assertEqual(" → ".join(got), want)
+
+    def test_build_and_test_gets_the_count(self):
+        self.assertIn("<li>build (3 of 10 cards done) and test</li>", pp.stages_html(["PRD", "build and test"], (3, 10)))
+        self.same_as_the_map(["PRD", "build and test", "ship"])
+
+    def test_same_rule_as_the_map(self):
+        for names in (["build"], ["PRD", "Build", "check"], ["rebuild docs", "build"], ["build", "build again"],
+                      ["PRD (gate 1)", "split the TDD into cards", "build", "review and merge (gate 3)"]):
+            self.same_as_the_map(names)
+
+    def test_no_build_stage_no_count(self):
+        self.assertNotIn("cards done", pp.stages_html(["PRD", "ship"], (3, 10)))
 
 
 class Durations(unittest.TestCase):
