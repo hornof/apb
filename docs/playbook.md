@@ -60,12 +60,14 @@ The human never types git commands; the orchestrator does. The advisor never giv
   - Fix items are in one post, already fixed before the human sees the PR, each with its commit. To disagree with one, comment on that post with its number.
   - Note items are in one post, or a section of the Fix post. They are only things the human might act on.
   - Decision items get one thread each, on the line they concern. Resolving a thread with no comment accepts the recommended answer. This saves the human typing "ok" on every thread. A comment (a question, a disagreement, or a yes with a note) is for the orchestrator to read and act on. If the human resolves a thread that had nothing to accept, reopen it and ask.
-- **The hand-off is one line.** It starts like every status (see "Helping the human keep track"), with the PR as one link:
-  - No Decisions: "One thing for you right now: merge PR #N". If the PR changes how the product looks, the line ends with the preview link: `Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
-  - Decisions: the count, for example "One thing for you right now: 2 decisions on PR #N".
+- **PR titles name the card at the end,** in parentheses with the word Card: "Working conventions from the trial (Card #30)". GitHub shows the PR's own number next to the title, so a bare "(#30)" can't be told apart from it.
+- **The hand-off is one line.** It uses the same first line as every message (see "Helping the human keep track"), with the PR as one link:
+  - No Decisions: "1 thing for you to do right now: merge PR #N." If the PR changes how the product looks, the line ends with the preview link: `Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
+  - Decisions: the count, for example "1 thing for you to do right now: 2 decisions on PR #N."
+  - Two PRs ready at once: "2 things for you to do right now:" and a numbered list, one PR per line.
   - Don't repeat the review items in chat. They are already on the PR, and repeating them doubles what the human reads.
   - Alert the human once when the PR is handed to them, with or without Decisions (see "Alert only when it's the human's turn").
-- **Give the human one thing to do.** Don't offer a choice of ways to review. Give each open question a recommended answer, so "ok" is a valid reply.
+- **Give the human one way to review.** Don't offer a choice of ways to review. Give each open question a recommended answer, so "ok" is a valid reply.
 - **Give exact clicks.**
   - To comment on a line, use the PR's "Files changed" tab in source view (not the formatted view).
   - GitHub doesn't let you approve your own PR, so submit reviews with **Submit review → Comment**.
@@ -82,18 +84,25 @@ The human never types git commands; the orchestrator does. The advisor never giv
 
   Then Claude sends one short message: what to do, one link per thing, nothing else.
 - **A merge or a clear yes is approval.** Praise that comes with open questions is not. Ask only when it's genuinely unclear.
-- **At gates 1 and 2 (PRD and TDD), get the yes before the merge.** The hand-off is "One thing for you right now: read PR #N and say yes, or what to change". Then the updates that follow approval (the approved marker, the `docs/STORY.md` entry, the map) go into the same PR, and the merge closes the gate's issue. Ask for the merge after the post-approval updates are in.
+- **At gates 1 and 2 (PRD and TDD), get the yes before the merge.** The hand-off is "1 thing for you to do right now: read PR #N and say yes, or what to change." Then the updates that follow approval (the approved marker, the `docs/STORY.md` entry, the map) go into the same PR, and the merge closes the gate's issue. Ask for the merge after the post-approval updates are in.
 
 ## Helping the human keep track
 
-- **Every status starts with one plain line.** Either `Nothing for you to do right now.` or `One thing for you right now: <the thing, in one sentence>`. The same first line every time shows at a glance whether anything waits on the human, without digging through a long message.
-  - Then one line per card in In progress and In review: what's running, or what it's waiting on, and when it should finish. These lines match the board; a card left out makes the status disagree with the board.
+- **Every message to the human starts with one of three lines.** Every time, never left off:
+  - `Nothing for you to do right now.`
+  - `1 thing for you to do right now: <the thing>.`
+  - `N things for you to do right now:` followed by a numbered list, one thing per line.
+
+  The count is the real count. Nothing is left for the human to work out from other messages, PRs or the board. The same form every time shows at a glance whether anything waits on the human. Without it, a hand-off reads like a progress report, and the human and Claude each wait on the other.
+  - Then one line per card in In progress and In review: what's running, or what it's waiting on, and when it should finish. These lines match the board; a card left out makes the message disagree with the board.
   - Normal case, never all caps.
-  - One thing at a time, never a list of maybes. No "left to do" or "optional" sections.
-- **Alert only when it's the human's turn.** Send one desktop alert with a sound when something new becomes the human's turn, in the same turn the status first says so. The status line repeats until the human acts; the alert doesn't. On a Mac: `osascript -e 'display notification "Your turn: <what>" with title "Claude Code" sound name "Glass"'`. The human works in other windows while agents run, and the alert tells them when to come back.
+  - Never a list of maybes. No "left to do" or "optional" sections.
+- **Alert only when it's the human's turn.** Send one desktop alert with a sound when the human gets something new to do, in the same turn as the first message that names it. The first line repeats until the human acts; the alert doesn't. On a Mac: `osascript -e 'display notification "Your turn: <what>" with title "Claude Code" sound name "Glass"'`. The human works in other windows while agents run, and the alert tells them when to come back.
   - Never alert for progress, check-ins or agent reports. Alerts that fire on every step look the same as the real one, so the real one gets ignored.
   - If an alert doesn't arrive, check the Mac's Focus mode first: it silences notifications.
-- **Board: the latest move on top.** When a card moves to a new column, put it at the top of that column, so the human sees the latest movement at a glance. Todo keeps build order.
+- **Board: the latest move on top.** When a card moves to In progress, In review or Done, put it at the top of that column, so the human sees the latest movement without scrolling.
+  - Done: the board's automation drops a closed card at the bottom, so after each merge, move the card to the top of Done.
+  - Todo is the order the cards will be built in, with the next card on top. New cards go in oldest first, until they're sorted.
 - **Never comment on the time of day or suggest stopping.** The human decides when to work.
 - **Project map** (`docs/MAP.md`): every piece of the project, where it lives (GitHub, Claude pages, local files, outside services), what it's for and when it's used. It lists only things that rarely change. It never copies a status, such as the current stage. The board shows where the project stands. Claude checks every row after every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand. Whenever Claude adds a new piece (a page, a folder, a scheduled task, an outside account), it updates the map at the same time.
 - **Project story** (`docs/STORY.md`): one entry per stage, with the date, the PR and what was decided, so someone new can see what happened.
@@ -151,7 +160,7 @@ The orchestrator acts only when something wakes it: a message from the human, an
 - **Check before stating.** Every status, time or "still waiting" comes from a check in the same turn: `gh pr view` for a PR, `date` for a clock time. If nothing was checked, say "I don't know yet".
 - **Say when each step should finish.** Each status line gives the time the step should finish, worked out from `date`. GitHub shows no progress while checks run, so without it the human can't tell whether to wait 2 minutes or 20.
   - Base the guess on how long the same kind of step took last time. The events file has the times.
-  - When the step finishes, post the guess and the actual time in one comment on its card's issue, so later guesses improve.
+  - When the card closes, post one comment on its issue listing each step's guessed and actual time, so later guesses improve.
   - Run `date` in the same turn as any clock time you state. A time from an earlier turn is stale.
 - **An honest task list.** If the app shows a task list, keep it current on every turn while any agent runs: what's done, what's running and what's next, with one step in progress. The human follows the work there. When the orchestrator stops, the task list shows no step running. Its last line says what it's waiting for, and since when.
 - **Time limits in code.** Every child process the code or tests start has a time limit. Without one, a single stuck child stalls the whole run, and the test runner's own limit can't fire. The TDD's test plan says how each one gets its limit, and the reviewer checks it.
