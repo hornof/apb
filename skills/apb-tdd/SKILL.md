@@ -7,7 +7,7 @@ Input: the approved PRD. Output: `docs/TDD.md` from `templates/TDD-template.md`.
 Before step 1: open an issue called "TDD" and add it to the project's board in In progress. The TDD's PR description says "Closes #N" for the TDD issue, so the merge at gate 2 moves it to Done.
 
 1. Design the system with `docs/system-design-guide.md`. Choose the simplest stack that meets the PRD. Name the real hosting, CI and the store for each kind of data. Don't default to local files or in-memory data: hosts often wipe both on every deploy.
-2. Test plan maps 1:1 to the PRD's acceptance criteria. Mark the tests that depend on screen width. Those run at every width; the rest run at one width.
+2. Test plan maps 1:1 to the PRD's acceptance criteria. Mark the tests that depend on screen width. Those run at every width; the rest run at one width. Every child process the code or tests start has a time limit (for example `timeout` on `spawnSync`, `execSync` or `subprocess.run`), so one stuck child can't stall a whole run.
 3. Break work into PR-sized pieces (each shippable alone, ordered by dependency).
    - For each piece, name the pieces that must be merged before it starts.
    - Say which pieces can be built at the same time. They must touch different code.
