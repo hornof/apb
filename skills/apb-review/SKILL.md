@@ -11,8 +11,9 @@ Every PR gets one review before the human sees it: code PRs, docs-only PRs, setu
    - The review is in the format of `agents/reviewer.md`: an index at the top with the count per bucket and the Decision numbers, one post for the Fix items, Notes in one post or a section of the Fix post, and one thread per Decision. If not, fix the review.
    - If the reviewer's or the builder's report says it departed from its instructions, stop and put it right.
    - If the PR description says "Part of #N", the PR does only part of a card. Stop: split that part into its own card, and change the PR to close the new card.
-5. Hand the PR to the human.
-   - No Decisions: the hand-off is one line, "PR #N: nothing for you to decide, merge-ready." If the PR changes how the product looks, add the preview link: `PR #N: nothing for you to decide, merge-ready. Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
-   - Decisions: say how many and which, with the PR link. The human rules on each one: resolving its thread with no comment accepts the recommendation. A comment on the thread is for you to read and act on.
-   - If the project alerts the human when it's their turn, alert once when the PR is handed to them, with or without Decisions. Never alert for progress.
+5. Hand the PR to the human in one line that starts like every status (see the playbook's "Helping the human keep track"), with the PR as one link.
+   - No Decisions: "One thing for you right now: merge PR #N". If the PR changes how the product looks, add the preview link: `One thing for you right now: merge PR #N. Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
+   - Decisions: "One thing for you right now: 2 decisions on PR #N". The human rules on each one: resolving its thread with no comment accepts the recommendation. A comment on the thread is for you to read and act on. If the human resolves a thread that had nothing to accept, reopen it and ask.
+   - Don't repeat the review items in chat; they are on the PR.
+   - Alert the human once, in the same turn, with or without Decisions (see the playbook's "Alert only when it's the human's turn"). Never alert for progress.
 6. Add each override, and each new rule the human sets, as one line in `docs/reviewer-notes.md`, with the PR it came from.
