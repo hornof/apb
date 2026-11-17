@@ -1,0 +1,107 @@
+# CI for an apb project, written for Playwright browser tests on Node. apb-tdd step 5 copies it to
+# .github/workflows/ci.yml and changes the commands and project names to the TDD's own.
+#
+# When each set runs:
+# - Full set (every browser; every width for the width-specific tests): once per PR, when the
+#   orchestrator adds the `full-tests` label just before handing the PR to the human, then on every
+#   later push to that PR, and on every push to main.
+# - Quick set, on every other push to a PR: the whole browser suite in one browser at one width,
+#   plus the browser test files the PR changed (and the ones that import changed files) in every
+#   browser at one width.
+# - A change to docs only (LOG.md, README.md, docs/) skips the browser tests.
+# - The unit tests run every time.
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+
+# A newer push to the same branch cancels the older run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Playwright project names from playwright.config: one browser at one width, and every browser
+  # at that width.
+  QUICK_PROJECT: --project=chromium-375
+  ONE_WIDTH_PROJECTS: --project=chromium-375 --project=firefox-375 --project=webkit-375
+
+jobs:
+  changes:
+    # Adding any other label starts nothing.
+    if: github.event.action != 'labeled' || github.event.label.name == 'full-tests'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: diff
+        name: Does this change more than docs?
+        env:
+          # A PR is checked out as a merge commit, whose first parent is the base branch.
+          BASE: ${{ github.event_name == 'push' && github.event.before || 'HEAD^1' }}
+        run: |
+          if git diff --name-only "$BASE" HEAD | grep -qvE '^(LOG\.md|README\.md|docs/)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  unit:
+    needs: [changes]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  browsers-quick:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true' && !(github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'full-tests'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # --only-changed compares against the base branch, so it needs the history.
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run build
+      - name: Whole suite, one browser, one width
+        run: npx playwright test $QUICK_PROJECT
+      - name: Changed test files, every browser, one width
+        run: npx playwright test --only-changed=origin/${{ github.base_ref }} --pass-with-no-tests $ONE_WIDTH_PROJECTS
+
+  browsers-full:
+    needs: [changes]
+    if: needs.changes.outputs.code == 'true' && (github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'full-tests'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run build
+      - name: Every browser, every width for the width-specific tests
+        run: npx playwright test
