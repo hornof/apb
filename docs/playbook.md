@@ -15,7 +15,7 @@ Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Che
 4. **Build.** For each piece: Claude writes the tests first, then the code until the tests pass, then opens one small PR.
 5. **Review and merge.** A second Claude reviews the PR. The human reads the review, checks the PR's preview site, and merges: **gate 3**. Tests must pass first.
 
-   Every PR gets this review before the human sees it, whether it holds code or only docs. There is one review round. The reviewer sorts each item into one of three buckets:
+   Every PR gets this review before the human sees it, whether it holds code or only docs. Small PRs get it too: even a short wording change usually has something the reviewer is sure needs fixing, and a review takes only a few minutes. There is one review round. The reviewer sorts each item into one of three buckets:
    - **Fix**: the reviewer is sure. It is fixed straight away, and the orchestrator checks the fix.
    - **Note**: the reviewer isn't sure. The human skims it.
    - **Decision**: taste or a trade-off. It comes with a recommended answer. Nothing changes for it until the human answers. Resolving its thread with no comment accepts the recommendation.
