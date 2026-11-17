@@ -210,7 +210,9 @@ The apb plugin keeps a log of what every Claude session and agent does in the pr
 - **Run each test only where it's needed.** Most of a build's time goes to running tests.
   - While building, the builder runs only the tests for the code it's changing, in one browser at one screen width.
   - Before pushing, it runs the test files it changed in every browser, at one width.
-  - GitHub runs the whole suite on every push. The reviewer doesn't run it again; it checks the builder's untested points on the preview.
+  - On each push to a PR, GitHub runs the quick set: the whole browser suite in one browser at one width, plus the changed test files in every browser at one width.
+  - GitHub runs the full set (every browser, every width for the width-specific tests) once per PR: the orchestrator adds the `full-tests` label just before the human sees the PR. It runs again on every push to main.
+  - The reviewer doesn't run the tests again; it checks the builder's untested points on the preview.
   - Tests that depend on screen width run at every width. The rest run at one width.
   - A push that changes only docs skips the browser tests.
   - Never start a test suite while another one is running.
