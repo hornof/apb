@@ -111,8 +111,18 @@ class BuildCount(unittest.TestCase):
     """The Build stage shows how many build cards are done, worked out from GitHub."""
 
     def test_count_from_github_issues(self):
-        issues = json.dumps([{"state": "CLOSED"}, {"state": "OPEN"}, {"state": "CLOSED"}, {"state": "OPEN"}])
+        issues = json.dumps([{"state": "CLOSED", "stateReason": "COMPLETED"}, {"state": "OPEN", "stateReason": ""},
+                             {"state": "CLOSED", "stateReason": "COMPLETED"}, {"state": "OPEN", "stateReason": "REOPENED"}])
         self.assertEqual(mp.build_count(issues), (2, 4))
+
+    def test_dropped_cards_leave_both_numbers(self):
+        # 10 cards, 7 finished, 1 dropped (closed as not planned), 2 still open: "7 of 9".
+        issues = ([{"state": "CLOSED", "stateReason": "COMPLETED"}] * 7
+                  + [{"state": "CLOSED", "stateReason": "NOT_PLANNED"}]
+                  + [{"state": "OPEN", "stateReason": ""}] * 2)
+        done, total = mp.build_count(json.dumps(issues))
+        self.assertEqual((done, total), (7, 9))
+        self.assertIn("build (7 of 9 cards done)", build(done=done, total=total))
 
     def test_no_issues(self):
         self.assertEqual(mp.build_count("[]"), (0, 0))
@@ -151,13 +161,14 @@ class BuildCount(unittest.TestCase):
 
     def test_random_counts_against_a_second_way(self):
         rng = random.Random(31)
+        kinds = [("OPEN", ""), ("OPEN", "REOPENED"), ("CLOSED", "COMPLETED"), ("CLOSED", "NOT_PLANNED")]
         for _ in range(300):
-            states = [rng.choice(["OPEN", "CLOSED"]) for _ in range(rng.randint(0, 40))]
-            done, total = mp.build_count(json.dumps([{"state": s} for s in states]))
+            picks = [rng.choice(kinds) for _ in range(rng.randint(0, 40))]
+            raw = json.dumps([{"state": s, "stateReason": r} for s, r in picks])
+            done, total = mp.build_count(raw)
             # Second way: count the words in the raw JSON.
-            raw = json.dumps([{"state": s} for s in states])
-            self.assertEqual(done, raw.count('"CLOSED"'))
-            self.assertEqual(total, raw.count('"state"'))
+            self.assertEqual(done, raw.count('"COMPLETED"'))
+            self.assertEqual(total, raw.count('"state"') - raw.count('"NOT_PLANNED"'))
             page = build(done=done, total=total)
             # Removing the count gives back the page with no count: nothing else changed.
             without = re.sub(r" \(\d+ of \d+ cards done\)", "", page)

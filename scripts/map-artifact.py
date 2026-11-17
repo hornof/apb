@@ -8,7 +8,8 @@ Needs the GitHub CLI (gh), signed in. It uses GitHub's own markdown renderer, so
 shows the map the way GitHub does. Links to files in the repo become links to GitHub, on the
 branch the artifact is built from. After a merge, build it again from main.
 In the "Stages, in order" line, the build stage gets a count worked out from GitHub, for example
-"build (3 of 10 cards done)": closed issues out of all issues labeled "build".
+"build (7 of 9 cards done)": of the issues labeled "build", those closed as completed, out of
+all of them minus those closed as not planned (dropped cards count in neither number).
 Before writing, it checks that every table row and every link in docs/MAP.md made it into the
 artifact, and that every linked repo file exists on GitHub on that branch.
 """
@@ -46,9 +47,12 @@ def md_links(text):
 
 
 def build_count(issues_json):
-    """(closed, all) for the build issues, from `gh issue list --json state` output."""
-    states = [i["state"] for i in json.loads(issues_json)]
-    return sum(s == "CLOSED" for s in states), len(states)
+    """(done, planned) for the build issues, from `gh issue list --json state,stateReason` output.
+    Done: closed as completed. Planned: all, minus those closed as not planned (dropped cards)."""
+    issues = json.loads(issues_json)
+    done = sum(i["state"] == "CLOSED" and i["stateReason"] == "COMPLETED" for i in issues)
+    dropped = sum(i["state"] == "CLOSED" and i["stateReason"] == "NOT_PLANNED" for i in issues)
+    return done, len(issues) - dropped
 
 
 def add_build_count(body, done, total):
@@ -128,7 +132,7 @@ def main():
     body = run(["gh", "api", "markdown", "-f", f"text={text}", "-f", "mode=gfm", "-f", f"context={repo}"])
     commit = run(["git", "rev-parse", "--short", "HEAD"]).strip()
     done, total = build_count(run(["gh", "issue", "list", "--repo", repo, "--label", BUILD_LABEL,
-                                   "--state", "all", "--limit", "1000", "--json", "state"]))
+                                   "--state", "all", "--limit", "1000", "--json", "state,stateReason"]))
     page = build(text, body, repo, branch, commit, sys.argv[2], done, total)
     check_files(page, repo, branch, on_github)
     open(sys.argv[1], "w").write(page)
