@@ -1,6 +1,6 @@
 # PRD — `<project>`   (status: DRAFT, revision `<n>` | APPROVED by `<name>`, `<date>`, revision `<n>`)
 
-Source: `<brain-dump issue and review PRs, with dates>`.
+Source: `<PRD input issue and review PRs, with dates>`.
 Supporting files: [mockups](mockups/README.md) · `<other docs/ files this PRD links to>`
 
 ## 1. What & why

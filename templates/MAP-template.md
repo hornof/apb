@@ -1,22 +1,26 @@
 # `<project>`: project map
 
-Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists. Claude checks every row after every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand. Claude fixes any row that is wrong.
+Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists. Claude checks every row after every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand. Claude fixes any row that is wrong. At the same moments, Claude checks the board: every issue is in the right column, and there is an issue for the current stage.
 
-The map lists only things that rarely change. It never copies a status, such as the current stage or whether a PR is open, because a copied status goes out of date. To see where the project stands now, open the board: `<board link>`.
+The map lives in two places with the same content: `docs/MAP.md` in the GitHub repo, and the map artifact in Claude: `<map artifact link>`. Claude edits only `docs/MAP.md` and builds the map artifact from it with apb's `scripts/map-artifact.py`. Links to repo files point at the branch the map artifact was built from.
 
-**Stages, in order:** brain dump → PRD (gate 1) → TDD (gate 2) → board → build → review and merge (gate 3) → check the live product
+The map lists only things that rarely change. It never copies a status, such as the current stage or whether a PR is open, because a copied status goes out of date. To see where the project stands now, open the board: `<board link>`. The one number in the map artifact, the build count, is worked out from GitHub each time the map artifact is built.
+
+**Stages, in order:** PRD input → PRD (gate 1) → TDD (gate 2) → split the TDD into cards → build → review and merge (gate 3) → check the live product
 
 <!-- Where a row needs a status, link GitHub's live list, for example the list of open PRs. -->
+<!-- Keep the "Stages, in order" line: the map artifact adds the build count after "build". -->
 
 ## GitHub
 | Piece | What it is | When it's used |
 |---|---|---|
 | Repo: `<repo link>` | The code, docs and content | Every stage |
-| Board: `<board link>` | Progress: one issue per early stage (brain dump, PRD, TDD), then one card per piece of work | Every stage |
-| Brain dump: `<issue link>` | The original description of the project | Start |
+| Board: `<board link>` | Progress: one issue per early stage (PRD input, PRD, TDD), then one card per piece of work | Every stage |
+| PRD input: `<issue link>` | The original description of the project | Start |
+| `docs/MAP.md` | The map, in the repo. The map artifact is built from it. | Any time |
 
-## Claude pages
-Pages Claude makes and hosts. Each one is private to its creator until shared. Kinds of pages and how a project can use them:
+## Claude artifacts
+Web pages Claude makes and hosts on claude.ai. Each one is private to its creator until shared. Kinds of artifacts and how a project can use them:
 
 - **Design:** clickable mockups of screens. Use them to work through how the product looks and behaves before any code exists.
 - **Whiteboard:** boxes, arrows and sketches that people move around together. Use it to draw the system's parts and how data flows between them, or to brainstorm features.
@@ -30,10 +34,11 @@ Pages Claude makes and hosts. Each one is private to its creator until shared. K
 
 | Piece | What it is | When it's used |
 |---|---|---|
-| `<page name and link>` | `<for example: clickable mockups of the main screens>` | `<for example: PRD review>` |
+| Map artifact: `<map artifact link>` (plain page) | The map, in Claude. Built from `docs/MAP.md`; never edited by hand. | Any time |
+| `<artifact name and link>` | `<for example: clickable mockups of the main screens>` | `<for example: PRD review>` |
 
-## Local files
-Files on the developer's computer. Claude can read and write a folder only after the developer gives it access. Kinds of local files a project can use:
+## On the developer's computer
+Claude can read and write a folder only after the developer gives it access. Kinds of things on the developer's computer a project can use:
 
 - The local copy of the repo.
 - A working folder outside the repo, for large or private files that shouldn't be committed (for example, raw generated content or reference material).
@@ -53,7 +58,7 @@ Services outside GitHub and Claude that the project depends on. Which ones depen
 
 | Kind of project | Typical outside services |
 |---|---|
-| Website | Hosting, such as a Claude page for something simple, or Cloudflare Pages, Netlify or Vercel. A domain name and its DNS. |
+| Website | Hosting, such as a Claude artifact for something simple, or Cloudflare Pages, Netlify or Vercel. A domain name and its DNS. |
 | Web app or API | An app host (Fly.io, Render, a cloud provider). A database (Postgres from Supabase or Neon). Sign-in (Google, GitHub). |
 | Mobile app | Apple's App Store Connect and TestFlight. Google Play Console. Push notifications. |
 | Command-line tool or code library | A package registry (PyPI, npm, Homebrew). GitHub Releases. |

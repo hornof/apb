@@ -1,23 +1,23 @@
 ---
 name: apb-prd
-description: Turn a stakeholder's brain dump into a PRD with checkable requirements, mockups and supporting docs. Use when starting a new project or feature set.
+description: Turn a stakeholder's PRD input into a PRD with checkable requirements, mockups and supporting docs. Use when starting a new project or feature set.
 ---
-Input: the brain-dump issue. Output: one PR with `docs/PRD.md` (from `templates/PRD-template.md`), mockups, and any supporting docs in `docs/`.
+Input: the PRD input issue. Output: one PR with `docs/PRD.md` (from `templates/PRD-template.md`), mockups, and any supporting docs in `docs/`.
 
-Before step 1: open an issue called "PRD" and add it to the project's board in In progress. Move the card to the top of In progress (see apb-build step 1). Close the Brain dump issue; the board moves it to Done. The PRD's PR description says "Closes #N" for the PRD issue, so the merge at gate 1 moves it to Done.
+Before step 1: open an issue called "PRD" and add it to the project's board in In progress. Move the card to the top of In progress (see apb-build step 1). Close the PRD input issue; the board moves it to Done. The PRD's PR description says "Closes #N" for the PRD issue, so the merge at gate 1 moves it to Done.
 
-1. **Find out who it's for.** Who is the real stakeholder? Is this a trial run for someone else? If the brain dump doesn't say, ask before writing anything. Never name someone who isn't on the repo in a public repo.
+1. **Find out who it's for.** Who is the real stakeholder? Is this a trial run for someone else? If the PRD input doesn't say, ask before writing anything. Never name someone who isn't on the repo in a public repo.
 2. **Fill in every section of the template.**
    - Every requirement ends with a check you can test or see: "loads in under 1 second", "works on a 375 px phone screen". Never "works well".
    - Include the owner's journeys too. The owner's tools and commands are part of the product.
-   - If the brain dump doesn't answer something, make it an open question with your recommended answer. Don't guess.
+   - If the PRD input doesn't answer something, make it an open question with your recommended answer. Don't guess.
 3. **Make mockups before the review.** Draw the main screens on a Claude Design canvas, clickable where it matters, and link it from the PRD. Without pictures, a build can match the words but not what the human imagined.
-4. **Keep the PRD short.** Long lists, research and comparisons go in separate files in `docs/`, linked from the PRD. Private links (Claude pages, chats) can't be the only record, because other people can't open them.
+4. **Keep the PRD short.** Long lists, research and comparisons go in separate files in `docs/`, linked from the PRD. Private links (Claude artifacts, chats) can't be the only record, because other people can't open them.
 5. **Check how GitHub displays it** before showing it to the human: `gh api markdown -F mode=gfm -F text=@docs/PRD.md -F context=<owner>/<repo>`. Look for broken numbered lists and for `#5`-style links pointing to the wrong repo.
 6. **Run `apb-review` on the PR**, then ask for the human's review as described in the playbook's "How the human reviews" section.
 7. **Update the PRD as answers come in.** If the human answers in chat, copy the answer to the PR. Put each decision where it belongs in the PRD, and add a one-line entry to section 11.
 8. **Get the human's yes before the merge.** The hand-off is "1 thing for you to do right now: read PR #N and say yes, or what to change." Ask for the merge after the post-approval updates are in. A clear yes is approval; praise that comes with open questions is not. Ask only when it's genuinely unclear. After the yes, make these updates in the same PR. If the human merges first, the merge is the approval: don't ask again, and make these updates in a follow-up PR.
    - Export each mockup screen as a PNG into `docs/mockups/`, with a short README.
    - Change the status line at the top to APPROVED, with the name and date.
-   - Add a line to `docs/STORY.md` and update `docs/MAP.md`.
+   - Add a line to `docs/HISTORY.md` and update `docs/MAP.md`.
    - Ask the human to merge. Merging is gate 1. No TDD work before that.

@@ -5,17 +5,17 @@ How a small team of humans and Claude builds software with apb. This file explai
 ## The steps
 
 ```
-Idea → PRD → TDD → Board → Build → Review → Merge → Deploy → Check the live product
-        gate 1  gate 2                       gate 3
+Idea → PRD → TDD → Split the TDD into cards → Build → Review → Merge → Deploy → Check the live product
+        gate 1  gate 2                                          gate 3
 ```
 
 1. **PRD** (what and why). Claude writes it from the human's description: goals, user journeys, requirements that each end with a check ("loads in under 1 second", "works on a phone"), mockups, and the look. The human reviews and approves: **gate 1**.
 2. **TDD** (how it's built and tested). Architecture, where data lives, the test plan, risks, and the work split into PR-sized pieces. Use `docs/system-design-guide.md` for the design part. The human approves: **gate 2**.
-3. **Board.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues. The same board holds one issue each for the brain dump, the PRD and the TDD from setup on, so it always shows where the project stands.
+3. **Split the TDD into cards.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues. The same board holds one issue each for the PRD input, the PRD and the TDD from setup on, so it always shows where the project stands.
 4. **Build.** For each piece: Claude writes the tests first, then the code until the tests pass, then opens one small PR.
 5. **Review and merge.** A second Claude reviews the PR. The human reads the review, checks the PR's preview site, and merges: **gate 3**. Tests must pass first.
 
-   Every PR gets this review before the human sees it, whether it holds code or only docs. Small PRs get it too: even a short wording change usually has something the reviewer is sure needs fixing, and a review takes only a few minutes. There is one review round. The reviewer sorts each item into one of three buckets:
+   Every PR gets this review before the human sees it, whether it holds code or only docs. There is one review round. The reviewer sorts each item into one of three buckets:
    - **Fix**: the reviewer is sure. It is fixed straight away, and the orchestrator checks the fix.
    - **Note**: the reviewer isn't sure. The human skims it.
    - **Decision**: taste or a trade-off. It comes with a recommended answer. Nothing changes for it until the human answers. Resolving its thread with no comment accepts the recommendation.
@@ -85,7 +85,7 @@ The human never types git commands; the orchestrator does. The advisor never giv
 
   Then Claude sends one short message: what to do, one link per thing, nothing else.
 - **A merge or a clear yes is approval.** Praise that comes with open questions is not. Ask only when it's genuinely unclear.
-- **At gates 1 and 2 (PRD and TDD), get the yes before the merge.** The hand-off is "1 thing for you to do right now: read PR #N and say yes, or what to change." Then the updates that follow approval (the approved marker, the `docs/STORY.md` entry, the map) go into the same PR, and the merge closes the gate's issue. Ask for the merge after the post-approval updates are in.
+- **At gates 1 and 2 (PRD and TDD), get the yes before the merge.** The hand-off is "1 thing for you to do right now: read PR #N and say yes, or what to change." Then the updates that follow approval (the approved marker, the `docs/HISTORY.md` entry, the map) go into the same PR, and the merge closes the gate's issue. Ask for the merge after the post-approval updates are in.
 
 ## Helping the human keep track
 
@@ -108,8 +108,12 @@ The human never types git commands; the orchestrator does. The advisor never giv
   - Done: the board's automation drops a closed card at the bottom, so after each merge, move the card to the top of Done.
   - Todo is the order the cards will be built in, with the next card on top. New cards go in oldest first, until they're sorted.
 - **Never comment on the time of day or suggest stopping.** The human decides when to work.
-- **Project map** (`docs/MAP.md`): every piece of the project, where it lives (GitHub, Claude pages, local files, outside services), what it's for and when it's used. It lists only things that rarely change. It never copies a status, such as the current stage. The board shows where the project stands. Claude checks every row after every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand. Whenever Claude adds a new piece (a page, a folder, a scheduled task, an outside account), it updates the map at the same time.
-- **Project story** (`docs/STORY.md`): one entry per stage, with the date, the PR and what was decided, so someone new can see what happened.
+- **Project map** (`docs/MAP.md`): every piece of the project, where it lives (GitHub, Claude artifacts, the developer's computer, outside services), what it's for and when it's used. It lists only things that rarely change. It never copies a status, such as the current stage. The board shows where the project stands. Claude checks every row after every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand. Whenever Claude adds a new piece (a Claude artifact, a folder, a scheduled task, an outside account), it updates the map at the same time.
+  - The map lives in two places: `docs/MAP.md` and the map artifact, a Claude artifact the human can open from anywhere. Claude edits only `docs/MAP.md`, then builds the map artifact from it with `scripts/map-artifact.py` in the apb plugin and publishes it to the same link. So the two never disagree. Never edit the map artifact by hand.
+  - The script's links to repo files point at the branch it was built from, and it stops if a linked file isn't on GitHub. Build it again from main after each merge.
+  - The build stage in the map artifact shows how many build cards are done, for example "3 of 10 cards done". The script counts the closed issues labeled `build` on GitHub each time it runs; nobody copies the number by hand.
+  - At the same four moments, Claude checks the board too: every issue is in the right column, and there is an issue for the current stage.
+- **Project history** (`docs/HISTORY.md`): one entry per stage, oldest first, with the date, the PR and what was decided, so someone new can see what happened.
 - **One question at a time.** Settle every part of the current question before asking the next. Ask in the chat, not with pop-up buttons, so the human can answer in their own words.
 - **Plain English.** No made-up terms, no unexplained jargon, one instruction per sentence.
 - **Show everything visual.** Mockups, generated images and layouts go on a page the human can see, including the ones Claude rejected and why. The human makes the final call on how things look.

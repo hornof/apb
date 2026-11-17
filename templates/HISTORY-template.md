@@ -1,6 +1,6 @@
 # `<project>`: how it was built
 
-The story of this project, one entry per stage, oldest first. A newcomer should be able to read it in five minutes and understand why the project looks the way it does. The PRs hold the details; this file holds the turning points.
+The history of this project, one entry per stage, oldest first. A newcomer should be able to read it in five minutes and understand why the project looks the way it does. The PRs hold the details; this file holds the turning points.
 
 What's worth writing down:
 - **Decisions and why.** What was chosen, what was turned down, and the reason.
@@ -13,7 +13,7 @@ What isn't: routine progress ("wrote tests, they pass"), anything the board or t
 The examples below are for a made-up booking app for a yoga studio. At setup, copy this file with only the Setup entry; each later stage adds its own entry when it ends.
 
 ## `<date>`: Setup
-- Repo and board created. Brain dump: `<issue link>`.
+- Repo and board created. PRD input: `<issue link>`.
 
 > **Example:** The owner wants students to book classes from their phones. The studio already uses a paper sign-up sheet, so the app must be simpler than paper or no one will switch.
 
