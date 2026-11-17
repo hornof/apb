@@ -35,6 +35,7 @@ Web pages Claude makes and hosts on claude.ai. Each one is private to its creato
 | Piece | What it is | When it's used |
 |---|---|---|
 | Map artifact: `<map artifact link>` (plain page) | The map, in Claude. Built from `docs/MAP.md`; never edited by hand. | Any time |
+| Progress page: `<progress page link>` (plain page) | What's done, running and left: built by apb's `scripts/progress-page.py` from the events file and GitHub; never edited by hand | While work runs |
 | `<artifact name and link>` | `<for example: clickable mockups of the main screens>` | `<for example: PRD review>` |
 
 ## On the developer's computer

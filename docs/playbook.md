@@ -113,6 +113,10 @@ The human never types git commands; the orchestrator does. The advisor never giv
   - The script's links to repo files point at the branch it was built from, and it stops if a linked file isn't on GitHub. Build it again from main after each merge.
   - The build stage in the map artifact shows how many build cards are done, for example "7 of 9 cards done". The script counts the issues labeled `build` on GitHub each time it runs; nobody copies the number by hand. A card is done when its issue is closed as completed. A card dropped by closing its issue as "not planned" counts in neither number: 10 cards, 7 finished and 1 dropped give "7 of 9".
   - At the same four moments, Claude checks the board too: every issue is in the right column, and there is an issue for the current stage.
+- **Progress page:** one page that shows what's done, what's running and what's left, built by `scripts/progress-page.py` in the apb plugin and published to its own Claude artifact. The map lists the pieces; the progress page shows the status.
+  - It shows who holds the ball, the stages with the build count, the board's cards by column, each running agent with its last step and how long ago that was, each open PR with its checks and who it waits on (you, CI, the reviewer or the builder), and how long recent agents took.
+  - It reads the events file and GitHub, and changes nothing. Merging, commenting and approving stay on GitHub; the page links there.
+  - It is a snapshot. The orchestrator builds and publishes it again each time it says who holds the ball, and whenever the human asks where things stand. The page shows when it was built.
 - **Project history** (`docs/HISTORY.md`): one entry per stage, oldest first, with the date, the PR and what was decided, so someone new can see what happened.
 - **One question at a time.** Settle every part of the current question before asking the next. Ask in the chat, not with pop-up buttons, so the human can answer in their own words.
 - **Plain English.** No made-up terms, no unexplained jargon, one instruction per sentence.
@@ -199,7 +203,7 @@ The apb plugin keeps a log of what every Claude session and agent does in the pr
 
 - **What it holds:** one line each time a prompt starts a turn: a message from the human, or one Claude Code sends itself, such as a background agent reporting back; an agent starts or stops; a shell command finishes, a checklist item is created or done, a turn ends, or Claude Code shows a notification, such as a permission prompt.
 - **What each line holds:** the time, the event, and the agent's id and type. For a shell command, also the command and its exit status, but not its output. For a prompt, not its text. For a turn's end, who holds the ball, if the message said so, and whether the Stop hook sent the message back.
-- **Who reads it:** the orchestrator. It reads the file to see what the builder and reviewer are doing, to notice a step that has gone quiet, and to time each step. Agents' own time estimates are often wrong; the file's times are not.
+- **Who reads it:** the orchestrator, the watcher and the progress page. The orchestrator reads the file to see what the builder and reviewer are doing, to notice a step that has gone quiet, and to time each step. Agents' own time estimates are often wrong; the file's times are not.
 
 ## Testing and models
 
