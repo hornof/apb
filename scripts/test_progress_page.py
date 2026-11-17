@@ -302,7 +302,9 @@ class Page(unittest.TestCase):
         self.assertIn("<title>r progress</title>", page)
         self.assertIn("Your turn: merge PR #7", page)
         self.assertIn("build (3 of 10 cards done)", page)
-        self.assertIn("1 of 3 cards done", page)
+        # Two counts, worded apart: build cards in the stages, every board item under the stages.
+        self.assertIn("1 of 3 board items in Done", page)
+        self.assertEqual(page.count("cards done"), 1)
         for text in ["apb:builder", "<td>30 min</td>", "npm test", "1 min ago", "apb:reviewer", "took 16 min",
                      'href="https://github.com/o/r/pull/7"', "review posted", "card 1", "card 2", "card 3"]:
             self.assertIn(text, page)

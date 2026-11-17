@@ -360,7 +360,7 @@ def render(d):
     now = d["now"]
     name = d["repo"].split("/")[-1]
     done, total = done_count(d["board"])
-    board_line = ("<p>%d of %d cards done</p>%s" % (done, total, bar(done, total))) if total else ""
+    board_line = ("<p>%d of %d board items in Done</p>%s" % (done, total, bar(done, total))) if total else ""
     built = time.strftime("%Y-%m-%d %H:%M", time.localtime(now))
     return """<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
