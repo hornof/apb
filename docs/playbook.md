@@ -82,15 +82,15 @@ The human never types git commands; the orchestrator does. The advisor never giv
 
   Then Claude sends one short message: what to do, one link per thing, nothing else.
 - **A merge or a clear yes is approval.** Praise that comes with open questions is not. Ask only when it's genuinely unclear.
-- **At gates 1 and 2 (PRD and TDD), get the yes before the merge.** Then the updates that follow approval (the approved marker, the `docs/STORY.md` entry, the map) go into the same PR, and the merge closes the gate's issue.
+- **At gates 1 and 2 (PRD and TDD), get the yes before the merge.** The hand-off is "One thing for you right now: read PR #N and say yes, or what to change". Then the updates that follow approval (the approved marker, the `docs/STORY.md` entry, the map) go into the same PR, and the merge closes the gate's issue. Ask for the merge after the post-approval updates are in.
 
 ## Helping the human keep track
 
-- **Every status starts with one plain line.** Either "Nothing for you to do right now." or "One thing for you right now: <the thing, in one sentence>". The same first line every time shows at a glance whether anything waits on the human, without digging through a long message.
+- **Every status starts with one plain line.** Either `Nothing for you to do right now.` or `One thing for you right now: <the thing, in one sentence>`. The same first line every time shows at a glance whether anything waits on the human, without digging through a long message.
   - Then one line per card in In progress and In review: what's running, or what it's waiting on, and when it should finish. These lines match the board; a card left out makes the status disagree with the board.
   - Normal case, never all caps.
   - One thing at a time, never a list of maybes. No "left to do" or "optional" sections.
-- **Alert only when it's the human's turn.** Send one desktop alert with a sound in the same turn the status says "One thing for you right now". On a Mac: `osascript -e 'display notification "Your turn: <what>" with title "Claude Code" sound name "Glass"'`. The human works in other windows while agents run, and the alert tells them when to come back.
+- **Alert only when it's the human's turn.** Send one desktop alert with a sound when something new becomes the human's turn, in the same turn the status first says so. The status line repeats until the human acts; the alert doesn't. On a Mac: `osascript -e 'display notification "Your turn: <what>" with title "Claude Code" sound name "Glass"'`. The human works in other windows while agents run, and the alert tells them when to come back.
   - Never alert for progress, check-ins or agent reports. Alerts that fire on every step look the same as the real one, so the real one gets ignored.
   - If an alert doesn't arrive, check the Mac's Focus mode first: it silences notifications.
 - **Board: the latest move on top.** When a card moves to a new column, put it at the top of that column, so the human sees the latest movement at a glance. Todo keeps build order.
