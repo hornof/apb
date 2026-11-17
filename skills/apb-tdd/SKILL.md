@@ -4,7 +4,7 @@ description: Turn an approved PRD into a technical design doc (TDD) — architec
 ---
 Input: the approved PRD. Output: `docs/TDD.md` from `templates/TDD-template.md`.
 
-Before step 1: open an issue called "TDD" and add it to the project's board in In progress. The TDD's PR description says "Closes #N" for the TDD issue, so the merge at gate 2 moves it to Done.
+Before step 1: open an issue called "TDD" and add it to the project's board in In progress. Move the card to the top of In progress (see apb-build step 1). The TDD's PR description says "Closes #N" for the TDD issue, so the merge at gate 2 moves it to Done.
 
 1. Design the system with `docs/system-design-guide.md`. Choose the simplest stack that meets the PRD. Name the real hosting, CI and the store for each kind of data. Don't default to local files or in-memory data: hosts often wipe both on every deploy.
 2. Test plan maps 1:1 to the PRD's acceptance criteria. Mark the tests that depend on screen width. Those run at every width; the rest run at one width. Every child process the code or tests start has a time limit (for example `timeout` on `spawnSync`, `execSync` or `subprocess.run`), so one stuck child can't stall a whole run.
@@ -17,6 +17,7 @@ Before step 1: open an issue called "TDD" and add it to the project's board in I
    - First, run `apb-review`: the reviewer checks the TDD against the PRD.
    - Then the human reviews the PR, following the steps in the playbook's "How the human reviews" section.
    - Get the human's yes before the merge. A clear yes is approval; praise that comes with open questions is not. Ask only when it's genuinely unclear.
+   - At gates 1 and 2, the hand-off is "1 thing for you to do right now: read PR #N and say yes, or what to change." Ask for the merge after the post-approval updates are in.
    - After the yes, in the same PR: mark the TDD approved at the top, add a line to `docs/STORY.md`, update `docs/MAP.md`, and ask the human to merge. Merging is gate 2.
    - If the human merges first, the merge is the approval: don't ask again, and make these updates in a follow-up PR.
 5. Once the TDD is approved, set up what it named, before any build card starts: (a) CI — a workflow that runs the TDD's whole test suite (every browser, and every width for the width-specific tests) on every PR and push to main, opened as a PR for the human to merge. It skips the browser tests when a push changes only docs (`LOG.md`, `README.md`, `docs/`); (b) hosting — connect the repo to the host the TDD chose so main deploys and PRs get preview URLs. Do the parts that have a command line yourself; if the host needs a dashboard step a human must click, say exactly which step and why, and stop there.

@@ -4,7 +4,7 @@ description: Turn a stakeholder's brain dump into a PRD with checkable requireme
 ---
 Input: the brain-dump issue. Output: one PR with `docs/PRD.md` (from `templates/PRD-template.md`), mockups, and any supporting docs in `docs/`.
 
-Before step 1: open an issue called "PRD" and add it to the project's board in In progress. Close the Brain dump issue; the board moves it to Done. The PRD's PR description says "Closes #N" for the PRD issue, so the merge at gate 1 moves it to Done.
+Before step 1: open an issue called "PRD" and add it to the project's board in In progress. Move the card to the top of In progress (see apb-build step 1). Close the Brain dump issue; the board moves it to Done. The PRD's PR description says "Closes #N" for the PRD issue, so the merge at gate 1 moves it to Done.
 
 1. **Find out who it's for.** Who is the real stakeholder? Is this a trial run for someone else? If the brain dump doesn't say, ask before writing anything. Never name someone who isn't on the repo in a public repo.
 2. **Fill in every section of the template.**
@@ -16,7 +16,7 @@ Before step 1: open an issue called "PRD" and add it to the project's board in I
 5. **Check how GitHub displays it** before showing it to the human: `gh api markdown -F mode=gfm -F text=@docs/PRD.md -F context=<owner>/<repo>`. Look for broken numbered lists and for `#5`-style links pointing to the wrong repo.
 6. **Run `apb-review` on the PR**, then ask for the human's review as described in the playbook's "How the human reviews" section.
 7. **Update the PRD as answers come in.** If the human answers in chat, copy the answer to the PR. Put each decision where it belongs in the PRD, and add a one-line entry to section 11.
-8. **Get the human's yes before the merge.** A clear yes is approval; praise that comes with open questions is not. Ask only when it's genuinely unclear. After the yes, make these updates in the same PR. If the human merges first, the merge is the approval: don't ask again, and make these updates in a follow-up PR.
+8. **Get the human's yes before the merge.** The hand-off is "1 thing for you to do right now: read PR #N and say yes, or what to change." Ask for the merge after the post-approval updates are in. A clear yes is approval; praise that comes with open questions is not. Ask only when it's genuinely unclear. After the yes, make these updates in the same PR. If the human merges first, the merge is the approval: don't ask again, and make these updates in a follow-up PR.
    - Export each mockup screen as a PNG into `docs/mockups/`, with a short README.
    - Change the status line at the top to APPROVED, with the name and date.
    - Add a line to `docs/STORY.md` and update `docs/MAP.md`.

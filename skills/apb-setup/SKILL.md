@@ -15,7 +15,7 @@ This skill belongs in the orchestrator (the main Claude Code session, opened in 
    - Where will people use it: a website, a phone app, a command-line tool, something else? If it's online, what address?
    - Any deadline?
 
-   Link the issue from docs/MAP.md and docs/STORY.md. Add the issue to the board (step 3) in In progress. When the PRD stage starts, close the issue; the board moves it to Done.
+   Link the issue from docs/MAP.md and docs/STORY.md. Add the issue to the board (step 3) in In progress. Move the card to the top of In progress (see apb-build step 1). When the PRD stage starts, close the issue; the board moves it to Done.
 2. Collaborators: ask whether anyone else will work on the project.
    - If not, remove the collaborator-guide row from README.md and go on to step 3.
    - If so, ask for each teammate's GitHub username and invite them. Then copy docs/collaborator-guide.md into the project's docs/ folder, adapted for this project.
