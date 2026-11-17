@@ -84,6 +84,14 @@ class Build(unittest.TestCase):
         self.assertEqual(len(mp.md_rows(MD)), 3)
         self.assertEqual(len(mp.md_rows("| a |\n|:--|\n| b |\n")), 2)
 
+    def test_mermaid_diagram_is_caught(self):
+        # GitHub's mermaid loader would go into the artifact as raw code and a spinner.
+        md = MD.replace("| Piece |", "```mermaid\nflowchart LR\n  a --> b\n```\n\n| Piece |")
+        body = HTML.replace("<table>", '<section data-type="mermaid"><pre lang="mermaid">flowchart LR</pre></section><table>')
+        with self.assertRaises(SystemExit) as stop:
+            build(md=md, body=body)
+        self.assertIn("Stages, in order", str(stop.exception.code))
+
     def test_no_stage_diagram_and_no_current_stage(self):
         # The map never marks a current stage; the board shows where the project stands.
         page = build(done=2, total=5)

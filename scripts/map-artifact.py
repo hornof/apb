@@ -67,6 +67,9 @@ def add_build_count(body, done, total):
 
 
 def build(text, body, repo, branch, commit, page_url, done, total):
+    # GitHub draws mermaid diagrams with its own script; in the artifact they'd show as raw code.
+    if re.search(r"^```\s*mermaid", text, re.M):
+        sys.exit(f'{MAP} has a mermaid diagram; replace it with a "**Stages, in order:**" line')
     # A link to this page itself does nothing in the artifact, so it becomes plain text there.
     body = re.sub(r'<a href="' + re.escape(page_url) + r'"[^>]*>(.*?)</a>', r"\1", body)
     body = re.sub(r'\srel="[^"]*"', "", body)  # GitHub adds its own rel; one rel per link
