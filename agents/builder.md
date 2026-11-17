@@ -11,7 +11,7 @@ A PR closes exactly the issues it finishes: one "Closes #N" line for each. Never
 Tests and pushes:
 - While you build, run only the tests for the code you are changing, in one browser at one screen width (or the project's equivalent, such as one test file).
 - Before you push, run the test files you changed in every browser, at one width.
-- Don't run the whole suite on your computer. GitHub runs it once per PR, just before the human sees it.
+- Don't run the whole suite on your computer. GitHub runs the quick set on every push and the full set once per PR, just before the human sees it.
 - Never start a test suite while another one is running.
 - Push when the work is ready for review, not after each step. Every push that changes code starts GitHub's tests again.
 - Put your `LOG.md` line in the same commit as the code, never in a commit of its own.

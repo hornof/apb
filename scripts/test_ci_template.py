@@ -106,6 +106,34 @@ class TemplateShape(unittest.TestCase):
         self.assertNotRegex(cond, r"github\.|needs\.|contains\(", "unknown expression left: " + cond)
         return eval(cond, {"__builtins__": {}})
 
+    def group(self, action, added):
+        """The concurrency group GitHub would compute for a PR event on one branch."""
+        values = {
+            "github.ref": "'refs/pull/1/merge'",
+            "github.event.action": repr(action),
+            "github.event.label.name": repr(added),
+        }
+
+        def evaluate(m):
+            expr = m.group(1)
+            for name, value in values.items():
+                expr = expr.replace(name, value)
+            expr = expr.replace("&&", " and ").replace("||", " or ")
+            self.assertNotRegex(expr, r"github\.", "unknown expression left: " + expr)
+            return str(eval(expr, {"__builtins__": {}}))
+
+        return re.sub(r"\$\{\{(.*?)\}\}", evaluate, self.wf["concurrency"]["group"])
+
+    def test_another_label_never_cancels_a_test_run(self):
+        # Runs in one group cancel each other. An event that starts no jobs must not share a
+        # group with any event that does; every event that starts jobs shares one group.
+        self.assertTrue(self.wf["concurrency"]["cancel-in-progress"])
+        working = {self.group(a, None) for a in ("opened", "synchronize", "reopened")}
+        working.add(self.group("labeled", "full-tests"))
+        self.assertEqual(len(working), 1)
+        for other in ("other", "bug", "full-tests-later"):
+            self.assertNotIn(self.group("labeled", other), working, other)
+
     def test_unit_tests_run_on_docs_only_changes_too(self):
         self.assertNotIn("outputs.code", condition(self.jobs["unit"]))
 
