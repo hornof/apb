@@ -13,7 +13,8 @@ which hooks/apb-events.py writes.
   stop once, with the reason "Say who holds the ball", and Claude Code lets Claude add the line.
 - It appends a Stop line to the events file, with who holds the ball when the message says so.
 - If the human holds the ball, it starts a reminder in the background: if the human has done
-  nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac.
+  nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
+  new first line ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
 
 Any error lets the stop through: the hook never stops Claude from finishing.
 """
@@ -213,7 +214,12 @@ def handle(p, project, now):
     end = append(project, line)
     if block:
         return {"block": True, "remind": None, "end": end}
-    holder, todo = said if said else holder_now(events, session)
+    if said:
+        holder, todo = said
+    elif any(e["event"] == "UserPromptSubmit" for e in this_turn(events, session)):
+        holder, todo = holder_now(events, session)  # the prompt ended the last wait; start a new one
+    else:
+        holder, todo = None, None  # woken with no new line: the running wait carries on
     return {"block": False, "remind": todo if holder == "human" else None, "end": end}
 
 
@@ -224,8 +230,10 @@ def start_reminder(project, session, todo, start):
 
 
 def human_acted(project, session, start):
-    """True if this session has a prompt or a stop in the events file after byte start."""
-    return any(e.get("session") == session and e["event"] in ("UserPromptSubmit", "Stop")
+    """True if, after byte start, this session has a prompt or a stop with a new first line.
+    A stop with no first line (Claude woken by a watcher or an agent) leaves the wait running."""
+    return any(e.get("session") == session
+               and (e["event"] == "UserPromptSubmit" or (e["event"] == "Stop" and e.get("holder")))
                for e in read_events(project, start))
 
 

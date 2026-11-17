@@ -379,6 +379,31 @@ class Reminder(unittest.TestCase):
         self.assertEqual(len(got), 1)
         self.assertIn("merge PR #44", got[0])
 
+    def test_a_woken_stop_with_no_line_keeps_the_original_time(self):
+        write_events(self.project, FINISHED_AGENT)
+        env = dict(self.env, APB_REMIND_AFTER_SECONDS="3")
+        start = time.time()
+        run(payload(ONE), self.project, env)
+        while time.time() < start + 1:
+            time.sleep(0.1)
+        # A watcher check-in wakes Claude; no prompt, no first line, the watcher still runs.
+        tasks = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
+        r = run(payload("PR #44: checks still running.", background_tasks=tasks), self.project, env)
+        self.assertFalse(blocked(r))
+        # The original wait fires about 3 s after the first stop; a restarted one would fire at 4 s.
+        got = self.alerts(start + 3.6 - time.time())
+        self.assertEqual(len(got), 1)
+        self.assertIn("merge PR #44", got[0])
+        self.assertEqual(len(self.alerts(2)), 1)
+
+    def test_a_new_first_line_ends_the_wait(self):
+        write_events(self.project, FINISHED_AGENT)
+        env = dict(self.env, APB_REMIND_AFTER_SECONDS="2")
+        run(payload(ONE), self.project, env)
+        tasks = [{"id": "w", "type": "shell", "status": "running"}]
+        run(payload(NOTHING, background_tasks=tasks), self.project, env)
+        self.assertEqual(self.alerts(3), [])
+
     def test_agent_activity_does_not_cancel_it(self):
         write_events(self.project, FINISHED_AGENT)
         run(payload(ONE), self.project, self.env)
