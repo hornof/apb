@@ -149,6 +149,27 @@ class Writes(unittest.TestCase):
         self.assertEqual(line["event"], "UserPromptSubmit")
         self.assertNotIn("secret", json.dumps(line))
 
+    def test_a_routine_reply_is_marked_routine(self):
+        for text, routine in [("go", True), ("Resolved.", True), ("b", True), ("9: a", True), ("merged", True),
+                              ("why is the build red?", False), ("go ahead and rename it", False)]:
+            run(base("UserPromptSubmit", prompt=text), self.project)
+        got = lines(self.project)
+        self.assertEqual([g["routine"] for g in got], [True, True, True, True, True, False, False])
+        self.assertTrue(all("automatic" not in g for g in got))
+        self.assertNotIn("rename", json.dumps(got))
+
+    def test_a_prompt_claude_code_sent_itself_is_marked_automatic(self):
+        line = self.one(base("UserPromptSubmit",
+                             prompt="<task-notification>\n<task-id>x</task-id>\nagent done</task-notification>"))
+        self.assertTrue(line["automatic"])
+        self.assertNotIn("routine", line)
+        self.assertNotIn("agent done", json.dumps(line))
+
+    def test_a_prompt_with_no_text_has_neither_mark(self):
+        line = self.one(base("UserPromptSubmit"))
+        self.assertNotIn("routine", line)
+        self.assertNotIn("automatic", line)
+
     def test_time_is_now_in_utc(self):
         before = time.time()
         line = self.one(base("Stop"))
