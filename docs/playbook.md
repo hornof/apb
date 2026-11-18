@@ -18,7 +18,7 @@ Idea → PRD → TDD → Split the TDD into cards → Build → Review → Merge
    Every PR gets this review before the human sees it, whether it holds code or only docs. There is one review round. The reviewer sorts each item into one of three buckets:
    - **Fix**: the reviewer is sure. It is fixed straight away, and the orchestrator checks the fix.
    - **Note**: the reviewer isn't sure. The human skims it.
-   - **Decision**: taste or a trade-off. It comes with a recommended answer. Nothing changes for it until the human answers. Resolving its thread with no comment accepts the recommendation.
+   - **Decision**: taste or a trade-off. It comes with a recommended answer. Nothing changes for it until the human answers. Resolving its thread with no comment accepts the recommendation. Its shape is fixed (see "How the human reviews").
 
    How the review looks on the PR is in "How the human reviews" below. The human's overrides and new rules go in the project's `docs/reviewer-notes.md`, which the reviewer reads before every review.
 6. **Check the live product** after every merge: for example, the site's content, layout and links, or that the package installs and runs. Passing tests don't prove the product works.
@@ -60,6 +60,8 @@ The human never types git commands; the orchestrator does. The advisor never giv
   - Fix items are in one post, already fixed before the human sees the PR, each with its commit. To disagree with one, comment on that post with its number.
   - Note items are in one post, or a section of the Fix post. They are only things the human might act on.
   - Decision items get one thread each, on the line they concern. Resolving a thread with no comment accepts the recommended answer. This saves the human typing "ok" on every thread. A comment (a question, a disagreement, or a yes with a note) is for the orchestrator to read and act on. If the human resolves a thread that had nothing to accept, reopen it and ask.
+  - Every Decision has the same shape: the question in one sentence, lettered options (a, b, …), `Recommended: <letter>` and `Resolve with no reply = <letter>`. A decision in this shape takes the human minutes; one without it can take much longer. A thread without all four parts holds up the hand-off until the reviewer rewrites it. `scripts/decision-check.py` checks this.
+  - A builder implements a Decision only once it is answered: its thread is resolved, or the human's last reply names an option letter. Three or more replies from the human with no letter make a design discussion, not a decision. The orchestrator stops, says so in one line, and moves the question to the card, or to chat ending with "Waiting for your go".
 - **PR titles name the card at the end,** in parentheses with the word Card: "Working conventions from the trial (Card #30)". GitHub shows the PR's own number next to the title, so a bare "(#30)" can't be told apart from it.
 - **The hand-off is one line.** It uses the forms in "The human and Claude are never both idle at once" (see "Helping the human keep track"), with the PR as one link:
   - No Decisions: "1 thing for you to do right now: merge PR #N." If the PR changes how the product looks, the line ends with the preview link: `Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
