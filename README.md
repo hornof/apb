@@ -19,9 +19,9 @@ Each project's TDD picks its exact tools. These are the defaults for web project
 | Check | Tool | What it catches | When it runs |
 |---|---|---|---|
 | Unit tests | Vitest | A function that gives a wrong answer | The unit tests run every time: on every push to a PR and to main |
-| Random-input tests | Vitest, trying a rule on many random inputs and checking each answer against a second, simpler implementation | The cases no one thought to write a test for | With the unit tests |
+| Random-input tests | fast-check, inside the Vitest tests, trying a rule on many random inputs and checking each answer against a second, simpler implementation | The cases no one thought to write a test for | With the unit tests |
 | Browser tests | Playwright, in Chromium, Firefox and WebKit, at the screen widths the TDD names | A page that breaks in a real browser, or at one screen width | The quick set on every other push to a PR: the whole browser suite in one browser at one width, plus the changed test files in every browser. The full set, every browser and every width for the tests that depend on width, once per PR, when the `full-tests` label is added just before the human sees it, then on every later push to that PR and on every push to main. A change to docs only skips the browser tests |
-| Speed and accessibility | Lighthouse | A slow page, or one that is hard to use with a keyboard or screen reader | On the PR's preview, as the TDD sets it up |
+| Speed and accessibility | Lighthouse, and axe inside the Playwright tests | A slow page, or one that is hard to use with a keyboard or screen reader | Lighthouse on the PR's preview, as the TDD sets it up; axe with the browser tests |
 | Mutation testing | Stryker | Tests that pass but would miss a real bug: it plants small bugs in the code and checks that a test fails each time | Automatically, as the TDD sets it up |
 | Deliberate-bug check | The builder, by hand: it puts one real bug back in | Tests that look thorough but miss the bug that actually happened | Once per project, on the first build PR with real logic |
 | Hand check | The reviewer and the human, on the Cloudflare Pages preview of each PR | What the tests couldn't check; the builder lists these in the PR | On every PR, before the merge |

@@ -23,7 +23,8 @@ KNOWN_TOOLS = [
 ]
 
 # The web-project defaults the section must name: each is already in apb's templates or docs.
-DEFAULTS = ["Vitest", "Playwright", "Lighthouse", "Stryker", "GitHub Actions", "Cloudflare Pages"]
+DEFAULTS = ["Vitest", "fast-check", "Playwright", "Lighthouse", "axe", "Stryker", "GitHub Actions",
+            "Cloudflare Pages"]
 
 
 def read(rel):

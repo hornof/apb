@@ -42,6 +42,7 @@
       "Bash(npx vitest *)",
       "Bash(npx playwright *)",
       "Bash(npx stryker *)",
+      "Bash(npx axe *)",
       "Bash(curl -sI *)",
       "Bash(ls *)",
       "Bash(mkdir *)",
