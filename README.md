@@ -12,6 +12,24 @@ Idea → PRD → TDD → Split the TDD into cards → Build loop → PR → Revi
 ```
 Humans supply the idea, comment at the gates, review and merge PRs. Claude does the rest: drafting the docs, writing tests and code, reviewing, verifying the deployed result. Full detail: `docs/playbook.md`.
 
+## How apb checks quality
+
+Each project's TDD picks its exact tools. These are the defaults for web projects, all well known and widely used.
+
+| Check | Tool | What it catches | When it runs |
+|---|---|---|---|
+| Unit tests | Vitest | A function that gives a wrong answer | The unit tests run every time: on every push to a PR and to main |
+| Random-input tests | fast-check, inside the Vitest tests, trying a rule on many random inputs and checking each answer against a second, simpler implementation | The cases no one thought to write a test for | With the unit tests |
+| Browser tests | Playwright, in Chromium, Firefox and WebKit, at the screen widths the TDD names | A page that breaks in a real browser, or at one screen width | The quick set on every other push to a PR: the whole browser suite in one browser at one width, plus the changed test files in every browser. The full set, every browser and every width for the tests that depend on width, once per PR, when the `full-tests` label is added just before the human sees it, then on every later push to that PR and on every push to main. A change to docs only skips the browser tests |
+| Speed and accessibility | Lighthouse, and axe inside the Playwright tests | A slow page, or one that is hard to use with a keyboard or screen reader | Lighthouse on the PR's preview, as the TDD sets it up; axe with the browser tests |
+| Mutation testing | Stryker | Tests that pass but would miss a real bug: it plants small bugs in the code and checks that a test fails each time | Automatically, as the TDD sets it up |
+| Deliberate-bug check | The builder, by hand: it puts one real bug back in | Tests that look thorough but miss the bug that actually happened | Once per project, on the first build PR with real logic |
+| Hand check | The reviewer and the human, on the Cloudflare Pages preview of each PR | What the tests couldn't check; the builder lists these in the PR | On every PR, before the merge |
+
+GitHub Actions runs the tests. After every merge, the orchestrator checks the live product too, not just the tests.
+
+apb's own code is checked the same way. Every script and hook has its own test file with random-input tests, several checked against a second, simpler implementation. One test checks that every child process they start has a time limit, and the PRs that change them report a mutation check.
+
 ## How the orchestrator and the agents talk
 
 The orchestrator (the main Claude Code session, the one the human talks to) starts each builder and reviewer with a written brief. It can message one while it runs, gets each one's final report, and can read each one's full log. All of them run in Claude Code on the same laptop, so the orchestrator sees everything they do; an orchestrator in the cloud couldn't, and the human would have to copy chats across by hand. Where the logs are, and how to drill down when a step looks wrong: the playbook's "How the orchestrator and the agents talk".
@@ -51,5 +69,5 @@ Or inside Claude Code (v2.1.275 or later): `/plugin install apb --marketplace ho
 
 ## Core rules
 
-Tests before code · one feature per flat PR · only humans merge · the reviewer is a separate session, read-only on what it audits · verify the **deployed** artifact, not just CI · every incident becomes a written rule in CLAUDE.md the same day. For web projects the default verifiers are Playwright (browser-behavior tests) and Lighthouse budgets (performance/accessibility scores); each TDD names its own.
+Tests before code · one feature per flat PR · only humans merge · the reviewer is a separate session, read-only on what it audits · verify the **deployed** artifact, not just CI · every incident becomes a written rule in CLAUDE.md the same day. Testing tools: see [How apb checks quality](#how-apb-checks-quality).
 

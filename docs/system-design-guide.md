@@ -222,9 +222,10 @@ Ask:
 - For each PRD check: which test proves it, at which level, and where does it run (on the PR's preview build, or on the live product)?
 - Can tests use a local copy of the real database (SQLite, a Postgres container) instead of a fake? With a fake, nothing proves the data is really saved.
 - Where does each outside service plug in? Tests can swap in a fake stand-in there, plus one test that calls the real service to make sure it still behaves as expected.
-- Which rules hold for any input? ("Every item the index lists actually exists", "adding then removing an item leaves the data unchanged".) Each becomes a property-based test: a test tool tries many random inputs against the rule.
+- Which rules hold for any input? ("Every item the index lists actually exists", "adding then removing an item leaves the data unchanged".) Each becomes a property-based test: a test tool, such as fast-check on the web, tries many random inputs against the rule.
 - Is each action tested in both directions? Add then remove, undo then redo, forward then back.
-- Would the tests catch a bug? Mutation testing plants small bugs in the code on purpose and checks that some test fails each time.
+- Can everyone use it, with a keyboard or a screen reader? On the web, axe checks each page inside the browser tests, and Lighthouse gives an accessibility score.
+- Would the tests catch a bug? Mutation testing, such as Stryker on the web, plants small bugs in the code on purpose and checks that some test fails each time.
 - What does the smoke test of the live product look at?
 
 For a small project, usually: unit tests for the core logic, one end-to-end test of the main thing a user does, and a smoke test of the live product after each release.
