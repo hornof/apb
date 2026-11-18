@@ -138,7 +138,10 @@ class ApbsOwnCode(unittest.TestCase):
             for name in os.listdir(os.path.join(ROOT, top)):
                 if name.endswith(".py") and not name.startswith("test_"):
                     test = "test_" + name[:-3].replace("-", "_") + ".py"
-                    self.assertTrue(os.path.exists(os.path.join(ROOT, top, test)), "%s/%s" % (top, name))
+                    path = os.path.join(ROOT, top, test)
+                    self.assertTrue(os.path.exists(path), "%s/%s" % (top, name))
+                    with open(path, encoding="utf-8") as f:
+                        self.assertIn("random.Random", f.read(), "%s/%s has no random-input tests" % (top, test))
 
     def test_random_inputs_checked_against_a_second_implementation(self):
         text = read("scripts/test_card_times.py")
