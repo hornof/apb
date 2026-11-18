@@ -12,6 +12,21 @@ import time
 
 MAX = 300  # longest string kept in a line, in characters
 
+# A prompt Claude Code sends itself, such as a background agent reporting back, starts with a tag.
+AUTOMATIC = re.compile(r"\s*<[a-z][\w-]*>")
+# A routine reply from the human: "go", "resolved", "merged", or one or more decision letters
+# ("b", "(b)", "9a", "Decision 9: b", "1a, 2b"). scripts/card-times.py counts the other messages.
+_CHOICE = r"(?:(?:decision\s*)?\d+\s*[:.)-]?\s*)?\(?[a-z]\)?"
+ROUTINE = re.compile(r"(?:go|resolved|merged|%s(?:(?:\s*(?:,|&|\band\b)\s*|\s+)%s)*)" % (_CHOICE, _CHOICE))
+
+
+def routine(text):
+    """True if text is a routine reply: "go", a decision letter, "resolved" or "merged"."""
+    if not isinstance(text, str):
+        return False
+    flat = " ".join(re.sub(r"[*_`]", "", text).lower().split()).rstrip(".!")
+    return bool(ROUTINE.fullmatch(flat))
+
 
 def cut(value):
     return value[:MAX] if isinstance(value, str) else value
@@ -52,6 +67,12 @@ def record(p):
         line["task_subject"] = cut(p.get("task_subject"))
     elif event == "Notification":
         line["notification_type"] = cut(p.get("notification_type"))
+    elif event == "UserPromptSubmit" and isinstance(p.get("prompt"), str):
+        # Never the text: only whether Claude Code sent it, or whether it is a routine reply.
+        if AUTOMATIC.match(p["prompt"]):
+            line["automatic"] = True
+        else:
+            line["routine"] = routine(p["prompt"])
     return line
 
 
