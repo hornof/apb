@@ -306,25 +306,44 @@ class HooksFile(unittest.TestCase):
         with open(HOOKS_JSON) as f:
             self.hooks = json.load(f)["hooks"]
 
-    def test_every_event_is_registered_once(self):
-        self.assertEqual(sorted(self.hooks), sorted(EVENTS))
+    # The only hooks Claude Code waits for, named one by one: (event, matcher, script). The Stop hook can
+    # send a message back; the brief check refuses an agent launch (PreToolUse) and records a departure
+    # before the orchestrator reads the report (SubagentStop). Every other hook is the events logger.
+    WAITED_FOR = [("Stop", None, "apb-stop.py"), ("PreToolUse", "Agent|Task", "apb-brief.py"),
+                  ("SubagentStop", None, "apb-brief.py")]
+
+    def entries(self):
+        """(event, matcher, script file name, hook) for every hook in hooks.json."""
+        out = []
         for event, groups in self.hooks.items():
-            self.assertEqual(len(groups), 1, event)
+            for group in groups:
+                for hook in group["hooks"]:
+                    path = hook["args"][0].replace("${CLAUDE_PLUGIN_ROOT}", os.path.dirname(HERE))
+                    self.assertTrue(os.path.isfile(path), path)
+                    out.append((event, group.get("matcher"), os.path.basename(path), hook))
+        return out
+
+    def test_every_event_is_registered_once(self):
+        logged = [event for event, _, script, _ in self.entries() if script == "apb-events.py"]
+        self.assertEqual(sorted(logged), sorted(e for e in EVENTS if e != "Stop"))
+        self.assertEqual(sorted(self.hooks), sorted(EVENTS + ["PreToolUse"]))
 
     def test_bash_only_for_tool_events(self):
         for event in ["PostToolUse", "PostToolUseFailure"]:
             self.assertEqual(self.hooks[event][0]["matcher"], "Bash")
 
     def test_every_hook_runs_the_script_in_the_background(self):
-        for event, groups in self.hooks.items():
-            if event == "Stop":
-                continue  # the Stop hook can send a message back, so Claude Code waits for it
-            for hook in groups[0]["hooks"]:
-                self.assertEqual(hook["type"], "command")
-                self.assertEqual(hook["command"], "python3")
+        waited = []
+        for event, matcher, script, hook in self.entries():
+            self.assertEqual(hook["type"], "command")
+            self.assertEqual(hook["command"], "python3")
+            if script == "apb-events.py":
                 self.assertTrue(hook.get("async"), event)
-                path = hook["args"][0].replace("${CLAUDE_PLUGIN_ROOT}", os.path.dirname(HERE))
-                self.assertTrue(os.path.samefile(path, SCRIPT), event)
+            else:
+                self.assertFalse(hook.get("async", False), event)
+                self.assertLessEqual(hook["timeout"], 30, event)
+                waited.append((event, matcher, script))
+        self.assertEqual(sorted(waited, key=str), sorted(self.WAITED_FOR, key=str))
 
 
 if __name__ == "__main__":
