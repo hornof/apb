@@ -19,6 +19,10 @@ which hooks/apb-events.py writes.
   of scripts/map-artifact.py or scripts/progress-page.py, which call gh themselves. It checks only
   that some lookup ran in that turn, not which one, and not whether the fact is true. When both
   checks fail, one send-back carries both notes.
+- On any stop whose first line hands something to the human, if an agent's report said it departed
+  from its file (a Departure line, which hooks/apb-brief.py writes) and no DepartureResolved line came
+  after it, the hook sends the message back, on a retry too, with a note that quotes the report and
+  says how to resolve it. After MAX_DEPARTURE_SEND_BACKS in one turn it lets the stop through.
 - It appends a Stop line to the events file, with who holds the ball when the message says so, and
   the unchecked facts ("unchecked") when that was why it sent the message back.
 - If the human holds the ball, it starts a reminder in the background: if the human has done
@@ -48,6 +52,12 @@ REASON = ("Say who holds the ball. Your work just ran out, so start the message 
           "- Nothing for you to do right now. Waiting on <what>, about M minutes.\n"
           "- 1 thing for you to do right now: <the thing>.\n"
           "- N things for you to do right now: followed by a numbered list of exactly N things.")
+
+DEPARTED = ("An agent's report says it departed from its file, and that isn't resolved: %s. Put it right "
+            "before the human sees anything (for example, launch the agent again with the task only). Then "
+            "run, from the project's root: python3 <apb plugin folder>/hooks/apb-brief.py resolve "
+            "\"<what you did>\". Until then, don't hand anything to the human.")
+MAX_DEPARTURE_SEND_BACKS = 3  # in one turn; then the stop goes through, so Claude can never loop forever
 
 UNCHECKED = ("You stated a GitHub fact without checking it this turn. Look it up with gh or git "
              "(for example gh pr view, gh issue list, git log), then restate it or drop it: ")
@@ -198,6 +208,21 @@ def checked_this_turn(events, session):
                and LOOKUP.search(e["command"]) for e in this_turn(events, session))
 
 
+def departures(events):
+    """Departure lines (hooks/apb-brief.py writes them, from any session) after the last DepartureResolved."""
+    pending = []
+    for e in events:
+        if e["event"] == "Departure":
+            pending.append(e)
+        elif e["event"] == "DepartureResolved":
+            pending = []
+    return pending
+
+
+def departure_send_backs(events, session):
+    return sum(1 for e in this_turn(events, session) if e["event"] == "Stop" and e.get("departure"))
+
+
 def holder_now(events, session):
     """The last (holder, todo) this session's stops recorded, or (None, None)."""
     for e in reversed(events):
@@ -258,13 +283,18 @@ def handle(p, project, now):
     no_line = (said is None and not retry
                and work_ran_out(events, session, now, p.get("background_tasks")))
     unchecked = [] if retry or checked_this_turn(events, session) else stated_facts(message)
-    send_back = no_line or bool(unchecked)
+    # A hand-off to the human waits while an agent's departure is unresolved, on a retry too.
+    pending = departures(events) if said and said[0] == "human" else []
+    departed = bool(pending) and departure_send_backs(events, session) < MAX_DEPARTURE_SEND_BACKS
+    send_back = no_line or bool(unchecked) or departed
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}
     if send_back:
         line["sent_back"] = True
         if unchecked:
             line["unchecked"] = [f[:MAX] for f in unchecked]
+        if departed:
+            line["departure"] = True
     elif said:
         line["holder"] = said[0]
         if said[1]:
@@ -272,6 +302,9 @@ def handle(p, project, now):
     end = append(project, line)
     if send_back:
         notes = ([REASON] if no_line else []) + ([UNCHECKED + ", ".join(unchecked) + "."] if unchecked else [])
+        if departed:
+            quotes = "; ".join('%s: "%s"' % (e.get("agent_type", "agent"), e.get("quote", "")) for e in pending)
+            notes.append(DEPARTED % quotes)
         return {"send_back": True, "remind": None, "end": end, "note": "\n\n".join(notes)}
     if said:
         holder, todo = said
