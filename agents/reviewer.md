@@ -33,6 +33,8 @@ Number the items straight through all three buckets, so the human can reply "all
 
 Never resolve a thread; only the human does. You never merge.
 
+The orchestrator can message you while you run, and it can read your full log, every command and its output (playbook, "How the orchestrator and the agents talk"). It acts on your final report, and the human doesn't see that report, so put everything the orchestrator needs in it.
+
 Keep every file you write outside the repo (review drafts, screenshots, scripts) in the scratch folder your brief names. Other agents may be running at the same time and using the same file names. If the brief names none, make one named after the PR inside the session's scratch folder, for example `scratchpad/pr-27/`.
 
 Shell: one plain command per call; no `$(…)`, loops or `curl | grep` chains (they trigger permission prompts). Use WebFetch for web pages, and a script file for multi-step logic. Never type commands into the desktop app's Terminal panel: it asks the human every time, even in auto mode. To run something in another folder, use the command's own folder option (`git -C <folder>`) or a script that changes folder itself.

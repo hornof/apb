@@ -42,6 +42,28 @@ On a shared project, the project owner approves the gates and merges. To bring i
 
 The human never types git commands; the orchestrator does. The advisor never gives the human something to paste into Claude Code; it posts on the GitHub issue, and the orchestrator reads it there. Someone working alone can skip the advisor and do everything in Claude Code.
 
+## How the orchestrator and the agents talk
+
+The orchestrator, the builders and the reviewers all run in Claude Code on the same laptop. So the orchestrator can see everything they do. That is the reason for this design. An orchestrator in the cloud, such as Cowork, can't see a builder running on the laptop, and the human ends up having to copy chats from one to the other by hand.
+
+The orchestrator and each builder or reviewer communicate in four ways:
+- **The brief.** The orchestrator starts each agent with a written brief. The brief gives the task only: the issue or PR, the worktree, the scratch folder, the command rule, and what to report back. How to work and how to post the work are in the agent's own file, `agents/builder.md` or `agents/reviewer.md`. The plugin's brief check, `hooks/apb-brief.py`, refuses a brief that tells an agent how to format or post its work.
+- **Messages while it runs.** The orchestrator can send a running agent a message, for example to answer its question or to correct its course. The agent reads it and carries on.
+- **The final report.** Each agent ends with one report to the orchestrator. The human doesn't see it; the orchestrator passes on what matters. If the report says the agent "departed from" its file, the brief check holds every hand-off to the human until the orchestrator puts it right.
+- **The full log.** Claude Code saves every step of every agent on the laptop: each message, each command and its output. The orchestrator can read it at any time, while the agent runs or after it has finished.
+
+Where to look:
+- **The events file**, `.apb/events.jsonl` in the project (see "The events file"). Start here. It has one short line per step, for every session and agent: which agent ran which command, when, and its exit status. The watcher (`scripts/apb-watch.py`), the progress page (`scripts/progress-page.py`) and the card times (`scripts/card-times.py`) all read it.
+- **An agent's full log**: `~/.claude/projects/<project folder>/<session>/subagents/agent-<agent_id>.jsonl`. The project folder is the project's path with each `/` changed to `-`, for example `-Users-me-src-my-app`. The `session` and `agent_id` are on the agent's lines in the events file. The log is too big to read whole, so search it with a script, for example for tool results marked `is_error`.
+- **The orchestrator's own log** is `<session>.jsonl` in the same project folder.
+
+When something looks wrong, such as a step marked "failed", drill down:
+1. Find the step in the events file: the agent, the command and its exit status.
+2. Open that agent's full log and search it for the command, to read its output.
+3. If the agent is still running, message it to ask.
+
+The orchestrator never tells the human "I can't see what the agent did". It can always look. The human can look too: the progress page shows each running agent and its last step.
+
 ## Session settings
 
 - **Check the model at the start of every session.** The model picker starts on the app's default, not the one you planned. For unattended runs, record the model in the first line of `LOG.md`.
