@@ -13,9 +13,10 @@ which hooks/apb-events.py writes.
   message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
   and Claude goes on to add the line.
 - On any stop, if the message states a GitHub fact (a PR number, a version, a count such as "3 of 5"
-  or "13 PRs", or a board column) and the orchestrator itself ran no gh or git command in this turn,
-  the hook sends the message back once, with a note that starts "You stated a GitHub fact without
-  checking it this turn." It checks only that the fact was looked up, not that it is true. When both
+  or "13 PRs", or the word "board" or "column") and the orchestrator itself ran no gh or git command
+  in this turn, the hook sends the message back once, with a note that starts "You stated a GitHub
+  fact without checking it this turn." It checks only that some gh or git command ran in that turn,
+  not which one, and not whether the fact is true. When both
   checks fail, one send-back carries both notes.
 - It appends a Stop line to the events file, with who holds the ball when the message says so, and
   the unchecked facts ("unchecked") when that was why it sent the message back.
@@ -50,8 +51,8 @@ REASON = ("Say who holds the ball. Your work just ran out, so start the message 
 UNCHECKED = ("You stated a GitHub fact without checking it this turn. Look it up with gh or git "
              "(for example gh pr view, gh issue list, git log), then restate it or drop it: ")
 
-# A GitHub fact: a PR number, a version, a count, a board column. Only whether it was looked up is
-# checked, not whether it is true.
+# A GitHub fact: a PR number, a version, a count, or the word "board" or "column". The hook checks
+# only that some gh or git command ran in the turn, not which one, and not whether the fact is true.
 FACTS = re.compile("|".join([
     r"\bPRs?\s*#?\d+",  # PR #44, PRs #44 and #45, PR 44
     r"(?i:\bpull requests?\s*#?\d+)",
@@ -60,7 +61,7 @@ FACTS = re.compile("|".join([
     r"\b\d+ of (?:the )?\d+\b",  # 3 of 5
     r"\b\d+ (?:(?:open|merged|closed|failing|passing|green|red) )?"
     r"(?:PRs?|pull requests?|issues?|cards?|checks?|commits?|branch(?:es)?)\b",  # 13 PRs, 2 checks
-    r"(?i:\b(?:board|column)s?\b)",  # a board column
+    r"(?i:\b(?:board|column)s?\b)",  # the word board or column
 ]))
 MAX_FACTS = 5  # facts named in the note and the log
 # A command that runs gh or git: first in the command, or after a separator or a timeout.

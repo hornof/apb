@@ -245,6 +245,15 @@ class CheckFirst(unittest.TestCase):
         self.assertEqual((last["event"], last["sent_back"]), ("Stop", True))
         self.assertEqual(last["unchecked"], ["PR #44", "0.3.18"])
 
+    def test_names_at_most_five_facts(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        facts = ["PR #1", "PR #2", "PR #3", "PR #4", "PR #5", "PR #6"]
+        r = run(payload(", ".join(facts) + " are open."), self.project)
+        context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertTrue(context.endswith(": " + ", ".join(facts[:5]) + "."), context)
+        self.assertNotIn("PR #6", context)
+        self.assertEqual(read_events(self.project)[-1]["unchecked"], facts[:5])
+
     def test_lets_a_checked_fact_through(self):
         write_events(self.project, [{"event": "UserPromptSubmit"},
                                     {"event": "PostToolUse", "command": "gh pr view 44", "exit": 0}])
