@@ -12,7 +12,13 @@ which hooks/apb-events.py writes.
 - Then the message must start with one of the three first lines. If it doesn't, the hook sends the
   message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
   and Claude goes on to add the line.
-- It appends a Stop line to the events file, with who holds the ball when the message says so.
+- On any stop, if the message states a GitHub fact (a PR number, a version, a count such as "3 of 5"
+  or "13 PRs", or a board column) and the orchestrator itself ran no gh or git command in this turn,
+  the hook sends the message back once, with a note that starts "You stated a GitHub fact without
+  checking it this turn." It checks only that the fact was looked up, not that it is true. When both
+  checks fail, one send-back carries both notes.
+- It appends a Stop line to the events file, with who holds the ball when the message says so, and
+  the unchecked facts ("unchecked") when that was why it sent the message back.
 - If the human holds the ball, it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
   new first line ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
@@ -40,6 +46,25 @@ REASON = ("Say who holds the ball. Your work just ran out, so start the message 
           "- Nothing for you to do right now. Waiting on <what>, about M minutes.\n"
           "- 1 thing for you to do right now: <the thing>.\n"
           "- N things for you to do right now: followed by a numbered list of exactly N things.")
+
+UNCHECKED = ("You stated a GitHub fact without checking it this turn. Look it up with gh or git "
+             "(for example gh pr view, gh issue list, git log), then restate it or drop it: ")
+
+# A GitHub fact: a PR number, a version, a count, a board column. Only whether it was looked up is
+# checked, not whether it is true.
+FACTS = re.compile("|".join([
+    r"\bPRs?\s*#?\d+",  # PR #44, PRs #44 and #45, PR 44
+    r"(?i:\bpull requests?\s*#?\d+)",
+    r"/pull/\d+",  # a link to a PR
+    r"(?<![\w.])v?\d+\.\d+\.\d+(?!\.?\d)",  # 0.3.18, v1.2.0; not 10.0.0.12
+    r"\b\d+ of (?:the )?\d+\b",  # 3 of 5
+    r"\b\d+ (?:(?:open|merged|closed|failing|passing|green|red) )?"
+    r"(?:PRs?|pull requests?|issues?|cards?|checks?|commits?|branch(?:es)?)\b",  # 13 PRs, 2 checks
+    r"(?i:\b(?:board|column)s?\b)",  # a board column
+]))
+MAX_FACTS = 5  # facts named in the note and the log
+# A command that runs gh or git: first in the command, or after a separator or a timeout.
+LOOKUP = re.compile(r"(?:^|[;&|(])\s*(?:timeout\s+\S+\s+)?(?:gh|git)(?:\s|$)")
 
 NOTHING = re.compile(r"Nothing for you to do right now\. Waiting on .+, about \d+ minutes?\.?$")
 ONE = re.compile(r"1 thing for you to do right now: (.+?)\.?$")
@@ -151,6 +176,24 @@ def work_ran_out(events, session, now, tasks=None):
     return prompts_logged and not any(e["event"] == "UserPromptSubmit" for e in turn)
 
 
+def stated_facts(message):
+    """The GitHub facts the message states, each once, in order: at most MAX_FACTS."""
+    if not isinstance(message, str):
+        return []
+    facts = []
+    for m in FACTS.finditer(message):
+        fact = m.group(0).strip()
+        if fact not in facts:
+            facts.append(fact)
+    return facts[:MAX_FACTS]
+
+
+def checked_this_turn(events, session):
+    """True if the orchestrator itself (not an agent) ran a gh or git command that finished in this turn."""
+    return any(e["event"] == "PostToolUse" and "agent_id" not in e and isinstance(e.get("command"), str)
+               and LOOKUP.search(e["command"]) for e in this_turn(events, session))
+
+
 def holder_now(events, session):
     """The last (holder, todo) this session's stops recorded, or (None, None)."""
     for e in reversed(events):
@@ -205,20 +248,27 @@ def handle(p, project, now):
     if not isinstance(session, str):
         return {"send_back": False, "remind": None, "end": 0}
     events = read_events(project)
-    said = first_line(last_message(p))
-    send_back = (said is None and not p.get("stop_hook_active")
-             and work_ran_out(events, session, now, p.get("background_tasks")))
+    message = last_message(p)
+    said = first_line(message)
+    retry = bool(p.get("stop_hook_active"))
+    no_line = (said is None and not retry
+               and work_ran_out(events, session, now, p.get("background_tasks")))
+    unchecked = [] if retry or checked_this_turn(events, session) else stated_facts(message)
+    send_back = no_line or bool(unchecked)
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}
     if send_back:
         line["sent_back"] = True
+        if unchecked:
+            line["unchecked"] = [f[:MAX] for f in unchecked]
     elif said:
         line["holder"] = said[0]
         if said[1]:
             line["todo"] = said[1][:MAX]
     end = append(project, line)
     if send_back:
-        return {"send_back": True, "remind": None, "end": end}
+        notes = ([REASON] if no_line else []) + ([UNCHECKED + ", ".join(unchecked) + "."] if unchecked else [])
+        return {"send_back": True, "remind": None, "end": end, "note": "\n\n".join(notes)}
     if said:
         holder, todo = said
     elif any(e["event"] == "UserPromptSubmit" for e in this_turn(events, session)):
@@ -305,7 +355,7 @@ def main():
     if result["send_back"]:
         # A quiet note: Claude goes on with it, shown as "Stop hook feedback", not as an error.
         sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop",
-                                                            "additionalContext": REASON}}))
+                                                            "additionalContext": result["note"]}}))
         return
     if result["remind"]:
         start_reminder(project, p["session_id"], result["remind"], result["end"])
