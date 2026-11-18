@@ -42,6 +42,28 @@ On a shared project, the project owner approves the gates and merges. To bring i
 
 The human never types git commands; the orchestrator does. The advisor never gives the human something to paste into Claude Code; it posts on the GitHub issue, and the orchestrator reads it there. Someone working alone can skip the advisor and do everything in Claude Code.
 
+## How the orchestrator and the agents talk
+
+The orchestrator, the builders and the reviewers all run in Claude Code on the same laptop. apb runs them all there on purpose: the orchestrator can see everything the others do. An orchestrator in the cloud, such as Cowork, can't see a builder running on the laptop, and the human ends up having to copy chats from one to the other by hand.
+
+The orchestrator and each builder or reviewer communicate in four ways:
+- **The brief.** The orchestrator starts each agent with a written brief. The brief gives the task only: the issue or PR, the worktree, the scratch folder, the command rule, and what to report back. How to work and how to post the work are in the agent's own file, `agents/builder.md` or `agents/reviewer.md`. The plugin's brief check, `hooks/apb-brief.py`, refuses a brief that tells an agent how to format or post its work.
+- **Messages while it runs.** The orchestrator can send a running agent a message, for example to answer its question or to correct its course. The agent reads it and carries on.
+- **The final report.** Each agent ends with one report to the orchestrator. The human doesn't see it; the orchestrator passes on what matters. If the report says the agent "departed from" its file, the brief check records it, and `hooks/apb-stop.py` holds every hand-off to the human until the orchestrator puts it right and runs `hooks/apb-brief.py resolve`.
+- **The full log.** Claude Code saves every step of every agent on the laptop: each message, each command and its output. The orchestrator can read it at any time, while the agent runs or after it has finished.
+
+Where to look:
+- **The events file**, `.apb/events.jsonl` in the project (see "The events file"). Start here. It has one short line per event, for every session and agent: each shell command an agent ran, when, and its exit status, plus each agent's start and stop. The watcher (`scripts/apb-watch.py`), the progress page (`scripts/progress-page.py`) and the card times (`scripts/card-times.py`) all read it.
+- **An agent's full log**: `~/.claude/projects/<project folder>/<session>/subagents/agent-<agent_id>.jsonl`. The project folder is the project's path with every character other than a letter or digit changed to `-`, for example `/Users/me/src/my.app` becomes `-Users-me-src-my-app`. The `session` and `agent_id` are on the agent's lines in the events file. The log is too big to read whole, so search it with a script, for example for tool results marked `is_error`.
+- **The orchestrator's own log** is `<session>.jsonl` in the same project folder.
+
+When something looks wrong, such as a step marked "failed", drill down:
+1. Find the step in the events file: the agent, the command and its exit status.
+2. Open that agent's full log and search it for the command, to read its output.
+3. If the agent is still running, message it to ask.
+
+The orchestrator never tells the human "I can't see what the agent did". It can always look. The human can look too: the progress page shows each running agent and its last step.
+
 ## Session settings
 
 - **Check the model at the start of every session.** The model picker starts on the app's default, not the one you planned. For unattended runs, record the model in the first line of `LOG.md`.
@@ -205,8 +227,8 @@ Every project keeps a public record of how it was built:
 The apb plugin keeps a log of what every Claude session and agent does in the project: `.apb/events.jsonl`. It writes it only in an apb project, which is a project with `docs/MAP.md`. Git ignores the folder.
 
 - **What it holds:** one line each time a prompt starts a turn: a message from the human, or one Claude Code sends itself, such as a background agent reporting back; an agent starts or stops; a shell command finishes, a checklist item is created or done, a turn ends, or Claude Code shows a notification, such as a permission prompt.
-- **What each line holds:** the time, the event, and the agent's id and type. For a shell command, also the command and its exit status, but not its output. For a prompt, not its text: only whether Claude Code sent it itself (`automatic`) or, for the human's, whether it is a routine reply (`routine`): "go", a decision letter, "resolved" or "merged". For a turn's end, who holds the ball, if the message said so, whether the Stop hook sent the message back, and, if it was for an unchecked GitHub fact, which facts (`unchecked`). Count those lines to see how often stale facts nearly reached the human.
-- **Who reads it:** the orchestrator, the watcher and the progress page. The orchestrator reads the file to see what the builder and reviewer are doing, to notice a step that has gone quiet, and to time each step. Agents' own time estimates are often wrong; the file's times are not.
+- **What each line holds:** the time, the event, the session, and the agent's id and type. For a shell command, also the command and its exit status, but not its output. For a prompt, not its text: only whether Claude Code sent it itself (`automatic`) or, for the human's, whether it is a routine reply (`routine`): "go", a decision letter, "resolved" or "merged". For a turn's end, who holds the ball, if the message said so, whether the Stop hook sent the message back, and, if it was for an unchecked GitHub fact, which facts (`unchecked`). Count those lines to see how often stale facts nearly reached the human.
+- **Who reads it:** the orchestrator, the watcher, the progress page and the card times (`scripts/card-times.py`). The orchestrator reads the file to see what the builder and reviewer are doing, to notice a step that has gone quiet, and to time each step. Agents' own time estimates are often wrong; the file's times are not.
 
 ## Testing and models
 

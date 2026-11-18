@@ -11,6 +11,11 @@ Idea → PRD → TDD → Split the TDD into cards → Build loop → PR → Revi
         ▲gate1  ▲gate2                                            ▲gate3              (live product)
 ```
 Humans supply the idea, comment at the gates, review and merge PRs. Claude does the rest: drafting the docs, writing tests and code, reviewing, verifying the deployed result. Full detail: `docs/playbook.md`.
+
+## How the orchestrator and the agents talk
+
+The orchestrator (the main Claude Code session, the one the human talks to) starts each builder and reviewer with a written brief. It can message one while it runs, gets each one's final report, and can read each one's full log. All of them run in Claude Code on the same laptop, so the orchestrator sees everything they do; an orchestrator in the cloud couldn't, and the human would have to copy chats across by hand. Where the logs are, and how to drill down when a step looks wrong: the playbook's "How the orchestrator and the agents talk".
+
 ## What's in the box
 
 | Piece | What it does |
