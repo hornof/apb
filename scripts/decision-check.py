@@ -107,8 +107,10 @@ def is_claude(body):
 
 
 def chosen(reply, letters):
-    """The option letter a reply names, or None. Strict, so an "a" in a sentence is not a choice."""
-    text = plain(reply).strip()
+    """The option letter a reply names, or None. Strict, so an "a" in a sentence is not a choice.
+    Quoted lines (a GitHub "Quote reply" copies the Decision) and questions name no choice."""
+    text = "\n".join(line for line in plain(reply).splitlines() if not line.lstrip().startswith(">"))
+    text = re.sub(r"[^.!?\n]*\?", "", text).strip()
     patterns = [
         r"^\W*(?:ok(?:ay)?\W+)?\(?([a-z])\)?\W*$",  # the whole reply: "b", "B.", "ok, c", "(a)"
         r"\b(?:option|choice)\s+\(?([a-z])\)?\b",  # "option b"
@@ -132,7 +134,8 @@ def status(thread):
     human = [r for r in replies if not is_claude(r)]
     last = chosen(human[-1], letters) if human else None
     if thread["isResolved"]:
-        return "resolved", last or recommended(body)
+        named = [c for c in (chosen(r, letters) for r in human) if c]
+        return "resolved", named[-1] if named else recommended(body)
     if last:
         return "answered", last
     if len(human) >= DISCUSSION:

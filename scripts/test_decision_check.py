@@ -135,9 +135,18 @@ class Letter(unittest.TestCase):
 
     def test_replies_that_do_not(self):
         for reply in ["Why is this needed?", "I think a better name would help.", "Can you show me a mockup?",
-                      "A mockup first, please.", "Can you pick a better name?", "option d", "(e)", "Let's talk about it.", ""]:
+                      "A mockup first, please.", "Can you pick a better name?", "option d",
+                      "Option b seems risky, why not keep both?", "What would (c) look like?",
+                      "> (a) Save\n> (b) Keep", "(e)", "Let's talk about it.", ""]:
             with self.subTest(reply=reply):
                 self.assertIsNone(dc.chosen(reply, ["a", "b", "c"]))
+
+    def test_a_quote_reply_reads_only_the_humans_words(self):
+        self.assertEqual(dc.chosen("> (a) Save\n> (b) Keep\n\nb", ["a", "b"]), "b")
+        self.assertEqual(dc.chosen("> Which word?\n> a) Save\n\n(b) please", ["a", "b"]), "b")
+
+    def test_a_question_with_a_choice_after_it(self):
+        self.assertEqual(dc.chosen("Why not (c)? OK, b.", ["a", "b", "c"]), "b")
 
     def test_a_reply_signed_by_claude_is_not_the_humans(self):
         self.assertTrue(dc.is_claude("Done in abc123." + SIGN))
@@ -154,6 +163,9 @@ class Status(unittest.TestCase):
 
     def test_resolved_after_a_letter_takes_the_letter(self):
         self.assertEqual(dc.status(thread(GOOD, "b", resolved=True)), ("resolved", "b"))
+
+    def test_resolved_after_a_letter_and_thanks_keeps_the_letter(self):
+        self.assertEqual(dc.status(thread(GOOD, "b", "thanks, go ahead", resolved=True)), ("resolved", "b"))
 
     def test_a_letter_in_the_last_reply_answers(self):
         self.assertEqual(dc.status(thread(GOOD, "why?", "Explained." + SIGN, "ok, b")), ("answered", "b"))
@@ -180,7 +192,9 @@ class Status(unittest.TestCase):
 
 LETTER_REPLIES = ["{}", "{}.", "ok, {}", "({})", "option {}", "Go with {}, it's simpler.", "Let's pick {}."]
 OTHER_REPLIES = ["Why is this needed?", "I think a better name would help.", "Can you show me a mockup?",
-                 "A mockup first, please.", "Let's talk about it.", "What does the map say?"]
+                 "A mockup first, please.", "Let's talk about it.", "What does the map say?",
+                 "Option b seems risky, why not keep both?", "What would (a) look like?",
+                 "> (a) choice a.\n> (b) choice b.", "thanks, go ahead"]
 
 
 def oracle(resolved, replies, rec):
@@ -188,7 +202,8 @@ def oracle(resolved, replies, rec):
     human = [(t, l) for t, l, by_claude in replies if not by_claude]
     last = human[-1][1] if human else None
     if resolved:
-        return ("resolved", last or rec)
+        named = [l for _, l in human if l]
+        return ("resolved", named[-1] if named else rec)
     if last:
         return ("answered", last)
     if len(human) >= 3:
