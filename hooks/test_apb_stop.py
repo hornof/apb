@@ -194,8 +194,24 @@ class CheckedThisTurn(unittest.TestCase):
             self.assertTrue(self.checked([{"event": "UserPromptSubmit"},
                                           {"event": "PostToolUse", "command": command, "exit": 0}]), command)
 
+    def test_the_map_and_progress_page_scripts_count(self):
+        for command in ["python3 scripts/map-artifact.py /tmp/m.html https://claude.ai/artifact/x",
+                        "python3 /Users/x/apb/scripts/progress-page.py /tmp/p.html",
+                        "timeout 120 python3 scripts/progress-page.py out.html",
+                        "scripts/map-artifact.py out.html"]:
+            self.assertTrue(self.checked([{"event": "UserPromptSubmit"},
+                                          {"event": "PostToolUse", "command": command, "exit": 0}]), command)
+
+    def test_a_failed_script_run_does_not_count(self):
+        for command in ["python3 scripts/map-artifact.py out.html", "python3 scripts/progress-page.py out.html"]:
+            self.assertFalse(self.checked([{"event": "UserPromptSubmit"},
+                                           {"event": "PostToolUseFailure", "command": command, "exit": 1}]),
+                             command)
+
     def test_other_commands_do_not_count(self):
-        for command in ["ls", "python3 hooks/github.py", "echo gh", "cat .gitignore", "legit x", None]:
+        for command in ["ls", "python3 hooks/github.py", "echo gh", "cat .gitignore", "legit x", None,
+                        "cat scripts/map-artifact.py", "python3 scripts/test_progress_page.py",
+                        "python3 scripts/apb-watch.py"]:
             self.assertFalse(self.checked([{"event": "UserPromptSubmit"},
                                            {"event": "PostToolUse", "command": command, "exit": 0}]), command)
 
@@ -739,7 +755,9 @@ class Properties(unittest.TestCase):
                         events.append({"event": "PostToolUse", "command": "ls", "exit": 0})
                     elif action == 4:  # the orchestrator looks it up
                         events.append({"event": "PostToolUse", "exit": 0,
-                                       "command": rng.choice(["gh pr view 4", "git -C /r log -1"])})
+                                       "command": rng.choice(["gh pr view 4", "git -C /r log -1",
+                                                              "python3 scripts/map-artifact.py m.html u",
+                                                              "python3 scripts/progress-page.py p.html"])})
                         checked = True
                     elif action == 5:  # an agent's lookup is not the orchestrator's
                         next_id[0] += 1
@@ -749,7 +767,9 @@ class Properties(unittest.TestCase):
                                    {"event": "SubagentStop", "agent_id": a}]
                         stopped_now = True
                     else:  # a lookup that failed checked nothing
-                        events.append({"event": "PostToolUseFailure", "command": "gh pr view 4", "exit": 1})
+                        events.append({"event": "PostToolUseFailure", "exit": 1,
+                                       "command": rng.choice(["gh pr view 4",
+                                                              "python3 scripts/progress-page.py p.html"])})
                 write_events(project, events)
                 if by_prompt and prompts_logged:
                     seen_prompt = True

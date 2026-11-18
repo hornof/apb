@@ -1,5 +1,5 @@
 {
-  "description": "apb: append one line per event to .apb/events.jsonl in an apb project, so the orchestrator can see what agents are doing and time each step. When the orchestrator's work runs out, its message must say who holds the ball, and a GitHub fact it states must come from a gh or git call in the same turn.",
+  "description": "apb: append one line per event to .apb/events.jsonl in an apb project, so the orchestrator can see what agents are doing and time each step. When the orchestrator's work runs out, its message must say who holds the ball, and a GitHub fact it states must come from a lookup in the same turn (gh, git, or the map or progress-page script).",
   "hooks": {
     "UserPromptSubmit": [
       { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-events.py"], "async": true } ] }
