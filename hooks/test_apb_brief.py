@@ -95,6 +95,25 @@ TASK_ONLY = [
     "Run prettier to format the code before you push.",
 ]
 
+# Refused in a reviewer's brief only: in a builder's brief they could be ordinary tasks.
+REVIEWER_ONLY = [
+    "Leave out items that are only style.",
+    "leave out the nits",
+    "Leave out notes.",
+    "No index this time.",
+    "Skip the index.",
+    "Post without an index.",
+]
+
+# Builder tasks in an app's own words (post, summary, items, index). A builder's brief with them passes.
+BUILDER_TASKS = [
+    "Fix the date format on each post.",
+    "Drop items with no image from the gallery grid.",
+    "Show the date in a short format in the sketch summary.",
+    "Skip the index page in the sitemap.",
+    "Format the post description with Markdown.",
+]
+
 DEPARTED = [
     "I departed from agents/reviewer.md: the brief asked for one comment.",
     "Note: this review departed from the usual format.",
@@ -175,6 +194,25 @@ class FormatInstructions(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertTrue(brief.format_instructions(text))
 
+    def test_builder_tasks_in_an_apps_own_words_pass(self):
+        for text in BUILDER_TASKS + TASK_ONLY + [GOOD_BUILDER]:
+            with self.subTest(text=text):
+                self.assertEqual(brief.format_instructions(text, "apb:builder"), [])
+
+    def test_a_builder_brief_is_still_refused_for_the_rest(self):
+        for text in FORMAT:
+            if text in REVIEWER_ONLY:
+                continue
+            with self.subTest(text=text):
+                self.assertTrue(brief.format_instructions(text, "apb:builder"))
+
+    def test_reviewer_only_phrases(self):
+        for text in REVIEWER_ONLY:
+            with self.subTest(text=text):
+                self.assertIn(text, FORMAT)
+                self.assertTrue(brief.format_instructions(text, "apb:reviewer"))
+                self.assertEqual(brief.format_instructions(text, "builder"), [])
+
     def test_the_brief_that_started_it(self):
         found = brief.format_instructions(BAD_REVIEWER)
         self.assertEqual(len(found), 2, found)
@@ -250,6 +288,22 @@ class Properties(unittest.TestCase):
             with self.subTest(i=i, brief=dirty):
                 self.assertTrue(brief.format_instructions(dirty))
 
+    def test_random_builder_briefs(self):
+        rng = random.Random(5400)
+        builder_format = [f for f in FORMAT if f not in REVIEWER_ONLY]
+        for i in range(400):
+            lines = random_brief(rng) + rng.sample(BUILDER_TASKS, rng.randint(1, 3))
+            rng.shuffle(lines)
+            clean = "\n".join(lines)
+            with self.subTest(i=i, brief=clean):
+                self.assertEqual(brief.format_instructions(clean, "apb:builder"), [])
+            dirty = list(lines)
+            for text in rng.sample(builder_format, rng.randint(1, 3)):
+                dirty.insert(rng.randint(0, len(dirty)), dress(text, rng))
+            dirty = "\n".join(dirty)
+            with self.subTest(i=i, brief=dirty):
+                self.assertTrue(brief.format_instructions(dirty, "apb:builder"))
+
     def test_random_reports(self):
         rng = random.Random(540)
         filler = ["PR #%d is open." % n for n in range(1, 9)] + ["All tests pass.", "Couldn't test Safari."]
@@ -285,6 +339,11 @@ class DispatchHook(unittest.TestCase):
         for agent in ["apb:builder", "builder", "apb:reviewer", "reviewer"]:
             reason = denied(run([SCRIPT], dispatch("Build #3. Format the PR description like this: x", agent)))
             self.assertIn("agents/%s.md" % agent.split(":")[-1], reason)
+
+    def test_a_builder_task_in_an_apps_words_goes_through(self):
+        prompt = "Build issue #12. Fix the date format on each post. Drop items with no image from the gallery grid."
+        r = run([SCRIPT], dispatch(prompt, "apb:builder"))
+        self.assertEqual((r.returncode, r.stdout), (0, b""))
 
     def test_the_task_tool_name_too(self):
         self.assertTrue(denied(run([SCRIPT], dispatch(BAD_REVIEWER, tool="Task"))))

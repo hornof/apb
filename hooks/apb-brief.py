@@ -2,8 +2,9 @@
 
 Claude Code runs this from hooks/hooks.json, with the event's JSON on stdin:
 - PreToolUse on the Agent tool: when the orchestrator sends a builder or reviewer a brief that tells it
-  how to format or post its work ("as a single comment", "post as", "format", "leave out items",
-  "one thread", "no index" and the like), the call is refused, with a reason that names what was
+  how to format or post its work ("as a single comment", "post as", "use one thread", or "format" next
+  to review, comment, report or PR; in a reviewer's brief also "leave out items" and "no index"), the
+  call is refused, with a reason that names what was
   found and says to send the task only. The format lives in agents/builder.md and agents/reviewer.md.
 - SubagentStop: when an agent's report says it "departed from" its file, or did something "as you
   asked, instead of" what its file says, a Departure line goes into .apb/events.jsonl (apb projects
@@ -28,9 +29,10 @@ MAX = 300  # longest quote kept, in characters
 CHECKED = ("builder", "reviewer")
 
 # Nouns for what an agent posts or reports. "format" next to one of them, in the same sentence, is
-# about the agent's output, not about something it builds (a date format, an image format).
-OUTPUT = (r"(?:review|comment|report|PR|pull request|description|post|thread|index|reply|summary|"
-          r"hand-?off|findings|items|bucket)s?")
+# about the agent's output, not about something it builds (a date format, an image format). Words that
+# are also everyday words in an app (post, summary, description, items, index, reply) are left out;
+# "PR" still covers a PR description.
+OUTPUT = r"(?:review|comment|report|PR|pull request|thread|hand-?off|findings|bucket)s?"
 OBJECT = (r"(?:it|them|this|everything|all of it|the review|your review|the findings|the items|the notes|"
           r"the decisions|the fixes|the report|your report|each \w+|every \w+)")
 WHAT = r"(?:items?|notes?|nits?|decisions?|fix(?:es)?|index|buckets?|sections?|findings?)"
@@ -41,13 +43,17 @@ PHRASES = [re.compile(p, re.I) for p in [
     r"\b(?:as|in|into) (?:just |only )?one (?:\w+ )?(?:comment|post|thread|message)\b",
     r"\bpost (?:" + OBJECT + r" )?as\b",
     r"\b(?:this|the following|following|same|that|usual|this exact) format\b",
-    r"\b(?:leave out|skip|drop|omit) (?:the |any |some |all )?(?:low[- ]\w+ )?" + WHAT + r"\b",
     r"\bone (?:review )?thread (?:for (?:everything|all|each|every|the whole)|"
     r"per (?:file|item|decision|fix|note|bucket|section|finding|comment|point)s?\b)",
-    r"\b(?:no|without(?: an?| the)?|skip the) index\b",
     r"\b(?:no|instead of|without) (?:review )?threads\b",
     r"\b(?:use|post|write|leave|put|open|start) (?:just |only )?one (?:review )?(?:comment|thread|post)\b",
     r"\b(?:don't|do not|never) (?:use|post|open|start|write) (?:any )?(?:review )?threads\b",
+]]
+# Only in a reviewer's brief: in a builder's brief these are ordinary tasks ("drop items with no image",
+# "skip the index page").
+REVIEWER_PHRASES = [re.compile(p, re.I) for p in [
+    r"\b(?:leave out|skip|drop|omit) (?:the |any |some |all )?(?:low[- ]\w+ )?" + WHAT + r"\b",
+    r"\b(?:no|without(?: an?| the)?|skip the) index\b",
 ]]
 FORMAT_WORD = re.compile(r"\bformat(?:s|ted|ting)?\b", re.I)
 OUTPUT_WORD = re.compile(r"\b" + OUTPUT + r"\b", re.I)
@@ -63,14 +69,17 @@ def sentences(text):
     return [s.strip() for s in SENTENCE.split(plain(text)) if s.strip()]
 
 
-def format_instructions(text):
-    """What in the brief tells the agent how to format or post its work, each once, in order."""
+def format_instructions(text, agent="reviewer"):
+    """What in the brief tells the agent how to format or post its work, each once, in order.
+    agent: "builder" or "reviewer" (any "plugin:" prefix is ignored); a reviewer's brief is checked
+    with REVIEWER_PHRASES too."""
     if not isinstance(text, str):
         return []
+    phrases = PHRASES + (REVIEWER_PHRASES if str(agent).split(":")[-1] == "reviewer" else [])
     found = []
     for s in sentences(text):
         flat = " ".join(s.split())
-        hits = [m.group(0) for p in PHRASES for m in p.finditer(flat)]
+        hits = [m.group(0) for p in phrases for m in p.finditer(flat)]
         if FORMAT_WORD.search(flat) and OUTPUT_WORD.search(flat) and not hits:
             hits = [flat[:MAX]]
         for h in hits:
@@ -120,7 +129,7 @@ def on_dispatch(p):
     agent = tool_input.get("subagent_type")
     if not checked(agent):
         return None
-    found = format_instructions(tool_input.get("prompt"))
+    found = format_instructions(tool_input.get("prompt"), agent)
     if not found:
         return None
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
