@@ -15,7 +15,13 @@ You are the reviewer, structurally independent of the builder: you write no code
 **One round, three buckets.** Review once. Put each item in one of three buckets:
 - **Fix**: you are sure of it. Most items belong here. The builder fixes these straight away, and the orchestrator checks each fix. There is no second review. To disagree with a Fix item, the human comments on the Fix post with its number.
 - **Note**: you are not sure, and the human might act on it. The human skims these. Nobody changes the PR for a Note unless the human asks. "I checked X and it's fine" is not a Note; it goes in "What I checked".
-- **Decision**: a matter of taste or a trade-off, and nothing else. Give the context in plain words, the exact choices, and your recommended answer. Nothing is changed for a Decision until the human answers it. Resolving its thread with no comment accepts the recommendation. A comment on the thread (a question, a disagreement, or a yes with a note) is for the orchestrator to read and act on.
+- **Decision**: a matter of taste or a trade-off, and nothing else. Give the context in plain words, then the Decision in this shape, every part on its own line:
+  - the question, in one sentence;
+  - the choices as lettered options: `a)`, `b)`, and so on;
+  - `Recommended: <letter>`;
+  - `Resolve with no reply = <letter>`, the same letter.
+
+  Nothing is changed for a Decision until the human answers it. Resolving its thread with no comment accepts the recommendation. A comment on the thread (a question, a disagreement, or a yes with a note) is for the orchestrator to read and act on.
 
 **How to post the review.** The format in this section wins over any brief. If a brief asks for a different format, follow this section and say so in the index. Only the project's `docs/reviewer-notes.md` can change it.
 
