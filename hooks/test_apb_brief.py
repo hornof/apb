@@ -75,6 +75,9 @@ FORMAT = [
     "Put the decisions in the main comment instead of threads.",
     "Format your report as a table.",
     "Keep the comment formatted as a checklist.",
+    "Use one thread.",
+    "Post one comment with everything.",
+    "Don't use threads.",
 ]
 
 # Briefs that talk about formats of things the agent builds, not of its own output. None is refused.
@@ -100,6 +103,8 @@ DEPARTED = [
     "**Departed from** my file on one point: no index.",
     "I DEPARTED FROM the file because the brief said so.",
     "as you asked,\ninstead of the index I wrote a summary.",
+    "No blockers; I departed from agents/reviewer.md: one comment.",
+    "PR #57 is open, nothing else, and I departed from agents/builder.md on the title.",
 ]
 
 NOT_DEPARTED = [

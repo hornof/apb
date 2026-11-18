@@ -46,6 +46,8 @@ PHRASES = [re.compile(p, re.I) for p in [
     r"per (?:file|item|decision|fix|note|bucket|section|finding|comment|point)s?\b)",
     r"\b(?:no|without(?: an?| the)?|skip the) index\b",
     r"\b(?:no|instead of|without) (?:review )?threads\b",
+    r"\b(?:use|post|write|leave|put|open|start) (?:just |only )?one (?:review )?(?:comment|thread|post)\b",
+    r"\b(?:don't|do not|never) (?:use|post|open|start|write) (?:any )?(?:review )?threads\b",
 ]]
 FORMAT_WORD = re.compile(r"\bformat(?:s|ted|ting)?\b", re.I)
 OUTPUT_WORD = re.compile(r"\b" + OUTPUT + r"\b", re.I)
@@ -92,7 +94,8 @@ def departure(text):
         if AS_ASKED.search(flat):
             return flat[:MAX]
         m = DEPARTED.search(flat)
-        if m and not NEGATION.search(" ".join(flat[:m.start()].split()[-4:])):
+        clause = re.split(r"[,;:]", flat[:m.start()])[-1] if m else ""
+        if m and not NEGATION.search(" ".join(clause.split()[-4:])):
             return flat[:MAX]
     return None
 
