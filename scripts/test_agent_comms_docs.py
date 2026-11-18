@@ -95,6 +95,17 @@ class OtherDocsPointToIt(unittest.TestCase):
     def test_claude_template_orchestrator_line(self):
         line = next(l for l in read("templates/CLAUDE-template.md").splitlines() if l.startswith("- **Orchestrator**"))
         self.assertIn('"%s"' % SECTION, line)
+        self.assertIn("full log on the laptop", line)
+
+    def test_the_machine_is_called_the_laptop(self):
+        # One name per thing: where the orchestrator and the agents run is "the laptop", never "computer".
+        texts = {"playbook section": section(read("docs/playbook.md"), SECTION),
+                 "README section": section(read("README.md"), SECTION),
+                 "template line": next(l for l in read("templates/CLAUDE-template.md").splitlines()
+                                       if l.startswith("- **Orchestrator**"))}
+        for name, text in texts.items():
+            self.assertIn("laptop", text, name)
+            self.assertNotIn("computer", text, name)
 
     def test_each_agent_knows_it_is_seen(self):
         for rel in ("agents/builder.md", "agents/reviewer.md"):
