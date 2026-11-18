@@ -52,7 +52,9 @@ def seconds(text):
 
 
 def is_claude(body):
-    return bool(re.search(r"[—-]\s*Claude \(\w+\)", body or ""))
+    """True if the comment is signed by Claude. Quoted lines (a GitHub "Quote reply") don't count."""
+    own = "\n".join(line for line in (body or "").splitlines() if not line.lstrip().startswith(">"))
+    return bool(re.search(r"[—-]\s*Claude \(\w+\)", own))
 
 
 def minutes(a, b):
@@ -274,10 +276,15 @@ def main(argv):
             for d in collect([c.get("body") for page in bodies for c in page]):
                 print("\t".join("" if d.get(k) is None else str(d.get(k)) for k in FIELDS))
             return 0
+        events = read_events(args.events)
+        if not events:
+            print("Nothing printed or posted: no events in %s. Run it from the project's root, or give "
+                  "--events." % os.path.abspath(args.events), file=sys.stderr)
+            return 1
         owner, name = repo.split("/", 1)
         data = flatten(json.loads(run(["gh", "api", "graphql", "-f", "owner=" + owner, "-f", "name=" + name,
                                        "-F", "number=%d" % args.issue, "-f", "query=" + QUERY])))
-        text = comment(card_times(read_events(args.events), data), args.guessed)
+        text = comment(card_times(events, data), args.guessed)
         print(text)
         if not args.post:
             return 0
@@ -291,6 +298,9 @@ def main(argv):
         print("Posted on issue #%d." % args.issue)
     except subprocess.CalledProcessError as e:
         print("gh failed: " + (e.stderr or e.stdout or "").strip(), file=sys.stderr)
+        return 2
+    except subprocess.TimeoutExpired as e:
+        print("gh timed out after %d seconds: %s" % (TIME_LIMIT, " ".join(map(str, e.cmd))[:200]), file=sys.stderr)
         return 2
     return 0
 

@@ -250,6 +250,15 @@ class Messages(unittest.TestCase):
         r = ct.card_times(self.base + [prompt(20, routine=False)], issue([pr(comments=comments)]))
         self.assertEqual((r["messages"], r["chat"], r["pr_messages"]), (2, 1, 1))
 
+    def test_a_reply_quoting_claude_is_the_humans(self):
+        quote = "> 3. Rename the button.\n>\n> — Claude (reviewer)\n\nNo, keep the name, it matches the docs."
+        comments = [{"body": quote, "createdAt": gh_at(13)},
+                    {"body": "> why?\n\nBecause the docs say so." + SIGN, "createdAt": gh_at(14)}]
+        r = ct.card_times(self.base, issue([pr(comments=comments)]))
+        self.assertEqual((r["messages"], r["pr_messages"]), (1, 1))
+        self.assertFalse(ct.is_claude(quote))
+        self.assertTrue(ct.is_claude("Fixed." + SIGN))
+
     def test_a_message_logged_without_its_type_makes_the_count_unknown(self):
         events = self.base + [prompt(13, routine=False), {"time": at(14), "event": "UserPromptSubmit", "session": S}]
         r = ct.card_times(events, issue([pr()]))
@@ -447,6 +456,24 @@ class GitHub(unittest.TestCase):
         self.assertEqual(rows[0], ct.FIELDS)
         self.assertEqual(rows[1][:3], ["54", "58", "8.0"])
         self.assertEqual(len(rows), 2)
+
+    def test_no_events_file_posts_nothing(self):
+        for argv in (["54", "--post"], ["54"]):
+            code, calls, printed = self.run_main(argv, [json.dumps(GQL), ""], [])
+            self.assertEqual((code, calls), (1, []), argv)
+            self.assertIn("no events", " ".join(str(a) for a in printed))
+
+    def test_a_gh_call_past_its_time_limit_ends_cleanly(self):
+        def slow(args):
+            raise ct.subprocess.TimeoutExpired(args, ct.TIME_LIMIT)
+        printed = []
+        path = os.path.join(tempfile.mkdtemp(), "events.jsonl")
+        with open(path, "w") as f:
+            f.write(json.dumps(builder_54()[0]) + "\n")
+        with mock.patch.object(ct, "run", slow), mock.patch("builtins.print", lambda *a, **k: printed.append(a)):
+            code = ct.main(["54", "--post", "--repo", "o/r", "--events", path])
+        self.assertEqual(code, 2)
+        self.assertIn("gh timed out", " ".join(str(a) for a in printed))
 
     def test_every_gh_call_has_a_time_limit(self):
         with mock.patch.object(ct.subprocess, "run") as sub:
