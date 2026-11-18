@@ -103,11 +103,13 @@ def sent_back(r):
     return note.get("hookEventName") == "Stop" and bool(note.get("additionalContext"))
 
 
-# The events of one finished builder: the orchestrator started it, it ran a command, it stopped.
+# The events of one finished builder: the orchestrator started it, it ran a command, it stopped,
+# and the orchestrator looked up its PR.
 FINISHED_AGENT = [{"event": "UserPromptSubmit"},
                   {"event": "SubagentStart", "agent_id": "b1", "agent_type": "apb:builder"},
                   {"event": "PostToolUse", "agent_id": "b1", "command": "npm test", "exit": 0},
-                  {"event": "SubagentStop", "agent_id": "b1", "agent_type": "apb:builder"}]
+                  {"event": "SubagentStop", "agent_id": "b1", "agent_type": "apb:builder"},
+                  {"event": "PostToolUse", "command": "gh pr view 44", "exit": 0}]
 
 
 class FirstLine(unittest.TestCase):
@@ -149,6 +151,162 @@ class FirstLine(unittest.TestCase):
                         "Here is the summary.\n" + ONE,  # not the first line
                         "2 things for you to do right now: merge and answer."]:
             self.assertIsNone(stop.first_line(message), message)
+
+
+class StatedFacts(unittest.TestCase):
+    """What counts as a GitHub fact in a message: a PR number, a version, a count, a board column."""
+
+    def test_facts(self):
+        for message in ["PR #44 is ready.", "PRs #44 and #45 merged.", "pull request 12 is open.",
+                        "See https://github.com/hornof/apb/pull/52.", "The plugin is at 0.3.18.",
+                        "Bumped to v1.2.0.", "3 of 5 cards are done.", "13 PRs merged today.",
+                        "1 PR waits for review.", "2 checks failed.", "4 open issues left.",
+                        "Card #41 is in the In review column.", "Moved it on the board.",
+                        "Waiting on GitHub checks for PR #40, about 8 minutes."]:
+            self.assertTrue(stop.stated_facts(message), message)
+
+    def test_not_facts(self):
+        for message in [None, "", "Done. The builder finished.", "Answer the question on #41.",
+                        "Waiting on the builder, about 10 minutes.", "2 things for you to do right now:",
+                        "It took 1.5 seconds.", "The address is 10.0.0.12.", "On 2026-11-18 at 10:30.",
+                        "The keyboard and dashboard work.", "We need one approval.",
+                        "45 tests pass.", "Onboarding is next."]:
+            self.assertEqual(stop.stated_facts(message), [], message)
+
+    def test_each_fact_is_named_once(self):
+        facts = stop.stated_facts("PR #44, PR #44 and PR #44.")
+        self.assertEqual(facts, ["PR #44"])
+
+
+class CheckedThisTurn(unittest.TestCase):
+    """Whether the orchestrator ran gh or git in this turn, from the events file."""
+    now = time.time()
+
+    def events(self, *groups):
+        return [dict(e, session=e.get("session", "s1"), time=stamp(self.now)) for g in groups for e in g]
+
+    def checked(self, *groups):
+        return stop.checked_this_turn(self.events(*groups), "s1")
+
+    def test_gh_or_git_in_this_turn(self):
+        for command in ["gh pr view 44", "git -C /x log -1", "timeout 60 gh pr list", "  git status",
+                        "gh api repos/o/r/pulls"]:
+            self.assertTrue(self.checked([{"event": "UserPromptSubmit"},
+                                          {"event": "PostToolUse", "command": command, "exit": 0}]), command)
+
+    def test_the_map_and_progress_page_scripts_count(self):
+        for command in ["python3 scripts/map-artifact.py /tmp/m.html https://claude.ai/artifact/x",
+                        "python3 /Users/x/apb/scripts/progress-page.py /tmp/p.html",
+                        "timeout 120 python3 scripts/progress-page.py out.html",
+                        "scripts/map-artifact.py out.html"]:
+            self.assertTrue(self.checked([{"event": "UserPromptSubmit"},
+                                          {"event": "PostToolUse", "command": command, "exit": 0}]), command)
+
+    def test_a_failed_script_run_does_not_count(self):
+        for command in ["python3 scripts/map-artifact.py out.html", "python3 scripts/progress-page.py out.html"]:
+            self.assertFalse(self.checked([{"event": "UserPromptSubmit"},
+                                           {"event": "PostToolUseFailure", "command": command, "exit": 1}]),
+                             command)
+
+    def test_other_commands_do_not_count(self):
+        for command in ["ls", "python3 hooks/github.py", "echo gh", "cat .gitignore", "legit x", None,
+                        "cat scripts/map-artifact.py", "python3 scripts/test_progress_page.py",
+                        "python3 scripts/apb-watch.py"]:
+            self.assertFalse(self.checked([{"event": "UserPromptSubmit"},
+                                           {"event": "PostToolUse", "command": command, "exit": 0}]), command)
+
+    def test_a_lookup_in_an_earlier_turn_does_not_count(self):
+        self.assertFalse(self.checked([{"event": "UserPromptSubmit"},
+                                       {"event": "PostToolUse", "command": "gh pr view 44", "exit": 0},
+                                       {"event": "Stop"}, {"event": "UserPromptSubmit"}]))
+
+    def test_a_lookup_before_a_send_back_still_counts(self):
+        self.assertTrue(self.checked([{"event": "UserPromptSubmit"},
+                                      {"event": "PostToolUse", "command": "gh pr view 44", "exit": 0},
+                                      {"event": "Stop", "sent_back": True}]))
+
+    def test_an_agents_lookup_does_not_count(self):
+        self.assertFalse(self.checked([{"event": "UserPromptSubmit"},
+                                       {"event": "PostToolUse", "agent_id": "b1", "command": "gh pr view 44",
+                                        "exit": 0}]))
+
+    def test_another_sessions_lookup_does_not_count(self):
+        self.assertFalse(self.checked([{"event": "UserPromptSubmit"},
+                                       {"event": "PostToolUse", "session": "s2", "command": "gh pr view 44",
+                                        "exit": 0}]))
+
+    def test_a_failed_lookup_does_not_count(self):
+        self.assertFalse(self.checked([{"event": "UserPromptSubmit"},
+                                       {"event": "PostToolUseFailure", "command": "gh pr view 44", "exit": 1}]))
+
+
+class CheckFirst(unittest.TestCase):
+    """The hook run the way Claude Code runs it: a GitHub fact needs a gh or git call in the same turn."""
+
+    def setUp(self):
+        self.project = apb_project()
+
+    def test_sends_back_an_unchecked_fact(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        r = run(payload("PR #44 is merged and the plugin is at 0.3.18."), self.project)
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)
+        self.assertNotIn("decision", out)  # a quiet note, not a block
+        note = out["hookSpecificOutput"]
+        self.assertEqual(note["hookEventName"], "Stop")
+        self.assertIn("You stated a GitHub fact without checking it this turn.", note["additionalContext"])
+        self.assertIn("PR #44", note["additionalContext"])
+        self.assertIn("0.3.18", note["additionalContext"])
+        last = read_events(self.project)[-1]
+        self.assertEqual((last["event"], last["sent_back"]), ("Stop", True))
+        self.assertEqual(last["unchecked"], ["PR #44", "0.3.18"])
+
+    def test_names_at_most_five_facts(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        facts = ["PR #1", "PR #2", "PR #3", "PR #4", "PR #5", "PR #6"]
+        r = run(payload(", ".join(facts) + " are open."), self.project)
+        context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertTrue(context.endswith(": " + ", ".join(facts[:5]) + "."), context)
+        self.assertNotIn("PR #6", context)
+        self.assertEqual(read_events(self.project)[-1]["unchecked"], facts[:5])
+
+    def test_lets_a_checked_fact_through(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"},
+                                    {"event": "PostToolUse", "command": "gh pr view 44", "exit": 0}])
+        self.assertFalse(sent_back(run(payload("PR #44 is merged."), self.project)))
+        self.assertNotIn("unchecked", read_events(self.project)[-1])
+
+    def test_lets_a_message_with_no_fact_through(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        self.assertFalse(sent_back(run(payload("The page now has a dark mode."), self.project)))
+
+    def test_never_sends_back_twice_in_a_row(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        self.assertTrue(sent_back(run(payload("PR #44 is merged."), self.project)))
+        self.assertFalse(sent_back(run(payload("PR #44 is merged.", stop_hook_active=True), self.project)))
+
+    def test_a_lookup_after_the_send_back_lets_the_next_stop_through(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        self.assertTrue(sent_back(run(payload("PR #44 is merged."), self.project)))
+        write_events(self.project, [{"event": "PostToolUse", "command": "gh pr view 44", "exit": 0}])
+        self.assertFalse(sent_back(run(payload("PR #44 is merged."), self.project)))
+
+    def test_both_notes_in_one_send_back(self):
+        # The work ran out, the first line is missing, and a fact is unchecked: one send-back says both.
+        write_events(self.project, FINISHED_AGENT[:-1])
+        r = run(payload("PR #44 is ready."), self.project)
+        context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertTrue(context.startswith("Say who holds the ball"))
+        self.assertIn("You stated a GitHub fact without checking it this turn.", context)
+
+    def test_a_valid_first_line_with_an_unchecked_fact_is_sent_back_and_starts_no_reminder(self):
+        write_events(self.project, FINISHED_AGENT[:-1])
+        r = run(payload(ONE), self.project)
+        self.assertTrue(sent_back(r))
+        context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertFalse(context.startswith("Say who holds the ball"))
+        last = read_events(self.project)[-1]
+        self.assertNotIn("holder", last)
 
 
 class WorkRanOut(unittest.TestCase):
@@ -390,6 +548,7 @@ class Reminder(unittest.TestCase):
         while time.time() < start + 1:
             time.sleep(0.1)
         # A watcher check-in wakes Claude; no prompt, no first line, the watcher still runs.
+        write_events(self.project, [{"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}])
         tasks = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
         r = run(payload("PR #44: checks still running.", background_tasks=tasks), self.project, env)
         self.assertFalse(sent_back(r))
@@ -403,6 +562,7 @@ class Reminder(unittest.TestCase):
         write_events(self.project, FINISHED_AGENT)
         env = dict(self.env, APB_REMIND_AFTER_SECONDS="2")
         run(payload(ONE), self.project, env)
+        write_events(self.project, [{"event": "PostToolUse", "command": "gh pr checks 40", "exit": 0}])
         tasks = [{"id": "w", "type": "shell", "status": "running"}]
         run(payload(NOTHING, background_tasks=tasks), self.project, env)
         self.assertEqual(self.alerts(3), [])
@@ -518,23 +678,36 @@ class Properties(unittest.TestCase):
     """Random session histories. A simulation tracks running agents, how each turn started and
     what happened in it; its answer must match the hook's, which only reads the events file."""
 
+    THINGS = [("merge PR #4", True), ("answer #9", False), ("sign in to Cloudflare", False)]
+    TAILS = [("", False), ("3 of 5 cards are done.", True), ("The plugin is at 0.3.18.", True),
+             ("It took 1.5 seconds.", False), ("Card #9 is on the board.", True),
+             ("45 tests pass.", False), ("See https://github.com/o/r/pull/7.", True)]
+
     def message(self, rng):
-        """A random message and whether it starts with a valid first line, known by construction."""
+        """A random message, whether it starts with a valid first line, and whether it states a
+        GitHub fact, both known by construction."""
+        text, valid, fact = self.body(rng)
+        tail, tail_fact = rng.choice(self.TAILS)
+        if tail:
+            text += "\n\n" + tail
+        return text, valid, fact or tail_fact
+
+    def body(self, rng):
         kind = rng.randrange(6)
-        thing = rng.choice(["merge PR #4", "answer #9", "sign in to Cloudflare"])
+        thing, fact = rng.choice(self.THINGS)
         if kind == 0:
-            return NOTHING, True
+            return NOTHING, True, True  # it names PR #40
         if kind == 1:
-            return "1 thing for you to do right now: %s." % thing, True
+            return "1 thing for you to do right now: %s." % thing, True, fact
         n = rng.randint(2, 6)
         items = ["%d. %s." % (i, thing) for i in range(1, n + 1)]
         if kind == 2:
-            return "%d things for you to do right now:\n" % n + "\n".join(items), True
+            return "%d things for you to do right now:\n" % n + "\n".join(items), True, fact
         if kind == 3:
-            return "%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False
+            return "%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False, fact
         if kind == 4:
-            return "Progress: " + thing, False
-        return "", False
+            return "Progress: " + thing, False, fact
+        return "", False, False
 
     def test_random_histories(self):
         rng = random.Random(41)
@@ -560,8 +733,9 @@ class Properties(unittest.TestCase):
                     events.append({"event": "UserPromptSubmit"})
                 stopped_now = woken
                 background_bash = False
+                checked = False
                 for _ in range(rng.randint(0, 3)):
-                    action = rng.randrange(4)
+                    action = rng.randrange(7)
                     if action == 0:  # a foreground agent: starts and stops within the turn
                         next_id[0] += 1
                         a = "f%d" % next_id[0]
@@ -577,12 +751,29 @@ class Properties(unittest.TestCase):
                     elif action == 2:
                         events.append({"event": "PostToolUse", "command": "watch", "background": True})
                         background_bash = True
-                    else:
+                    elif action == 3:
                         events.append({"event": "PostToolUse", "command": "ls", "exit": 0})
+                    elif action == 4:  # the orchestrator looks it up
+                        events.append({"event": "PostToolUse", "exit": 0,
+                                       "command": rng.choice(["gh pr view 4", "git -C /r log -1",
+                                                              "python3 scripts/map-artifact.py m.html u",
+                                                              "python3 scripts/progress-page.py p.html"])})
+                        checked = True
+                    elif action == 5:  # an agent's lookup is not the orchestrator's
+                        next_id[0] += 1
+                        a = "g%d" % next_id[0]
+                        events += [{"event": "SubagentStart", "agent_id": a},
+                                   {"event": "PostToolUse", "agent_id": a, "command": "gh pr list", "exit": 0},
+                                   {"event": "SubagentStop", "agent_id": a}]
+                        stopped_now = True
+                    else:  # a lookup that failed checked nothing
+                        events.append({"event": "PostToolUseFailure", "exit": 1,
+                                       "command": rng.choice(["gh pr view 4",
+                                                              "python3 scripts/progress-page.py p.html"])})
                 write_events(project, events)
                 if by_prompt and prompts_logged:
                     seen_prompt = True
-                message, valid = self.message(rng)
+                message, valid, fact = self.message(rng)
                 # A turn that no prompt started counts only once prompts are known to be logged.
                 ran_out = (not sim_running and not background_bash
                            and (stopped_now or (not by_prompt and seen_prompt)))
@@ -593,14 +784,14 @@ class Properties(unittest.TestCase):
                         [{"id": a, "type": "subagent", "status": "running"} for a in sorted(sim_running)]
                         + ([{"id": "w", "type": "shell", "status": "running"}] if background_bash else []))
                 while True:
-                    want_send_back = ran_out and not valid and not hook_active
+                    want_send_back = not hook_active and ((ran_out and not valid) or (fact and not checked))
                     r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time())
                     checks += 1
                     self.assertEqual(r["send_back"], want_send_back, (history, turn, message, events))
                     if not r["send_back"]:
                         break
                     hook_active = True  # Claude Code tries again; it may still have no line
-                    message, valid = self.message(rng)
+                    message, valid, fact = self.message(rng)
             self.assertGreater(checks, 0)
 
 
