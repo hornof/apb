@@ -26,7 +26,8 @@ which hooks/apb-events.py writes.
 - On any stop, if the message's first line asks the human to decide something ("decide", "decision",
   "your call", "choose", "pick") and the message has no link to a GitHub PR or issue outside a quoted
   line, the hook sends the message back once, with a note that starts "A decision was asked without a
-  GitHub link." Every decision lives on GitHub; the hand-off only points at it.
+  GitHub link." Under an "N things" first line, each numbered item that asks a decision needs the link
+  on its own line. Every decision lives on GitHub; the hand-off only points at it.
 - It appends a Stop line to the events file, with who holds the ball when the message says so, the
   unchecked facts ("unchecked") and "decision-without-link" when those were why it sent the message back.
 - If the human holds the ball, it starts a reminder in the background: if the human has done
@@ -146,7 +147,12 @@ def asks_decision(message):
     lines = [clean(l) for l in message.splitlines() if l.strip()]
     if not lines or NOTHING.match(lines[0]):
         return False
-    return bool(DECIDE.search(NO_DECISION.sub(" ", lines[0])))
+    return decides(lines[0])
+
+
+def decides(line):
+    """True if the line asks the human to decide something. "No decisions" asks nothing."""
+    return bool(DECIDE.search(NO_DECISION.sub(" ", line)))
 
 
 def has_link(message):
@@ -154,6 +160,33 @@ def has_link(message):
     if not isinstance(message, str):
         return False
     return any(LINK.search(l) for l in message.splitlines() if not QUOTED.match(l))
+
+
+def items(message):
+    """The numbered lines under an "N things for you to do right now:" first line, else []."""
+    if not isinstance(message, str):
+        return []
+    lines = [clean(l) for l in message.splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    if not lines or not MANY.match(lines[0]):
+        return []
+    found = []
+    for line in lines[1:]:
+        if not line and not found:
+            continue
+        if not ITEM.match(line):
+            break
+        found.append(line)
+    return found
+
+
+def decision_without_link(message):
+    """True if a decision is asked with no GitHub link: in the first line, with no link anywhere
+    outside a quoted line, or in a numbered item under "N things", with no link on that item's line."""
+    if asks_decision(message) and not has_link(message):
+        return True
+    return any(decides(item) and not LINK.search(item) for item in items(message))
 
 
 def parse_time(text):
@@ -318,7 +351,7 @@ def handle(p, project, now):
     # A hand-off to the human waits while an agent's departure is unresolved, on a retry too.
     pending = departures(events) if said and said[0] == "human" else []
     departed = bool(pending) and departure_send_backs(events, session) < MAX_DEPARTURE_SEND_BACKS
-    unlinked = not retry and asks_decision(message) and not has_link(message)
+    unlinked = not retry and decision_without_link(message)
     send_back = no_line or bool(unchecked) or departed or unlinked
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}

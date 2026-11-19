@@ -350,6 +350,36 @@ class HasLink(unittest.TestCase):
             self.assertFalse(stop.has_link(message), message)
 
 
+class DecisionWithoutLink(unittest.TestCase):
+    """A decision in the first line, or in a numbered item under "N things", needs its GitHub link."""
+    PR71 = "https://github.com/hornof/apb/pull/71"
+
+    def test_sent_back(self):
+        for message in [
+                "1 thing for you to do right now: decide the layout on PR #44.",
+                # The reviewer's example: a decision in an item, with no link at all.
+                "2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge PR #72.",
+                # The link is in the message, but not on the item that asks the decision.
+                "2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge %s." % self.PR71,
+                "2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge PR #72.\n\n" + self.PR71,
+                "2 things for you to do right now:\n\n1. merge PR #72.\n2. **Your call** on the colors.",
+                "4 things for you to do right now:\n1. A.\n2. B.\n3. Pick a host.",  # a count that doesn't match
+                "2 things for you to do right now:\n1. merge PR #72.\n2. 1 decision on PR #71 (no rush)."]:
+            self.assertTrue(stop.decision_without_link(message), message)
+
+    def test_passes(self):
+        for message in [
+                None, "", ONE, NOTHING, MANY,
+                "1 thing for you to do right now: decide the layout on %s." % self.PR71,
+                "2 things for you to do right now:\n1. 2 decisions on PR #71: %s\n2. merge PR #72." % self.PR71,
+                "2 things for you to do right now:\n1. merge PR #72 (no decisions).\n2. merge PR #73.",
+                "2 things for you to do right now:\n1. Zero decisions on PR #72; merge it.\n2. 0 decisions on #73.",
+                # Below the list, a decision word is no longer an item.
+                "2 things for you to do right now:\n1. merge PR #72.\n2. merge PR #73.\n\nDecide later on the rest.",
+                "Progress: the builder picked a layout.\n1. Decide the colors."]:  # no "N things" line
+            self.assertFalse(stop.decision_without_link(message), message)
+
+
 class DecisionLink(unittest.TestCase):
     """The hook run the way Claude Code runs it: a decision asked in a hand-off needs a GitHub link."""
     NOTE = ("A decision was asked without a GitHub link. Put it on the PR or the card, then hand off "
@@ -390,6 +420,19 @@ class DecisionLink(unittest.TestCase):
                         "> https://github.com/hornof/apb/pull/44"), self.project)
         self.assertTrue(sent_back(r))
         self.assertTrue(read_events(self.project)[-1]["decision-without-link"])
+
+    def test_a_decision_in_a_numbered_item_without_a_link_is_sent_back(self):
+        # The reviewer's example on PR #72.
+        r = run(payload("2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge PR #72."),
+                self.project)
+        self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"], self.NOTE)
+        self.assertTrue(read_events(self.project)[-1]["decision-without-link"])
+
+    def test_a_decision_in_a_numbered_item_with_its_link_passes(self):
+        r = run(payload("2 things for you to do right now:\n1. 2 decisions on PR #71: "
+                        "https://github.com/hornof/apb/pull/71\n2. merge PR #72."), self.project)
+        self.assertFalse(sent_back(r))
+        self.assertEqual(read_events(self.project)[-1]["holder"], "human")
 
     def test_never_sends_back_twice_in_a_row(self):
         message = "1 thing for you to do right now: decide the layout."
@@ -793,30 +836,34 @@ class Properties(unittest.TestCase):
     def message(self, rng):
         """A random message and, known by construction: whether it starts with a valid first line,
         whether it states a GitHub fact, and whether it asks a decision with no GitHub link."""
-        text, valid, fact, decision, link = self.body(rng)
+        text, valid, fact, decision, link, item_unlinked = self.body(rng)
         tail, tail_fact, tail_link = rng.choice(self.TAILS)
         if tail:
             text += "\n\n" + tail
-        return text, valid, fact or tail_fact, decision and not (link or tail_link)
+        return text, valid, fact or tail_fact, (decision and not (link or tail_link)) or item_unlinked
 
     def body(self, rng):
-        """(text, valid first line, states a fact, the first line asks a decision, holds a link)."""
+        """(text, valid first line, states a fact, the first line asks a decision, holds a link,
+        a numbered item under "N things" asks a decision with no link on its own line)."""
         kind = rng.randrange(6)
         thing, fact, decision, link = rng.choice(self.THINGS)
         if kind == 0:
-            return NOTHING, True, True, False, False  # it names PR #40
+            return NOTHING, True, True, False, False, False  # it names PR #40
         if kind == 1:
-            return "1 thing for you to do right now: %s." % thing, True, fact, decision, link
+            return "1 thing for you to do right now: %s." % thing, True, fact, decision, link, False
         n = rng.randint(2, 6)
         items = ["%d. %s." % (i, thing) for i in range(1, n + 1)]
-        # In a list, the thing is below the first line, so it asks no decision there.
+        # In a list, the thing is an item: a decision there needs the link on the item's own line,
+        # so a link in the tail doesn't help it.
         if kind == 2:
-            return "%d things for you to do right now:\n" % n + "\n".join(items), True, fact, False, link
+            return ("%d things for you to do right now:\n" % n + "\n".join(items), True, fact, False, link,
+                    decision and not link)
         if kind == 3:
-            return "%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False, fact, False, link
+            return ("%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False, fact, False, link,
+                    decision and not link)
         if kind == 4:
-            return "Progress: " + thing, False, fact, decision, link
-        return "", False, False, False, False
+            return "Progress: " + thing, False, fact, decision, link, False
+        return "", False, False, False, False, False
 
     def test_random_histories(self):
         rng = random.Random(41)
