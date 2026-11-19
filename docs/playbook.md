@@ -108,6 +108,8 @@ The orchestrator never tells the human "I can't see what the agent did". It can 
   - anything out of date in the doc
   - anything the human asked that hasn't been answered
   - that the link points to the latest version
+  - every link opens, checked by a script where possible
+  - the PR description matches the latest push
 
   Then Claude sends one short message: what to do, one link per thing, nothing else.
 - **A merge or a clear yes is approval.** Praise that comes with open questions is not. Ask only when it's genuinely unclear.
@@ -124,8 +126,8 @@ The orchestrator never tells the human "I can't see what the agent did". It can 
   The count is the real count. Nothing is left for the human to work out from other messages, PRs or the board. The trigger is "did the work just run out?", not "is this a hand-off?": a hand-off that isn't recognized as one reads like a progress report, and then the human and Claude each wait on the other.
   - Say the line once, when the orchestrator stops working. Say it again only when the thing changes: a new PR is ready, a decision appears, or the wait ends. Repeated on every message, it turns into noise and stops being read.
   - In between, an answer to a question is just the answer, with no first line.
-  - After the first line, one line per card in In progress and In review: what's running, or what it's waiting on, and when it should finish. These lines match the board; a card left out makes the message disagree with the board.
-  - "Nothing for you to do right now" means something is running or waiting on GitHub. Under it: one short sentence on what's being worked on, when it should finish as a clock time, and what follows. For example: "The builder is applying both fixes. ETA 7:10 PM, then the PR goes to you to merge."
+  - "Nothing for you to do right now" means something is running or waiting on GitHub.
+  - Under the first line, one line per card in In progress and In review: what's running or what it waits on, its ETA as a clock time, and what follows. For example: "#41: the builder is applying both fixes. ETA 7:10 PM, then the PR goes to you to merge." These lines match the board; a card left out makes the message disagree with the board.
   - **All clear.** Send it once, when the last PR merges or the last card closes and nothing is open on any board or repo the orchestrator watches: no card in Todo, In progress or In review, no open PR, no agent running. Check the boards, the open PRs and the agents first. Send one desktop alert with it, the same as a hand-off. Nothing goes under it: the next step is the human's by definition, so no recommendation and never "or stop here". Don't repeat it on later stops while everything is still clear.
   - Status messages are about now. Past timings go in the card's closing comment, not in a status message. If a past number must come up, use the past tense and never "waiting on you", for example "on card #N, your part took 14 minutes". "Nothing for you to do" next to "14 minutes waiting on you" reads as a contradiction.
   - Normal case, never all caps.

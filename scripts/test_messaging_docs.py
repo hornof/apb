@@ -72,9 +72,16 @@ class Playbook(unittest.TestCase):
             self.assertIn(words, self.text, words)
 
     def test_each_rule_once(self):
-        for words in ("Never alert for progress", "Plain English.", "Check before asking the human to act"):
-            self.assertLessEqual(self.text.count(words), 1, words)
-        self.assertEqual(flat(read("docs/playbook.md")).count(ALL_CLEAR), 1)
+        whole = flat(read("docs/playbook.md"))
+        for words in ("Never alert for progress", "Plain English.", "Check before asking the human to act",
+                      ALL_CLEAR, "one line per card in In progress and In review"):
+            self.assertEqual(whole.count(words), 1, words)
+
+    def test_checks_before_a_hand_off(self):
+        text = flat(read("docs/playbook.md"))
+        for words in ("every link opens, checked by a script where possible",
+                      "the PR description matches the latest push"):
+            self.assertIn(words, text, words)
 
     def test_names_no_project_person_or_date(self):
         for words in ("sketch-gallery", "Luke", "Sam", "2026"):
