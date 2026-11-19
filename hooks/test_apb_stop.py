@@ -80,23 +80,41 @@ def fake_osascript():
     return folder, calls
 
 
-def fake_gh(folder, prs=None):
+def graphql_threads(threads):
+    """The GraphQL answer for a PR's review threads. threads: {first comment's id: resolved}."""
+    return {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
+        {"isResolved": resolved, "comments": {"nodes": [{"databaseId": int(cid)}, {"databaseId": int(cid) + 1}]}}
+        for cid, resolved in threads.items()]}}}}}
+
+
+def fake_gh(folder, prs=None, threads=None):
     """Put in folder a gh that records its arguments and answers `gh pr view N ...` with prs[N] as
-    JSON, or fails when prs has no N. Returns the file it records to."""
+    JSON, or fails when prs has no N; and `gh api graphql -F number=N ...` with the review threads
+    threads[N] ({first comment's id: resolved}), or fails when threads has no N. Returns the file it
+    records to."""
     calls = os.path.join(folder, "gh-calls.txt")
     for number, pr in (prs or {}).items():
         with open(os.path.join(folder, "pr-%d.json" % number), "w") as f:
             json.dump(pr, f)
+    for number, found in (threads or {}).items():
+        with open(os.path.join(folder, "threads-%d.json" % number), "w") as f:
+            json.dump(graphql_threads(found), f)
     fake = os.path.join(folder, "gh")
     with open(fake, "w") as f:
-        f.write("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> '%s'\nf='%s'/pr-\"$3\".json\n"
-                "[ -f \"$f\" ] || exit 1\ncat \"$f\"\n" % (calls, folder))
+        f.write("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> '%s'\n"
+                "if [ \"$1\" = api ]; then f='%s'/threads-\"${4#number=}\".json; else f='%s'/pr-\"$3\".json; fi\n"
+                "[ -f \"$f\" ] || exit 1\ncat \"$f\"\n" % (calls, folder, folder))
     os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC)
     return calls
 
 
 DEFAULT_BIN, _ = fake_osascript()
 fake_gh(DEFAULT_BIN)  # no test reaches GitHub: by default, every gh call fails
+
+
+def no_github(repo, number):
+    """A lookup that fails, as gh does with no network: tests that call the hook in-process never reach GitHub."""
+    raise subprocess.CalledProcessError(1, "gh")
 
 
 def run(p, project, env_extra=None):
@@ -505,7 +523,7 @@ class Replay(unittest.TestCase):
             project = apb_project()
             # A turn the human started, with no lookup in it: only the two checks can send it back.
             write_events(project, [{"event": "UserPromptSubmit"}])
-            r = stop.handle(payload(c["message"]), project, time.time())
+            r = stop.handle(payload(c["message"]), project, time.time(), no_github, no_github)
             self.assertEqual(r["send_back"], bool(c["still_caught"]), (c["time"], c["message"]))
             last = read_events(project)[-1]
             self.assertEqual("unchecked" in last, "github-fact" in c["still_caught"], c["time"])
@@ -861,6 +879,304 @@ class ProjectsLineProperties(unittest.TestCase):
                     and not any(counts for _, counts in lines))
             got = stop.projects_line_missing("merge " + APB_PR % 5, lambda repo, n: pr(paths, body, state))
             self.assertEqual(got, [5] if want else [], (paths, body, state))
+
+
+THREAD = "https://github.com/hornof/apb/pull/82#discussion_r4627001605"
+# The line sent at 2:08 AM, after the human had resolved the thread.
+STALE = ("1 thing for you to do right now: answer [decision 3 on PR #82 (apb#70)](%s). The reviewer "
+         "recommends (a), correct the past card times on a new card. Resolving the thread with no reply "
+         "counts as (a)." % THREAD)
+
+
+class Targets(unittest.TestCase):
+    """What a hand-off asks the human to act on."""
+
+    def test_targets(self):
+        cases = {
+            STALE: [("thread", APB, 82, 4627001605)],
+            "1 thing for you to do right now: merge [PR #84 (apb#83)](%s)." % (APB_PR % 84): [("pr", APB, 84)],
+            "1 thing for you to do right now: merge PR #44.": [("pr", None, 44)],
+            "1 thing for you to do right now: Merge PR #44 and PR #45.": [("pr", None, 44), ("pr", None, 45)],
+            "1 thing for you to do right now: answer [decision 8](https://github.com/hornof/apb/pull/46/files"
+            "#discussion_r11).": [("thread", APB, 46, 11)],
+            "2 things for you to do right now:\n1. answer [decision 3](%s)\n2. merge [PR #82](%s)"
+            % (THREAD, APB_PR % 82): [("thread", APB, 82, 4627001605), ("pr", APB, 82)],
+            "**2 things for you to do right now:**\n\n1. merge PR #4.\n2. merge PR #4 again.": [("pr", None, 4)],
+            # The thread is a target on any hand-off line. A thread link names no PR to merge, so the
+            # merge's PR is the one the line names.
+            "1 thing for you to do right now: merge PR #82 after you answer [decision 3](%s)." % THREAD:
+                [("thread", APB, 82, 4627001605), ("pr", None, 82)],
+            "1 thing for you to do right now: answer [decision 3](https://github.com/hornof/apb/pull/82"
+            "#discussion_r111) so I can merge PR #84.": [("thread", APB, 82, 111), ("pr", None, 84)],
+            "1 thing for you to do right now: answer decision 3 (https://github.com/hornof/apb/pull/82"
+            "#discussion_r111), then merge [PR #84](%s)." % (APB_PR % 84): [("thread", APB, 82, 111), ("pr", APB, 84)],
+        }
+        for message, want in cases.items():
+            self.assertEqual(stop.targets(message), want, message)
+
+    def test_not_targets(self):
+        for message in [
+                NOTHING, ALL_CLEAR, None, "", "Progress: merge PR #44.",
+                "Nothing for you to do right now. Waiting on CI for %s, ETA 7:10 PM." % THREAD,
+                "1 thing for you to do right now: say \"merge PR #44\" when ready.",  # quoted words
+                "1 thing for you to do right now: read the review of PR #44.",  # no merge, no thread link
+                "1 thing for you to do right now: check that PR #44 merged cleanly.",  # "merged" isn't "merge"
+                "1 thing for you to do right now: read the card.\n%s\nmerge PR #44" % THREAD,  # not on the line
+                "2 things for you to do right now:\n1. read the card.\n2. sign in.\n\nmerge PR #4; see %s" % THREAD,
+                "3 things for you to do right now:\n1. merge PR #4.\n2. sign in."]:  # the count is wrong
+            self.assertEqual(stop.targets(message), [], message)
+
+
+def fake_github(prs=None, threads=None, **kwargs):
+    """A GitHub whose lookups answer from prs {(repo, n): pr} and threads {(repo, n): {id: resolved}},
+    failing for anything else. Returns (github, the calls it got)."""
+    calls = []
+
+    def look(kind, table):
+        def answer(repo, number):
+            calls.append((kind, repo, number))
+            if (repo, number) not in table:
+                raise subprocess.CalledProcessError(1, "gh")
+            return table[(repo, number)]
+        return answer
+    return stop.GitHub(None, look("pr", prs or {}), look("threads", threads or {}), **kwargs), calls
+
+
+class AlreadyDone(unittest.TestCase):
+    def test_a_resolved_thread(self):
+        github, calls = fake_github(threads={(APB, 82): {4627001605: True, 4627001606: True}})
+        self.assertEqual(stop.already_done(STALE, github), ["the decision thread %s is resolved" % THREAD])
+        self.assertEqual(calls, [("threads", APB, 82)])
+
+    def test_a_link_to_a_reply_finds_its_thread(self):
+        github, _ = fake_github(threads={(APB, 82): {4627001604: True, 4627001605: True}})
+        self.assertEqual(len(stop.already_done(STALE, github)), 1)
+
+    def test_an_unresolved_or_unknown_thread_passes(self):
+        for found in [{4627001605: False}, {}, {99: True}, ["odd"]]:
+            github, _ = fake_github(threads={(APB, 82): found})
+            self.assertEqual(stop.already_done(STALE, github), [], found)
+
+    def test_a_merged_or_closed_pr(self):
+        message = "1 thing for you to do right now: merge [PR #84](%s)." % (APB_PR % 84)
+        for state, want in [("MERGED", "PR #84 is merged (%s)" % (APB_PR % 84)),
+                            ("CLOSED", "PR #84 is closed (%s)" % (APB_PR % 84))]:
+            github, _ = fake_github(prs={(APB, 84): pr([], "", state)})
+            self.assertEqual(stop.already_done(message, github), [want])
+        github, _ = fake_github(prs={(APB, 84): pr([], "")})
+        self.assertEqual(stop.already_done(message, github), [])
+
+    def test_a_pr_named_with_no_link_is_looked_up_in_the_projects_repo(self):
+        github, calls = fake_github(prs={(None, 44): pr([], "", "MERGED")})
+        self.assertEqual(stop.already_done(ONE, github), ["PR #44 is merged"])
+        self.assertEqual(calls, [("pr", None, 44)])
+
+    def test_a_failed_lookup_lets_the_stop_through(self):
+        github, calls = fake_github()
+        self.assertEqual(stop.already_done(STALE + "\n", github), [])
+        self.assertEqual(stop.already_done(ONE, github), [])
+        self.assertEqual(len(calls), 2)
+
+    def test_each_pr_and_each_prs_threads_looked_up_once(self):
+        message = ("3 things for you to do right now:\n1. answer [decision 3](%s)\n2. answer [decision 4]("
+                   "https://github.com/hornof/apb/pull/82#discussion_r7)\n3. merge [PR #82](%s)"
+                   % (THREAD, APB_PR % 82))
+        github, calls = fake_github(prs={(APB, 82): pr([], "", "MERGED")},
+                                    threads={(APB, 82): {4627001605: True, 7: False}})
+        self.assertEqual(len(stop.already_done(message, github)), 2)
+        self.assertEqual(calls, [("threads", APB, 82), ("pr", APB, 82)])
+
+    def test_looks_up_at_most_max_done(self):
+        message = "1 thing for you to do right now: merge %s." % " ".join("PR #%d" % n for n in range(1, 9))
+        github, calls = fake_github(prs={(None, n): pr([], "", "MERGED") for n in range(1, 9)})
+        self.assertEqual(len(stop.already_done(message, github)), stop.MAX_DONE)
+        self.assertEqual(len(calls), stop.MAX_DONE)
+
+    def test_the_gh_calls_share_one_budget_with_the_projects_check(self):
+        clock = [1000.0]
+        limits = []
+
+        def fake_view(repo, number, time_limit=stop.PR_TIME_LIMIT, cwd=None):
+            limits.append(("pr", number, time_limit))
+            clock[0] += 3
+            return pr(["hooks/a.py"], "")
+
+        def fake_threads(repo, number, time_limit=stop.PR_TIME_LIMIT):
+            limits.append(("threads", number, time_limit))
+            clock[0] += 2
+            return {}
+        message = ("2 things for you to do right now:\n1. answer [decision 3](https://github.com/o/r/pull/82"
+                   "#discussion_r1)\n2. merge [PR #5](%s)" % (APB_PR % 5))
+        saved = stop.time.time, stop.view_pr, stop.view_threads
+        stop.time.time, stop.view_pr, stop.view_threads = (lambda: clock[0]), fake_view, fake_threads
+        try:
+            github = stop.GitHub()
+            self.assertEqual(stop.already_done(message, github), [])
+            self.assertEqual(stop.projects_line_missing(message + " " + APB_PR % 6, github=github), [5, 6])
+        finally:
+            stop.time.time, stop.view_pr, stop.view_threads = saved
+        # 6 seconds in all: threads (4 allowed, takes 2), PR #5 (4 allowed, takes 3), then 1 second
+        # left, and PR #5's answer is reused, so PR #6 gets the last second.
+        self.assertEqual(limits, [("threads", 82, 4), ("pr", 5, 4), ("pr", 6, 1)])
+
+    def test_the_real_gh_calls(self):
+        # The gh calls made from a folder with a fake gh: the arguments, and how the answers are read.
+        folder = tempfile.mkdtemp()
+        calls = fake_gh(folder, {44: pr([], "", "MERGED")}, {82: {4627001605: True}})
+        path = os.environ["PATH"]
+        os.environ["PATH"] = folder + os.pathsep + path
+        try:
+            self.assertEqual(stop.view_pr(None, 44, 4, cwd=folder)["state"], "MERGED")
+            self.assertEqual(stop.view_threads(APB, 82, 4), {4627001605: True, 4627001606: True})
+            with self.assertRaises(subprocess.CalledProcessError):
+                stop.view_threads(APB, 83, 4)
+        finally:
+            os.environ["PATH"] = path
+        with open(calls) as f:
+            got = f.read().splitlines()
+        self.assertEqual(got[0], "pr view 44 --json state,body,files")
+        self.assertTrue(got[1].startswith("api graphql -F number=82 -f owner=hornof -f name=apb -f query="), got[1])
+        self.assertIn("reviewThreads", got[1])
+
+
+class AlreadyDoneProperties(unittest.TestCase):
+    """Random hand-offs of threads and merges in random states, against an oracle that knows by
+    construction what each line asks for."""
+
+    def test_random_hand_offs(self):
+        rng = random.Random(85)
+        for _ in range(400):
+            prs = {n: rng.choice(["OPEN", "MERGED", "CLOSED", None]) for n in range(1, 6)}  # None: lookup fails
+            threads = {cid: rng.choice([True, False, None]) for cid in range(100, 106)}  # None: no such thread
+            lines, want, seen = [], [], []
+            for _ in range(rng.randint(1, 4)):
+                kind = rng.choice(["thread", "merge link", "merge bare", "other", "quoted"])
+                if kind == "thread":
+                    cid = rng.choice(sorted(threads))
+                    lines.append("answer [decision 3](https://github.com/o/r/pull/9#discussion_r%d)" % cid)
+                    key, done = ("thread", cid), threads[cid] is True
+                    text = "the decision thread https://github.com/o/r/pull/9#discussion_r%d is resolved" % cid
+                elif kind in ("merge link", "merge bare"):
+                    n = rng.choice(sorted(prs))
+                    link = kind == "merge link"
+                    lines.append("merge [PR #%d](https://github.com/o/r/pull/%d)" % (n, n) if link else
+                                 "merge PR #%d" % n)
+                    key, done = ("pr", link, n), prs[n] in ("MERGED", "CLOSED")
+                    text = "PR #%d is %s" % (n, (prs[n] or "").lower()) + (
+                        " (https://github.com/o/r/pull/%d)" % n if link else "")
+                elif kind == "other":
+                    lines.append("sign in to Cloudflare")
+                    continue
+                else:
+                    lines.append("say \"merge PR #%d\"" % rng.choice(sorted(prs)))
+                    continue
+                if key not in seen:
+                    seen.append(key)
+                    if done and len(seen) <= stop.MAX_DONE:
+                        want.append(text)
+            if len(lines) == 1:
+                message = "1 thing for you to do right now: %s." % lines[0]
+            else:
+                message = "%d things for you to do right now:\n" % len(lines) + "\n".join(
+                    "%d. %s." % (i, l) for i, l in enumerate(lines, 1))
+
+            def pr_answer(repo, n):
+                if repo not in ("o/r", None) or prs[n] is None:
+                    raise subprocess.CalledProcessError(1, "gh")
+                return pr([], "", prs[n])
+
+            def thread_answer(repo, n):
+                return {cid: r for cid, r in threads.items() if r is not None}
+            github = stop.GitHub(None, pr_answer, thread_answer)
+            self.assertEqual(stop.already_done(message, github), want, message)
+
+
+class AlreadyDoneHook(unittest.TestCase):
+    """The hook run the way Claude Code runs it, with a fake gh: a hand-off never asks for something
+    already done."""
+    NOTE_START = "A hand-off asks the human for something that is already done:"
+
+    def setUp(self):
+        self.project = apb_project()
+        # The orchestrator looked something up, so the GitHub-fact check stays quiet.
+        write_events(self.project, [{"event": "UserPromptSubmit"},
+                                    {"event": "PostToolUse", "command": "gh pr view 82", "exit": 0}])
+        self.bin = tempfile.mkdtemp()
+
+    def run_with(self, message, prs=None, threads=None, **extra):
+        calls = fake_gh(self.bin, prs, threads)
+        env = {"PATH": self.bin + os.pathsep + DEFAULT_BIN + os.pathsep + os.environ["PATH"]}
+        r = run(payload(message, **extra), self.project, env)
+        got = []
+        if os.path.exists(calls):
+            with open(calls) as f:
+                got = f.read().splitlines()
+        return r, got
+
+    # The stale line's lookups: its thread, then, for the Projects-line check, its apb PR.
+    LOOKUPS = ["api graphql -F number=82", "pr view 82 --repo hornof/apb --json state,body,files"]
+
+    @staticmethod
+    def looked_up(calls):
+        return [c.split(" -f ")[0] for c in calls]
+
+    def test_the_stale_line_is_sent_back(self):
+        r, calls = self.run_with(STALE, threads={82: {4627001605: True}})
+        out = json.loads(r.stdout)
+        self.assertNotIn("decision", out)  # a quiet note, not a block
+        note = out["hookSpecificOutput"]["additionalContext"]
+        self.assertTrue(note.startswith(self.NOTE_START), note)
+        self.assertIn(THREAD, note)
+        self.assertEqual(self.looked_up(calls), self.LOOKUPS)
+        last = read_events(self.project)[-1]
+        self.assertEqual((last["sent_back"], last["already-done"]),
+                         (True, ["the decision thread %s is resolved" % THREAD]))
+        self.assertNotIn("holder", last)
+
+    def test_an_unresolved_thread_passes(self):
+        r, _ = self.run_with(STALE, threads={82: {4627001605: False}})
+        self.assertFalse(sent_back(r))
+        last = read_events(self.project)[-1]
+        self.assertNotIn("already-done", last)
+        self.assertEqual(last["holder"], "human")
+
+    def test_merging_a_merged_pr_is_sent_back(self):
+        r, calls = self.run_with("2 things for you to do right now:\n1. sign in.\n2. merge PR #44.",
+                                 prs={44: pr([], "", "MERGED")})
+        note = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(note, stop.DONE % "PR #44 is merged")
+        self.assertEqual(calls, ["pr view 44 --json state,body,files"])
+        self.assertEqual(read_events(self.project)[-1]["already-done"], ["PR #44 is merged"])
+
+    def test_merging_an_open_pr_passes(self):
+        r, _ = self.run_with(ONE, prs={44: pr([], "")})
+        self.assertFalse(sent_back(r))
+
+    def test_never_sends_back_twice_in_a_row(self):
+        self.assertTrue(sent_back(self.run_with(STALE, threads={82: {4627001605: True}})[0]))
+        r, calls = self.run_with(STALE, threads={82: {4627001605: True}}, stop_hook_active=True)
+        self.assertFalse(sent_back(r))
+        self.assertEqual(self.looked_up(calls), self.LOOKUPS)  # the retry looked nothing up
+
+    def test_only_a_hand_off_is_checked(self):
+        r, calls = self.run_with("Nothing for you to do right now. Waiting on the reviewer, ETA 7:10 PM.\n"
+                                 "Then: merge PR #44, see %s" % THREAD,
+                                 prs={44: pr([], "", "MERGED")}, threads={82: {4627001605: True}})
+        self.assertFalse(sent_back(r))
+        self.assertEqual(calls, [])
+
+    def test_a_failing_gh_lets_the_stop_through(self):
+        r, calls = self.run_with(STALE)
+        self.assertFalse(sent_back(r))
+        self.assertEqual(self.looked_up(calls), self.LOOKUPS)
+        self.assertEqual(read_events(self.project)[-1]["holder"], "human")
+
+    def test_shares_the_pr_lookup_and_the_send_back_with_the_projects_check(self):
+        message = "1 thing for you to do right now: merge [PR #74](%s)." % (APB_PR % 74)
+        r, calls = self.run_with(message, prs={74: pr(["hooks/apb-stop.py"], "Closes #73", "CLOSED")})
+        note = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertEqual(note, stop.DONE % ("PR #74 is closed (%s)" % (APB_PR % 74)))  # a closed PR needs no line
+        self.assertEqual(calls, ["pr view 74 --repo hornof/apb --json state,body,files"])
 
 
 class WorkRanOut(unittest.TestCase):
@@ -1447,7 +1763,8 @@ class Properties(unittest.TestCase):
                     quiet_after_helper += quiet and helper and not valid and not hook_active
                     want_send_back = not hook_active and ((ran_out and not valid and not quiet)
                                                           or (fact and not checked) or unlinked)
-                    r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time())
+                    r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time(),
+                                    no_github, no_github)
                     checks += 1
                     self.assertEqual(r["send_back"], want_send_back, (history, turn, message, events))
                     if not r["send_back"]:

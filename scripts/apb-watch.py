@@ -2,8 +2,9 @@
 
 It exits, printing what it found, when:
 - GitHub: a PR is opened, merged or closed, a PR's checks finish, a PR gets new comments, review
-  comments, replies on review comments or reviews, all of a PR's review comments are resolved, or a
-  watched issue gets new comments.
+  comments, replies on review comments or reviews, one of a PR's review threads (Decision threads) is
+  resolved, all of them are, or a watched issue gets new comments. A merged or closed PR stays watched
+  while it has an unresolved thread (at most MAX_WATCHED such PRs).
 - Stuck: a command started from one of Claude Code's shells has used no CPU for --stuck-minutes.
 - Quiet: an agent that is still running has written nothing to .apb/events.jsonl for --quiet-minutes.
 - Check-in: --check-in minutes have passed (use it while agents run, to look at their progress).
@@ -146,22 +147,62 @@ def track_idle(idle, procs, pids, now, stuck):
 
 # ---------------------------------------------------------------- GitHub
 
-def build_query(issues):
+MAX_WATCHED = 20  # merged or closed PRs kept watched for their unresolved Decision threads
+# Each review thread with its state and its first comment, whose id names the thread in a link.
+THREADS = "reviewThreads(first: 100) { nodes { isResolved comments { totalCount } " \
+          "opening: comments(first: 1) { nodes { databaseId } } } }"
+
+
+def build_query(issues, watch=()):
+    """The GraphQL query: open PRs, recent merges and closes, the watched issues, and the merged or
+    closed PRs in watch, each with its review threads."""
     asks = "".join("\n    i%d: issue(number: %d) { title state comments { totalCount } }" % (n, n)
                    for n in issues)
+    asks += "".join("\n    w%d: pullRequest(number: %d) { number %s }" % (n, n, THREADS) for n in watch)
     return """query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
     open: pullRequests(first: 50, states: OPEN) { nodes { number title
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
-      reviewThreads(first: 100) { nodes { isResolved comments { totalCount } } }
+      %s
       comments { totalCount } reviews { totalCount } } }
-    merged: pullRequests(first: 20, states: MERGED, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title } }
-    closed: pullRequests(first: 20, states: CLOSED, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title } }""" \
-        + asks + "\n} }"
+    merged: pullRequests(first: 20, states: MERGED, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title %s } }
+    closed: pullRequests(first: 20, states: CLOSED, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { number title %s } }""" \
+        % (THREADS, THREADS, THREADS) + asks + "\n} }"
+
+
+def thread_states(pr):
+    """{first comment's id: resolved} for each of the PR's review threads, as strings for the state file."""
+    found = {}
+    for t in ((pr or {}).get("reviewThreads") or {}).get("nodes") or []:
+        first = (t.get("opening") or {}).get("nodes") or []
+        if first and first[0].get("databaseId") is not None:
+            found[str(first[0]["databaseId"])] = bool(t.get("isResolved"))
+    return found
+
+
+def still_watched(snap):
+    """The merged or closed PRs in the snapshot that still have an unresolved review thread: at most
+    MAX_WATCHED, newest first."""
+    if not isinstance(snap, dict):
+        return []
+    found = [int(n) for n, t in (snap.get("threads") or {}).items()
+             if n not in snap.get("open", {}) and False in t.values()]
+    return sorted(found, reverse=True)[:MAX_WATCHED]
 
 
 def normalize(repo, issues):
-    snap = {"open": {}, "merged": {}, "closed": {}, "issues": {}}
+    snap = {"open": {}, "merged": {}, "closed": {}, "issues": {}, "threads": {}}
     numbers = [0]
+    for key, p in repo.items():
+        if key in ("open", "merged", "closed"):
+            nodes = p["nodes"]
+        elif key.startswith("w") and isinstance(p, dict):  # a merged or closed PR kept watched
+            nodes = [p]
+        else:
+            continue
+        for node in nodes:
+            threads = thread_states(node)
+            if threads:
+                snap["threads"][str(node["number"])] = threads
     for p in repo["open"]["nodes"]:
         commits = p["commits"]["nodes"]
         rollup = commits[0]["commit"]["statusCheckRollup"] if commits else None
@@ -187,10 +228,10 @@ def normalize(repo, issues):
     return snap
 
 
-def gh_snapshot(repo, issues):
+def gh_snapshot(repo, issues, watch=()):
     owner, name = repo.split("/", 1)
     out = subprocess.run(["gh", "api", "graphql", "-f", "owner=" + owner, "-f", "name=" + name,
-                          "-f", "query=" + build_query(issues)], capture_output=True, text=True, timeout=60)
+                          "-f", "query=" + build_query(issues, watch)], capture_output=True, text=True, timeout=60)
     if out.returncode != 0:
         raise RuntimeError((out.stderr or out.stdout).strip()[:200])
     return normalize(json.loads(out.stdout)["data"]["repository"], issues)
@@ -209,7 +250,9 @@ def count(n, word, plural=None):
     return "%d %s" % (n, word if n == 1 else plural or word + "s")
 
 
-def gh_changes(old, new):
+def gh_changes(old, new, repo=None):
+    """What changed between two snapshots, as lines for the orchestrator. repo (owner/name) makes a
+    resolved thread's line a link."""
     out = []
     was_open = old["open"]
     for kind in ("merged", "closed"):
@@ -218,6 +261,14 @@ def gh_changes(old, new):
             if n in was_open or (int(n) > old.get("max", 0) and n not in old[kind]):
                 out.append("PR #%s merged: %s" % (n, title) if kind == "merged"
                            else "PR #%s closed without merging: %s" % (n, title))
+    # Each Decision thread that became resolved, on an open, merged or closed PR. A state saved by an
+    # older version has no threads: compare from now on.
+    for n, threads in (new.get("threads") or {}).items():
+        before = (old.get("threads") or {}).get(n, {})
+        for i, resolved in threads.items():
+            if resolved and before.get(i) is False:
+                out.append("PR #%s: decision thread resolved: %s" % (
+                    n, "https://github.com/%s/pull/%s#discussion_r%s" % (repo, n, i) if repo else "r" + i))
     for n, p in new["open"].items():
         o = was_open.get(n)
         if o is None:
@@ -354,10 +405,11 @@ def watch(opts, snapshot, ps_text, now, sleep, me):
     while True:
         found = []
         try:
-            new = snapshot(opts.repo, opts.issue)
+            # A merged or closed PR stays watched while it has an unresolved Decision thread.
+            new = snapshot(opts.repo, opts.issue, still_watched(state.get("github")))
             if state.get("github") is not None:
                 # An issue not watched last time has no old count, so gh_changes leaves it out this once.
-                found += ["GitHub: " + c for c in gh_changes(state["github"], new)]
+                found += ["GitHub: " + c for c in gh_changes(state["github"], new, opts.repo)]
             state["github"] = new
         except Exception as e:  # GitHub down or slow: try again next round
             failures, last_error = failures + 1, str(e)
