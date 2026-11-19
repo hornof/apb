@@ -309,6 +309,149 @@ class CheckFirst(unittest.TestCase):
         self.assertNotIn("holder", last)
 
 
+class AsksDecision(unittest.TestCase):
+    """Whether a hand-off's first line asks the human to decide something."""
+
+    def test_decisions(self):
+        for message in ["1 thing for you to do right now: decide the layout.",
+                        "1 thing: decide on the card.", "2 decisions on the PR.\n1. A.\n2. B.",
+                        "1 thing for you to do right now: 1 decision on the PR.",
+                        "**Your call** on the colors.", "\n\nChoose a host.", "Pick a name for the site.",
+                        "1 thing for you to do right now: make a Decision.",
+                        "No decisions on #70, but decide the layout on PR #72.",
+                        "1 thing for you to do right now: 1 decision on PR #72 (no rush)."]:
+            self.assertTrue(stop.asks_decision(message), message)
+
+    def test_not_decisions(self):
+        for message in [None, "", ONE, NOTHING, MANY, "Done. The builder finished.",
+                        "Nothing for you to do right now. Waiting on the reviewer to decide, about 5 minutes.",
+                        "1 thing for you to do right now: pick up the build after lunch.",
+                        "The builder picked a layout.\nDecide later.",  # not the first line
+                        "Indecisive tests, rerun.",
+                        "1 thing for you to do right now: merge PR #72 (no decisions).",
+                        "No decisions on PR #72; merge it.", "0 decisions on PR #72.",
+                        "Zero decisions left, merge PR #72."]:
+            self.assertFalse(stop.asks_decision(message), message)
+
+
+class HasLink(unittest.TestCase):
+    def test_links(self):
+        for message in ["Decide here: https://github.com/hornof/apb/pull/44",
+                        "On the card (github.com/hornof/apb/issues/26).",
+                        "Decide.\n\n- https://github.com/o/r-2/issues/7#issuecomment-1"]:
+            self.assertTrue(stop.has_link(message), message)
+
+    def test_not_links(self):
+        for message in [None, "", "Decide on PR #44.", "Decide on #26.",
+                        "See https://github.com/hornof/apb/pulls", "See https://github.com/hornof/apb",
+                        "See https://github.com/hornof/apb/blob/main/README.md",
+                        "Decide.\n> https://github.com/hornof/apb/pull/44",  # a quoted line
+                        "Decide.\n  >  As the card says: github.com/hornof/apb/issues/26"]:
+            self.assertFalse(stop.has_link(message), message)
+
+
+class DecisionWithoutLink(unittest.TestCase):
+    """A decision in the first line, or in a numbered item under "N things", needs its GitHub link."""
+    PR71 = "https://github.com/hornof/apb/pull/71"
+
+    def test_sent_back(self):
+        for message in [
+                "1 thing for you to do right now: decide the layout on PR #44.",
+                # The reviewer's example: a decision in an item, with no link at all.
+                "2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge PR #72.",
+                # The link is in the message, but not on the item that asks the decision.
+                "2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge %s." % self.PR71,
+                "2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge PR #72.\n\n" + self.PR71,
+                "2 things for you to do right now:\n\n1. merge PR #72.\n2. **Your call** on the colors.",
+                "4 things for you to do right now:\n1. A.\n2. B.\n3. Pick a host.",  # a count that doesn't match
+                "2 things for you to do right now:\n1. merge PR #72.\n2. 1 decision on PR #71 (no rush)."]:
+            self.assertTrue(stop.decision_without_link(message), message)
+
+    def test_passes(self):
+        for message in [
+                None, "", ONE, NOTHING, MANY,
+                "1 thing for you to do right now: decide the layout on %s." % self.PR71,
+                "2 things for you to do right now:\n1. 2 decisions on PR #71: %s\n2. merge PR #72." % self.PR71,
+                "2 things for you to do right now:\n1. merge PR #72 (no decisions).\n2. merge PR #73.",
+                "2 things for you to do right now:\n1. Zero decisions on PR #72; merge it.\n2. 0 decisions on #73.",
+                # Below the list, a decision word is no longer an item.
+                "2 things for you to do right now:\n1. merge PR #72.\n2. merge PR #73.\n\nDecide later on the rest.",
+                "Progress: the builder picked a layout.\n1. Decide the colors."]:  # no "N things" line
+            self.assertFalse(stop.decision_without_link(message), message)
+
+
+class DecisionLink(unittest.TestCase):
+    """The hook run the way Claude Code runs it: a decision asked in a hand-off needs a GitHub link."""
+    NOTE = ("A decision was asked without a GitHub link. Put it on the PR or the card, then hand off "
+            "with the link.")
+
+    def setUp(self):
+        self.project = apb_project()
+        # The orchestrator looked something up, so the GitHub-fact check stays quiet.
+        write_events(self.project, [{"event": "UserPromptSubmit"},
+                                    {"event": "PostToolUse", "command": "gh pr view 44", "exit": 0}])
+
+    def test_a_decision_with_a_link_passes(self):
+        r = run(payload("1 thing for you to do right now: decide the layout on "
+                        "https://github.com/hornof/apb/pull/44."), self.project)
+        self.assertFalse(sent_back(r))
+        last = read_events(self.project)[-1]
+        self.assertNotIn("decision-without-link", last)
+        self.assertEqual(last["holder"], "human")
+
+    def test_a_decision_without_a_link_is_sent_back(self):
+        r = run(payload("1 thing for you to do right now: decide the layout on PR #44."), self.project)
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)
+        self.assertNotIn("decision", out)  # a quiet note, not a block
+        note = out["hookSpecificOutput"]
+        self.assertEqual(note["hookEventName"], "Stop")
+        self.assertEqual(note["additionalContext"], self.NOTE)
+        last = read_events(self.project)[-1]
+        self.assertEqual((last["event"], last["sent_back"], last["decision-without-link"]), ("Stop", True, True))
+        self.assertNotIn("holder", last)
+
+    def test_no_decision_and_no_link_passes(self):
+        self.assertFalse(sent_back(run(payload(ONE), self.project)))
+        self.assertNotIn("decision-without-link", read_events(self.project)[-1])
+
+    def test_a_link_in_a_quoted_line_does_not_count(self):
+        r = run(payload("1 thing for you to do right now: decide the layout.\n\n"
+                        "> https://github.com/hornof/apb/pull/44"), self.project)
+        self.assertTrue(sent_back(r))
+        self.assertTrue(read_events(self.project)[-1]["decision-without-link"])
+
+    def test_a_decision_in_a_numbered_item_without_a_link_is_sent_back(self):
+        # The reviewer's example on PR #72.
+        r = run(payload("2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge PR #72."),
+                self.project)
+        self.assertEqual(json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"], self.NOTE)
+        self.assertTrue(read_events(self.project)[-1]["decision-without-link"])
+
+    def test_a_decision_in_a_numbered_item_with_its_link_passes(self):
+        r = run(payload("2 things for you to do right now:\n1. 2 decisions on PR #71: "
+                        "https://github.com/hornof/apb/pull/71\n2. merge PR #72."), self.project)
+        self.assertFalse(sent_back(r))
+        self.assertEqual(read_events(self.project)[-1]["holder"], "human")
+
+    def test_never_sends_back_twice_in_a_row(self):
+        message = "1 thing for you to do right now: decide the layout."
+        self.assertTrue(sent_back(run(payload(message), self.project)))
+        self.assertFalse(sent_back(run(payload(message, stop_hook_active=True), self.project)))
+
+    def test_joins_the_other_notes_in_one_send_back(self):
+        project = apb_project()
+        write_events(project, FINISHED_AGENT[:-1])  # the work ran out, and no lookup this turn
+        r = run(payload("Your call on PR #44."), project)
+        context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertTrue(context.startswith("Say who holds the ball"))
+        self.assertIn("You stated a GitHub fact without checking it this turn.", context)
+        self.assertTrue(context.endswith(self.NOTE))
+        last = read_events(project)[-1]
+        self.assertTrue(last["decision-without-link"])
+        self.assertEqual(last["unchecked"], ["PR #44"])
+
+
 class WorkRanOut(unittest.TestCase):
     now = time.time()
 
@@ -678,36 +821,49 @@ class Properties(unittest.TestCase):
     """Random session histories. A simulation tracks running agents, how each turn started and
     what happened in it; its answer must match the hook's, which only reads the events file."""
 
-    THINGS = [("merge PR #4", True), ("answer #9", False), ("sign in to Cloudflare", False)]
-    TAILS = [("", False), ("3 of 5 cards are done.", True), ("The plugin is at 0.3.18.", True),
-             ("It took 1.5 seconds.", False), ("Card #9 is on the board.", True),
-             ("45 tests pass.", False), ("See https://github.com/o/r/pull/7.", True)]
+    # (thing, states a GitHub fact, asks a decision, holds a GitHub link)
+    THINGS = [("merge PR #4", True, False, False), ("answer #9", False, False, False),
+              ("sign in to Cloudflare", False, False, False), ("decide the layout on #9", False, True, False),
+              ("pick a host on https://github.com/o/r/issues/9", False, True, True),
+              ("your call on https://github.com/o/r/pull/4", True, True, True)]
+    # (tail, states a GitHub fact, holds a GitHub link)
+    TAILS = [("", False, False), ("3 of 5 cards are done.", True, False), ("The plugin is at 0.3.18.", True, False),
+             ("It took 1.5 seconds.", False, False), ("Card #9 is on the board.", True, False),
+             ("45 tests pass.", False, False), ("See https://github.com/o/r/pull/7.", True, True),
+             ("Card: https://github.com/o/r/issues/7", False, True),
+             ("> https://github.com/o/r/pull/7", True, False)]  # a quoted link doesn't count
 
     def message(self, rng):
-        """A random message, whether it starts with a valid first line, and whether it states a
-        GitHub fact, both known by construction."""
-        text, valid, fact = self.body(rng)
-        tail, tail_fact = rng.choice(self.TAILS)
+        """A random message and, known by construction: whether it starts with a valid first line,
+        whether it states a GitHub fact, and whether it asks a decision with no GitHub link."""
+        text, valid, fact, decision, link, item_unlinked = self.body(rng)
+        tail, tail_fact, tail_link = rng.choice(self.TAILS)
         if tail:
             text += "\n\n" + tail
-        return text, valid, fact or tail_fact
+        return text, valid, fact or tail_fact, (decision and not (link or tail_link)) or item_unlinked
 
     def body(self, rng):
+        """(text, valid first line, states a fact, the first line asks a decision, holds a link,
+        a numbered item under "N things" asks a decision with no link on its own line)."""
         kind = rng.randrange(6)
-        thing, fact = rng.choice(self.THINGS)
+        thing, fact, decision, link = rng.choice(self.THINGS)
         if kind == 0:
-            return NOTHING, True, True  # it names PR #40
+            return NOTHING, True, True, False, False, False  # it names PR #40
         if kind == 1:
-            return "1 thing for you to do right now: %s." % thing, True, fact
+            return "1 thing for you to do right now: %s." % thing, True, fact, decision, link, False
         n = rng.randint(2, 6)
         items = ["%d. %s." % (i, thing) for i in range(1, n + 1)]
+        # In a list, the thing is an item: a decision there needs the link on the item's own line,
+        # so a link in the tail doesn't help it.
         if kind == 2:
-            return "%d things for you to do right now:\n" % n + "\n".join(items), True, fact
+            return ("%d things for you to do right now:\n" % n + "\n".join(items), True, fact, False, link,
+                    decision and not link)
         if kind == 3:
-            return "%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False, fact
+            return ("%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False, fact, False, link,
+                    decision and not link)
         if kind == 4:
-            return "Progress: " + thing, False, fact
-        return "", False, False
+            return "Progress: " + thing, False, fact, decision, link, False
+        return "", False, False, False, False, False
 
     def test_random_histories(self):
         rng = random.Random(41)
@@ -773,7 +929,7 @@ class Properties(unittest.TestCase):
                 write_events(project, events)
                 if by_prompt and prompts_logged:
                     seen_prompt = True
-                message, valid, fact = self.message(rng)
+                message, valid, fact, unlinked = self.message(rng)
                 # A turn that no prompt started counts only once prompts are known to be logged.
                 ran_out = (not sim_running and not background_bash
                            and (stopped_now or (not by_prompt and seen_prompt)))
@@ -784,14 +940,15 @@ class Properties(unittest.TestCase):
                         [{"id": a, "type": "subagent", "status": "running"} for a in sorted(sim_running)]
                         + ([{"id": "w", "type": "shell", "status": "running"}] if background_bash else []))
                 while True:
-                    want_send_back = not hook_active and ((ran_out and not valid) or (fact and not checked))
+                    want_send_back = not hook_active and ((ran_out and not valid) or (fact and not checked)
+                                                          or unlinked)
                     r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time())
                     checks += 1
                     self.assertEqual(r["send_back"], want_send_back, (history, turn, message, events))
                     if not r["send_back"]:
                         break
                     hook_active = True  # Claude Code tries again; it may still have no line
-                    message, valid, fact = self.message(rng)
+                    message, valid, fact, unlinked = self.message(rng)
             self.assertGreater(checks, 0)
 
 

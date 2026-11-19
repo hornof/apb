@@ -15,7 +15,7 @@ Every PR gets one review before the human sees it: code PRs, docs-only PRs, setu
    - If the PR changes code, start the full test run once the fixes are pushed: `gh pr edit N --add-label full-tests`. Hand the PR over when it passes. If it fails, have the builder fix it, and hand the PR over once the run passes. Every later push to the PR runs the full set again.
 5. Hand the PR to the human in one line, in the forms of the playbook's "The human and Claude are never both idle at once", with the PR as one link.
    - No Decisions: "1 thing for you to do right now: merge PR #N." If the PR changes how the product looks, add the preview link: `1 thing for you to do right now: merge PR #N. Preview: <link>`. The merge accepts the Fix items. The human opens the PR only if they want to.
-   - Decisions: "1 thing for you to do right now: 2 decisions on PR #N." The human rules on each one: resolving its thread with no comment accepts the recommendation. A comment on the thread is for you to read and act on. If the human resolves a thread that had nothing to accept, reopen it and ask.
+   - Decisions: "1 thing for you to do right now: 2 decisions on PR #N: <link>." The human rules on each one: resolving its thread with no comment accepts the recommendation. A comment on the thread is for you to read and act on. If the human resolves a thread that had nothing to accept, reopen it and ask.
    - Two PRs ready at once: "2 things for you to do right now:" and a numbered list, one PR per line.
    - Say the hand-off once, when you hand the PR over, and again only when it changes, for example when a second PR is ready. Answer any question in the meantime with no first line.
    - Don't repeat the review items in chat; they are on the PR.

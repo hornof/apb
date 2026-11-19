@@ -23,8 +23,13 @@ which hooks/apb-events.py writes.
   from its file (a Departure line, which hooks/apb-brief.py writes) and no DepartureResolved line came
   after it, the hook sends the message back, on a retry too, with a note that quotes the report and
   says how to resolve it. After MAX_DEPARTURE_SEND_BACKS in one turn it lets the stop through.
-- It appends a Stop line to the events file, with who holds the ball when the message says so, and
-  the unchecked facts ("unchecked") when that was why it sent the message back.
+- On any stop, if the message's first line asks the human to decide something ("decide", "decision",
+  "your call", "choose", "pick") and the message has no link to a GitHub PR or issue outside a quoted
+  line, the hook sends the message back once, with a note that starts "A decision was asked without a
+  GitHub link." Under an "N things" first line, each numbered item that asks a decision needs the link
+  on its own line. Every decision lives on GitHub; the hand-off only points at it.
+- It appends a Stop line to the events file, with who holds the ball when the message says so, the
+  unchecked facts ("unchecked") and "decision-without-link" when those were why it sent the message back.
 - If the human holds the ball, it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
   new first line ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
@@ -80,6 +85,16 @@ MAX_FACTS = 5  # facts named in the note and the log
 LOOKUP = re.compile(r"(?:^|[;&|(])\s*(?:timeout\s+\S+\s+)?"
                     r"(?:gh|git|(?:(?:\S*/)?python3?\s+)?(?:\S*/)?(?:map-artifact|progress-page)\.py)(?:\s|$)")
 
+NO_LINK = ("A decision was asked without a GitHub link. Put it on the PR or the card, then hand off "
+           "with the link.")
+# A first line that asks the human to decide something.
+DECIDE = re.compile(r"(?i:\b(?:decide|decisions?|your call|choose|pick(?!\s+up\b))\b)")
+# "No decisions", "0 decisions", "zero decisions": says there is nothing to decide.
+NO_DECISION = re.compile(r"(?i:\b(?:no|0|zero)\s+decisions?\b)")
+# A link to a PR or an issue, on a line that isn't quoted.
+LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d+")
+QUOTED = re.compile(r"\s*>")
+
 NOTHING = re.compile(r"Nothing for you to do right now\. Waiting on .+, about \d+ minutes?\.?$")
 ONE = re.compile(r"1 thing for you to do right now: (.+?)\.?$")
 MANY = re.compile(r"(\d+) things for you to do right now:$")
@@ -122,6 +137,56 @@ def first_line(message):
     if numbers != list(range(1, n + 1)):
         return None
     return ("human", "%d things" % n)
+
+
+def asks_decision(message):
+    """True if the message's first line asks the human to decide something.
+    "Nothing for you to do right now" asks nothing, whatever it waits on."""
+    if not isinstance(message, str):
+        return False
+    lines = [clean(l) for l in message.splitlines() if l.strip()]
+    if not lines or NOTHING.match(lines[0]):
+        return False
+    return decides(lines[0])
+
+
+def decides(line):
+    """True if the line asks the human to decide something. "No decisions" asks nothing."""
+    return bool(DECIDE.search(NO_DECISION.sub(" ", line)))
+
+
+def has_link(message):
+    """True if the message links a GitHub PR or issue on a line that isn't quoted."""
+    if not isinstance(message, str):
+        return False
+    return any(LINK.search(l) for l in message.splitlines() if not QUOTED.match(l))
+
+
+def items(message):
+    """The numbered lines under an "N things for you to do right now:" first line, else []."""
+    if not isinstance(message, str):
+        return []
+    lines = [clean(l) for l in message.splitlines()]
+    while lines and not lines[0]:
+        lines.pop(0)
+    if not lines or not MANY.match(lines[0]):
+        return []
+    found = []
+    for line in lines[1:]:
+        if not line and not found:
+            continue
+        if not ITEM.match(line):
+            break
+        found.append(line)
+    return found
+
+
+def decision_without_link(message):
+    """True if a decision is asked with no GitHub link: in the first line, with no link anywhere
+    outside a quoted line, or in a numbered item under "N things", with no link on that item's line."""
+    if asks_decision(message) and not has_link(message):
+        return True
+    return any(decides(item) and not LINK.search(item) for item in items(message))
 
 
 def parse_time(text):
@@ -286,7 +351,8 @@ def handle(p, project, now):
     # A hand-off to the human waits while an agent's departure is unresolved, on a retry too.
     pending = departures(events) if said and said[0] == "human" else []
     departed = bool(pending) and departure_send_backs(events, session) < MAX_DEPARTURE_SEND_BACKS
-    send_back = no_line or bool(unchecked) or departed
+    unlinked = not retry and decision_without_link(message)
+    send_back = no_line or bool(unchecked) or departed or unlinked
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}
     if send_back:
@@ -295,6 +361,8 @@ def handle(p, project, now):
             line["unchecked"] = [f[:MAX] for f in unchecked]
         if departed:
             line["departure"] = True
+        if unlinked:
+            line["decision-without-link"] = True
     elif said:
         line["holder"] = said[0]
         if said[1]:
@@ -305,6 +373,8 @@ def handle(p, project, now):
         if departed:
             quotes = "; ".join('%s: "%s"' % (e.get("agent_type", "agent"), e.get("quote", "")) for e in pending)
             notes.append(DEPARTED % quotes)
+        if unlinked:
+            notes.append(NO_LINK)
         return {"send_back": True, "remind": None, "end": end, "note": "\n\n".join(notes)}
     if said:
         holder, todo = said
