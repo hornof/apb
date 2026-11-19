@@ -318,6 +318,109 @@ class Properties(unittest.TestCase):
                 self.assertTrue(brief.departure(" ".join(parts)))
 
 
+# Two reviewer briefs that were refused only because the PR's branch and worktree were named
+# review-format. Kept word for word, except the home and scratch folders.
+REFUSED_FOR_A_PATH = """Review PR https://github.com/hornof/sketch-gallery/pull/47 (issue hornof/sketch-gallery#46). The branch `review-format` is checked out in /Users/x/src/claude/sketch-gallery-wt/review-format. The apb plugin's files are in /Users/x/.claude/plugins/cache/apb/apb/0.3.29/. Don't wait on GitHub's browser tests.
+
+Your shell's `gh` acts as `hornof-claude` through GH_TOKEN; it's a collaborator here. Never print a token value.
+
+Command rule: one plain command per shell call, with no `$(…)`, loops, `&&`, `;`, heredocs or pipes into grep. Use a script file for multi-step logic. Never use the Terminal panel. Keep your scratch files in /tmp/scratchpad/pr-47/. Report back what you posted and where."""
+
+# The other one also said, in its own words, which format to use. Only that sentence is a finding.
+OWN_WORDS = "it's what this PR changes, and its new format is the one to use"
+REFUSED_FOR_A_PATH_AND_OWN_WORDS = """Review PR https://github.com/hornof/sketch-gallery/pull/47 (issue hornof/sketch-gallery#46). Docs only: CLAUDE.md and docs/reviewer-notes.md, checked out in /Users/x/src/claude/sketch-gallery-wt/review-format. Read that branch's docs/reviewer-notes.md first; %s. Compare it with the apb plugin's /Users/x/.claude/plugins/cache/apb/apb/0.3.29/agents/reviewer.md. GitHub's browser tests may still run on this PR because the docs-only skip isn't merged yet; don't wait on them.
+
+Your shell's `gh` acts as `hornof-claude` through GH_TOKEN; it's a collaborator here. Never print a token value.
+
+Command rule: one plain command per shell call, with no `$(…)`, loops, `&&`, `;`, heredocs or pipes into grep. Use a script file for multi-step logic. Never use the Terminal panel. Keep your scratch files in /tmp/scratchpad/pr-47/.""" % OWN_WORDS
+
+# Paths, branch names, file names, URLs and command flags with format and output words in them.
+NAMES = [
+    "/Users/x/src/sketch-gallery-wt/review-format",
+    "/w/pr-12-review/format-fix/",
+    "review-format",
+    "`review-format`",
+    "report-formatting",
+    "docs/review-format.md",
+    "format.md",
+    "comment_format.py",
+    "https://github.com/o/r/pull/3/files#review-format",
+    "https://example.com/format/review?as=single-comment",
+    "origin/review-format",
+    "`gh pr view 3 --json comments --format json`",
+]
+
+# Sentences that hold a name. Each passes with any name in it.
+NAME_SENTENCES = [
+    "The branch {} is checked out in {}.",
+    "Review PR #47; the worktree is {}.",
+    "- Worktree: {}, branch {}.",
+    "Docs only: CLAUDE.md and {}, checked out in {}.",
+    "Read {} first, then review the PR.",
+    "Run {} to see the PR's comments.",
+]
+
+
+class NamesAreNotInstructions(unittest.TestCase):
+    """Format words inside paths, branch names, file names and URLs are not the brief's own words."""
+
+    def test_the_brief_refused_for_its_path_passes(self):
+        self.assertEqual(brief.format_instructions(REFUSED_FOR_A_PATH, "apb:reviewer"), [])
+
+    def test_the_other_brief_is_found_for_its_own_words_only(self):
+        self.assertEqual(brief.format_instructions(REFUSED_FOR_A_PATH_AND_OWN_WORDS, "apb:reviewer"),
+                         [OWN_WORDS])
+        without = REFUSED_FOR_A_PATH_AND_OWN_WORDS.replace("; " + OWN_WORDS, "")
+        self.assertEqual(brief.format_instructions(without, "apb:reviewer"), [])
+
+    def test_names_in_sentences_pass(self):
+        for template in NAME_SENTENCES:
+            for name in NAMES:
+                text = template.format(name, name)
+                for agent in ["apb:reviewer", "apb:builder"]:
+                    with self.subTest(text=text, agent=agent):
+                        self.assertEqual(brief.format_instructions(text, agent), [])
+
+    def test_an_instruction_next_to_a_name_is_still_found(self):
+        for text in ["Post the review as a single comment on https://github.com/o/r/pull/3.",
+                     "Format the report in /tmp/review-format.md as a table.",
+                     "Use the format in docs/review-format.md for the review.",
+                     "On branch review-format, post it as one comment.",
+                     "Format your review like docs/reviewer-notes.md says.",
+                     "Format the review/report as a table.",
+                     "Use this format/layout for the review.",
+                     "Leave out the notes/decisions.",
+                     "No index/summary.",
+                     "Re-format the review as a table."]:
+            with self.subTest(text=text):
+                self.assertTrue(brief.format_instructions(text, "apb:reviewer"))
+
+    def test_the_hook_lets_the_refused_brief_through(self):
+        r = run([SCRIPT], dispatch(REFUSED_FOR_A_PATH))
+        self.assertEqual((r.returncode, r.stdout), (0, b""))
+
+    def test_random_briefs_with_names(self):
+        rng = random.Random(75)
+        builder_format = [f for f in FORMAT if f not in REVIEWER_ONLY]
+        for i in range(400):
+            agent = rng.choice(["apb:reviewer", "apb:builder"])
+            lines = random_brief(rng)
+            for _ in range(rng.randint(1, 3)):
+                template = rng.choice(NAME_SENTENCES)
+                line = template.format(rng.choice(NAMES), rng.choice(NAMES))
+                lines.insert(rng.randint(0, len(lines)), dress(line, rng) if rng.random() < 0.3 else line)
+            clean = "\n".join(lines)
+            with self.subTest(i=i, brief=clean):
+                self.assertEqual(brief.format_instructions(clean, agent), [])
+            dirty = list(lines)
+            pool = FORMAT if agent == "apb:reviewer" else builder_format
+            for text in rng.sample(pool, rng.randint(1, 3)):
+                dirty.insert(rng.randint(0, len(dirty)), dress(text, rng))
+            dirty = "\n".join(dirty)
+            with self.subTest(i=i, brief=dirty):
+                self.assertTrue(brief.format_instructions(dirty, agent))
+
+
 class DispatchHook(unittest.TestCase):
     """PreToolUse on the Agent tool, run the way Claude Code runs it."""
 
