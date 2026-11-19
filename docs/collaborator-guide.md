@@ -24,7 +24,7 @@ Claude proposes every change as a pull request (PR) on GitHub. You approve a PR 
 
    From here on, you do everything by asking Claude in this repo. That includes questions like "what do I do next?", "this isn't working" or "what does X mean?" Claude can see the repo and GitHub, so it can answer them.
 
-3. **PRD input.** The repo has an issue called "PRD input" (on GitHub, under the repo's **Issues** tab). It lists questions to answer. Write your answers, and anything else you want built, as a comment on it. Then tell Claude: "I posted the PRD input; draft the PRD." Claude writes `docs/PRD.md`, makes clickable mockups of the main screens if the product has screens, and opens a PR.
+3. **PRD input.** The repo has an issue called "PRD input" (on GitHub, under the repo's **Issues** tab). It lists questions to answer. Write your answers, and anything else you want built, as a comment on it. Then tell Claude: "I posted the PRD input; draft the PRD." Claude writes `docs/PRD.md`, makes clickable mockups of the main screens if the product has screens, and opens a PR. If a technical question could change the design, such as whether something is possible at all, Claude first runs a spike: a short, time-boxed investigation that answers it, saved in `docs/spikes/`. The PR waits until each question is answered, or until you accept the risk.
 
 4. **Review the PRD.** Claude tells you what to read and where to click.
    - Answer the open questions in chat or on the PR. Each one has Claude's suggestion, so "ok" is a fine answer.

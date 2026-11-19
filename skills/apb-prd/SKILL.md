@@ -2,7 +2,7 @@
 name: apb-prd
 description: Turn a stakeholder's PRD input into a PRD with checkable requirements, mockups and supporting docs. Use when starting a new project or feature set.
 ---
-Input: the PRD input issue. Output: one PR with `docs/PRD.md` (from `templates/PRD-template.md`), mockups, and any supporting docs in `docs/`.
+Input: the PRD input issue. Output: one PR with `docs/PRD.md` (from `templates/PRD-template.md`), mockups, a findings file in `docs/spikes/` for each technical uncertainty, and any supporting docs in `docs/`.
 
 Before step 1: open an issue called "PRD" and add it to the project's board in In progress. Move the card to the top of In progress (see apb-build step 1). Close the PRD input issue; the board moves it to Done. The PRD's PR description says "Closes #N" for the PRD issue, so the merge at gate 1 moves it to Done.
 
@@ -11,12 +11,18 @@ Before step 1: open an issue called "PRD" and add it to the project's board in I
    - Every requirement ends with a check you can test or see: "loads in under 1 second", "works on a 375 px phone screen". Never "works well".
    - Include the owner's journeys too. The owner's tools and commands are part of the product.
    - If the PRD input doesn't answer something, make it an open question with your recommended answer. Don't guess.
-3. **Make mockups before the review.** Draw the main screens on a Claude Design canvas, clickable where it matters, and link it from the PRD. Without pictures, a build can match the words but not what the human imagined.
-4. **Keep the PRD short.** Long lists, research and comparisons go in separate files in `docs/`, linked from the PRD. Private links (Claude artifacts, chats) can't be the only record, because other people can't open them.
-5. **Check how GitHub displays it** before showing it to the human: `gh api markdown -F mode=gfm -F text=@docs/PRD.md -F context=<owner>/<repo>`. Look for broken numbered lists and for `#5`-style links pointing to the wrong repo.
-6. **Run `apb-review` on the PR**, then ask for the human's review as described in the playbook's "How the human reviews" section.
-7. **Update the PRD as answers come in.** If the human answers in chat, copy the answer to the PR. Put each decision where it belongs in the PRD, and add a one-line entry to section 11.
-8. **Get the human's yes before the merge.** The hand-off is "1 thing for you to do right now: read PR #N and say yes, or what to change." Ask for the merge after the post-approval updates are in. A clear yes is approval; praise that comes with open questions is not. Ask only when it's genuinely unclear. After the yes, make these updates in the same PR. If the human merges first, the merge is the approval: don't ask again, and make these updates in a follow-up PR.
+3. **Run a spike for each technical uncertainty.** A spike is a time-boxed investigation whose output is an answer, not product code. List the uncertainties in section 11 (Technical uncertainties): each is a question whose answer would change the design, the requirements, or how long the build takes. If there are none, write "None" there and go on to step 4.
+   - Time-boxed: one builder agent, one session, with the question written in the hand-off.
+   - The result is `docs/spikes/<name>.md`: the question; what was tried, with the facts observed (URLs, headers, errors); the options, each with how well it matches the request and roughly how much work it is; then a recommendation. Where one option is clearly the best value for the effort, say so.
+   - Spike code never merges: it stays in the agent's scratch folder. The findings file merges with the PRD, in the PRD PR. The orchestrator commits the findings file to the PRD branch.
+   - The PRD cites the spike next to each decision it drove, in section 12 (Decisions so far).
+   - The PRD PR is not ready for review until every uncertainty is answered, or the human has explicitly accepted the risk and the question is in section 13 (Open questions).
+4. **Make mockups before the review.** Draw the main screens on a Claude Design canvas, clickable where it matters, and link it from the PRD. Without pictures, a build can match the words but not what the human imagined.
+5. **Keep the PRD short.** Long lists, research and comparisons go in separate files in `docs/`, linked from the PRD. Private links (Claude artifacts, chats) can't be the only record, because other people can't open them.
+6. **Check how GitHub displays it** before showing it to the human: `gh api markdown -F mode=gfm -F text=@docs/PRD.md -F context=<owner>/<repo>`. Look for broken numbered lists and for `#5`-style links pointing to the wrong repo.
+7. **Run `apb-review` on the PR**, then ask for the human's review as described in the playbook's "How the human reviews" section.
+8. **Update the PRD as answers come in.** If the human answers in chat, copy the answer to the PR. Put each decision where it belongs in the PRD, and add a one-line entry to section 12 (Decisions so far).
+9. **Get the human's yes before the merge.** The hand-off is "1 thing for you to do right now: read PR #N and say yes, or what to change." Ask for the merge after the post-approval updates are in. A clear yes is approval; praise that comes with open questions is not. Ask only when it's genuinely unclear. After the yes, make these updates in the same PR. If the human merges first, the merge is the approval: don't ask again, and make these updates in a follow-up PR.
    - Export each mockup screen as a PNG into `docs/mockups/`, with a short README.
    - Change the status line at the top to APPROVED, with the name and date.
    - Add a line to `docs/HISTORY.md` and update `docs/MAP.md`.

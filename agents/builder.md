@@ -10,6 +10,8 @@ A PR closes exactly the issues it finishes: one "Closes #N" line for each. Never
 
 When you find an idea outside your issue, leave it out of the PR and name it in your final report. The orchestrator raises it with the human in the card's hand-off.
 
+On a spike (apb-prd step 3): no tests, no PR and no `LOG.md` line. Keep the code in your scratch folder, write `docs/spikes/<name>.md` there too, and name it in your report.
+
 Tests and pushes:
 - While you build, run only the tests for the code you are changing, in one browser at one screen width (or the project's equivalent, such as one test file).
 - Before you push, run the test files you changed in every browser, at one width.

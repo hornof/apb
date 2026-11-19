@@ -9,7 +9,7 @@ Idea → PRD → TDD → Split the TDD into cards → Build → Review → Merge
         gate 1  gate 2                                          gate 3
 ```
 
-1. **PRD** (what and why). Claude writes it from the human's description: goals, user journeys, requirements that each end with a check ("loads in under 1 second", "works on a phone"), mockups, and the look. The human reviews and approves: **gate 1**.
+1. **PRD** (what and why). Claude writes it from the human's description: goals, user journeys, requirements that each end with a check ("loads in under 1 second", "works on a phone"), mockups, and the look. If a technical question could change the design, Claude first runs a spike: a short, time-boxed investigation whose findings go in `docs/spikes/`. The human reviews and approves: **gate 1**.
 2. **TDD** (how it's built and tested). Architecture, where data lives, the test plan, risks, and the work split into PR-sized pieces. Use `docs/system-design-guide.md` for the design part. The human approves: **gate 2**.
 3. **Split the TDD into cards.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues. The same board holds one issue each for the PRD input, the PRD and the TDD from setup on, so it always shows where the project stands.
 4. **Build.** For each piece: Claude writes the tests first, then the code until the tests pass, then opens one small PR.

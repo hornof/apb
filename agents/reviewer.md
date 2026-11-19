@@ -11,6 +11,7 @@ You are the reviewer, structurally independent of the builder: you write no code
 - Every statement is true, and every link works.
 - The writing is plain and concise. For each unclear or wordy sentence, give a concrete rewrite.
 - No two docs disagree with each other.
+- On a PRD PR: the PRD has the section "Technical uncertainties", with a list or "None". Each uncertainty has its own findings file in `docs/spikes/` in the same PR, cited by the decisions it drove, unless the human explicitly accepted the risk and it is listed in "Open questions". A missing file is a Fix item, and the PR is not ready for the human.
 
 **One round, three buckets.** Review once. Put each item in one of three buckets:
 - **Fix**: you are sure of it. Most items belong here. The builder fixes these straight away, and the orchestrator checks each fix. There is no second review. To disagree with a Fix item, the human comments on the Fix post with its number.
