@@ -79,7 +79,23 @@ def fake_osascript():
     return folder, calls
 
 
+def fake_gh(folder, prs=None):
+    """Put in folder a gh that records its arguments and answers `gh pr view N ...` with prs[N] as
+    JSON, or fails when prs has no N. Returns the file it records to."""
+    calls = os.path.join(folder, "gh-calls.txt")
+    for number, pr in (prs or {}).items():
+        with open(os.path.join(folder, "pr-%d.json" % number), "w") as f:
+            json.dump(pr, f)
+    fake = os.path.join(folder, "gh")
+    with open(fake, "w") as f:
+        f.write("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> '%s'\nf='%s'/pr-\"$3\".json\n"
+                "[ -f \"$f\" ] || exit 1\ncat \"$f\"\n" % (calls, folder))
+    os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC)
+    return calls
+
+
 DEFAULT_BIN, _ = fake_osascript()
+fake_gh(DEFAULT_BIN)  # no test reaches GitHub: by default, every gh call fails
 
 
 def run(p, project, env_extra=None):
@@ -450,6 +466,237 @@ class DecisionLink(unittest.TestCase):
         last = read_events(project)[-1]
         self.assertTrue(last["decision-without-link"])
         self.assertEqual(last["unchecked"], ["PR #44"])
+
+
+APB = "hornof/apb"
+APB_PR = "https://github.com/hornof/apb/pull/%d"
+
+
+def pr(paths, body, state="OPEN"):
+    return {"state": state, "body": body, "files": [{"path": p} for p in paths]}
+
+
+class ApbRepo(unittest.TestCase):
+    def test_comes_from_the_plugin_manifest(self):
+        self.assertEqual(stop.apb_repo(), APB)
+
+
+class ChangesProjects(unittest.TestCase):
+    """A PR that touches these paths changes how a project runs."""
+
+    def test_paths_that_change_projects(self):
+        for path in ["templates/ci.yml", "templates/CLAUDE-template.md", "hooks/apb-stop.py",
+                     "hooks/hooks.json", "skills/apb-build/SKILL.md", "docs/playbook.md"]:
+            self.assertTrue(stop.changes_projects(path), path)
+
+    def test_paths_that_do_not(self):
+        for path in ["README.md", "docs/MAP.md", "docs/playbook.md.bak", "scripts/apb-watch.py",
+                     "skills/apb-build/notes.md", "skills/SKILL.md", "skills/a/b/SKILL.md",
+                     "agents/builder.md", "x/templates/a.md", "templates", "hooks", "", None, 7]:
+            self.assertFalse(stop.changes_projects(path), path)
+
+
+class HasProjectsLine(unittest.TestCase):
+    def test_lines_that_count(self):
+        for body in ["Closes #73\n\nProjects: none",
+                     "Projects: none, the hook's note only",
+                     "Projects: None.",
+                     "**Projects:** none",
+                     "- Projects: https://github.com/hornof/sketch-gallery/pull/43",
+                     "Projects: hornof/sketch-gallery#43",
+                     "Projects: [sketch-gallery#43](https://github.com/hornof/sketch-gallery/pull/43), "
+                     "https://github.com/o/r/pull/2",
+                     "Intro\r\nProjects: none\r\n"]:
+            self.assertTrue(stop.has_projects_line(body), body)
+
+    def test_lines_that_do_not(self):
+        for body in ["", None, 7, "Closes #73", "Projects:", "Projects: TBD", "Projects: sketch-gallery",
+                     "Projects: nonexistent", "Projects: https://github.com/hornof/sketch-gallery/issues/43",
+                     "> Projects: none", "Not in this PR: the sketch-gallery CLAUDE.md line",
+                     "The Projects: none line comes later", "Projects: #43"]:
+            self.assertFalse(stop.has_projects_line(body), body)
+
+
+class ApbPrs(unittest.TestCase):
+    def test_finds_links_to_the_apb_repos_prs_once_each_in_order(self):
+        message = ("2 things for you to do right now:\n1. merge %s\n2. merge %s and see %s again"
+                   % (APB_PR % 74, APB_PR % 75, APB_PR % 74))
+        self.assertEqual(stop.apb_prs(message, APB), [74, 75])
+
+    def test_ignores_other_repos_issues_and_quoted_lines(self):
+        message = ("1 thing for you to do right now: merge https://github.com/hornof/sketch-gallery/pull/43.\n"
+                   "Card: https://github.com/hornof/apb/issues/73\n> %s\n"
+                   "https://github.com/hornof/apb-other/pull/9 https://github.com/xhornof/apb/pull/8 "
+                   "https://notgithub.com/hornof/apb/pull/7"
+                   % (APB_PR % 74))
+        self.assertEqual(stop.apb_prs(message, APB), [])
+        self.assertEqual(stop.apb_prs(None, APB), [])
+        self.assertEqual(stop.apb_prs(APB_PR % 74, None), [])
+
+
+class ProjectsLineMissing(unittest.TestCase):
+    """Which apb PRs a hand-off links that change projects and have no Projects line."""
+
+    def lookup(self, prs):
+        calls = []
+
+        def look(repo, number):
+            calls.append((repo, number))
+            if number not in prs:
+                raise subprocess.CalledProcessError(1, "gh")
+            return prs[number]
+        return look, calls
+
+    def test_an_open_pr_that_changes_projects_without_the_line(self):
+        look, calls = self.lookup({74: pr(["hooks/apb-stop.py"], "Closes #73")})
+        self.assertEqual(stop.projects_line_missing("merge %s" % (APB_PR % 74), look), [74])
+        self.assertEqual(calls, [(APB, 74)])
+
+    def test_passes(self):
+        cases = {
+            "has the line": pr(["hooks/apb-stop.py"], "Closes #73\nProjects: none"),
+            "changes no project": pr(["scripts/apb-watch.py", "README.md"], "Closes #73"),
+            "merged": pr(["hooks/apb-stop.py"], "Closes #73", state="MERGED"),
+            "closed": pr(["hooks/apb-stop.py"], "Closes #73", state="CLOSED"),
+            "odd answer": ["not", "a", "pr"],
+        }
+        for name, answer in cases.items():
+            look, _ = self.lookup({74: answer})
+            self.assertEqual(stop.projects_line_missing("merge %s" % (APB_PR % 74), look), [], name)
+
+    def test_a_failed_lookup_lets_the_stop_through(self):
+        look, calls = self.lookup({})
+        self.assertEqual(stop.projects_line_missing("merge %s" % (APB_PR % 74), look), [])
+        self.assertEqual(len(calls), 1)
+
+    def test_no_apb_link_means_no_lookup(self):
+        look, calls = self.lookup({})
+        stop.projects_line_missing("merge https://github.com/hornof/sketch-gallery/pull/43 and PR #74", look)
+        self.assertEqual(calls, [])
+
+    def test_looks_up_at_most_max_prs(self):
+        prs = {n: pr(["templates/a.md"], "") for n in range(1, 10)}
+        look, calls = self.lookup(prs)
+        message = " ".join(APB_PR % n for n in range(1, 10))
+        self.assertEqual(stop.projects_line_missing(message, look), list(range(1, stop.MAX_PRS + 1)))
+        self.assertEqual(len(calls), stop.MAX_PRS)
+
+
+class ProjectsLine(unittest.TestCase):
+    """The hook run the way Claude Code runs it, with a fake gh: an apb PR handed to the human that
+    changes how projects run needs a "Projects:" line in its description."""
+    NOTE_START = "An apb PR in this hand-off changes how projects run"
+
+    def setUp(self):
+        self.project = apb_project()
+        # The orchestrator looked something up, so the GitHub-fact check stays quiet.
+        write_events(self.project, [{"event": "UserPromptSubmit"},
+                                    {"event": "PostToolUse", "command": "gh pr view 74", "exit": 0}])
+        self.bin = tempfile.mkdtemp()
+
+    def run_with(self, message, prs, **extra):
+        calls = fake_gh(self.bin, prs)
+        env = {"PATH": self.bin + os.pathsep + DEFAULT_BIN + os.pathsep + os.environ["PATH"]}
+        r = run(payload(message, **extra), self.project, env)
+        with_calls = []
+        if os.path.exists(calls):
+            with open(calls) as f:
+                with_calls = f.read().splitlines()
+        return r, with_calls
+
+    def test_a_hand_off_of_a_pr_without_the_line_is_sent_back(self):
+        r, calls = self.run_with("1 thing for you to do right now: merge %s." % (APB_PR % 74),
+                                 {74: pr(["hooks/apb-stop.py", "README.md"], "Closes #73")})
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)
+        self.assertNotIn("decision", out)  # a quiet note, not a block
+        note = out["hookSpecificOutput"]["additionalContext"]
+        self.assertTrue(note.startswith(self.NOTE_START), note)
+        self.assertIn(APB_PR % 74, note)
+        self.assertIn("Projects: none", note)
+        self.assertEqual(calls, ["pr view 74 --repo hornof/apb --json state,body,files"])
+        last = read_events(self.project)[-1]
+        self.assertEqual((last["sent_back"], last["projects-line-missing"]), (True, [74]))
+        self.assertNotIn("holder", last)
+
+    def test_a_pr_with_the_line_passes(self):
+        r, _ = self.run_with("1 thing for you to do right now: merge %s." % (APB_PR % 74),
+                             {74: pr(["skills/apb-build/SKILL.md"],
+                                     "Closes #73\n\nProjects: https://github.com/hornof/sketch-gallery/pull/44")})
+        self.assertFalse(sent_back(r))
+        last = read_events(self.project)[-1]
+        self.assertNotIn("projects-line-missing", last)
+        self.assertEqual(last["holder"], "human")
+
+    def test_only_a_hand_off_to_the_human_is_checked(self):
+        r, calls = self.run_with("Nothing for you to do right now. Waiting on the reviewer for %s, about "
+                                 "10 minutes." % (APB_PR % 74), {74: pr(["hooks/a.py"], "")})
+        self.assertFalse(sent_back(r))
+        self.assertEqual(calls, [])
+
+    def test_never_sends_back_twice_in_a_row(self):
+        message = "1 thing for you to do right now: merge %s." % (APB_PR % 74)
+        prs = {74: pr(["docs/playbook.md"], "")}
+        self.assertTrue(sent_back(self.run_with(message, prs)[0]))
+        r, calls = self.run_with(message, prs, stop_hook_active=True)
+        self.assertFalse(sent_back(r))
+        self.assertEqual(len(calls), 1)  # the retry looked nothing up
+
+    def test_a_failing_gh_lets_the_stop_through(self):
+        r, calls = self.run_with("1 thing for you to do right now: merge %s." % (APB_PR % 74), {})
+        self.assertFalse(sent_back(r))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(read_events(self.project)[-1]["holder"], "human")
+
+    def test_joins_the_decision_note_in_one_send_back(self):
+        r, _ = self.run_with("2 things for you to do right now:\n1. merge %s\n2. decide the layout on PR #9."
+                             % (APB_PR % 74), {74: pr(["templates/ci.yml"], "")})
+        note = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        self.assertIn(self.NOTE_START, note)
+        self.assertIn("A decision was asked without a GitHub link.", note)
+        last = read_events(self.project)[-1]
+        self.assertTrue(last["decision-without-link"])
+        self.assertEqual(last["projects-line-missing"], [74])
+
+
+class ProjectsLineProperties(unittest.TestCase):
+    """Random PRs and descriptions, against an oracle written separately from the hook's patterns."""
+    SEGMENTS = ["templates", "hooks", "skills", "docs", "scripts", "agents", "apb-build", "SKILL.md",
+                "playbook.md", "MAP.md", "a.py", "ci.yml", "x"]
+
+    @staticmethod
+    def oracle_changes(path):
+        parts = path.split("/")
+        if parts[0] in ("templates", "hooks"):
+            return len(parts) > 1 and all(parts[1:])
+        if parts == ["docs", "playbook.md"]:
+            return True
+        return len(parts) == 3 and parts[0] == "skills" and parts[1] != "" and parts[2] == "SKILL.md"
+
+    # (line, is a Projects line that counts)
+    LINES = [("Closes #73", False), ("", False), ("Projects: none", True), ("**Projects:** none.", True),
+             ("Projects: https://github.com/o/r/pull/3", True), ("Projects: o/r#3", True),
+             ("Projects: later", False), ("> Projects: none", False), ("Projects:", False),
+             ("Not in this PR: the project's CLAUDE.md line.", False), ("Projects: o/r/issues/3", False)]
+
+    def test_paths(self):
+        rng = random.Random(73)
+        for _ in range(3000):
+            path = "/".join(rng.choice(self.SEGMENTS + [""]) for _ in range(rng.randint(1, 4)))
+            self.assertEqual(stop.changes_projects(path), self.oracle_changes(path), path)
+
+    def test_prs_and_descriptions(self):
+        rng = random.Random(74)
+        for _ in range(500):
+            paths = ["/".join(rng.choice(self.SEGMENTS) for _ in range(rng.randint(1, 3)))
+                     for _ in range(rng.randint(0, 4))]
+            lines = [rng.choice(self.LINES) for _ in range(rng.randint(0, 4))]
+            body = rng.choice(["\n", "\r\n"]).join(l for l, _ in lines)
+            state = rng.choice(["OPEN", "OPEN", "MERGED", "CLOSED"])
+            want = (state == "OPEN" and any(self.oracle_changes(p) for p in paths)
+                    and not any(counts for _, counts in lines))
+            got = stop.projects_line_missing("merge " + APB_PR % 5, lambda repo, n: pr(paths, body, state))
+            self.assertEqual(got, [5] if want else [], (paths, body, state))
 
 
 class WorkRanOut(unittest.TestCase):
