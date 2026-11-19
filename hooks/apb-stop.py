@@ -28,8 +28,15 @@ which hooks/apb-events.py writes.
   line, the hook sends the message back once, with a note that starts "A decision was asked without a
   GitHub link." Under an "N things" first line, each numbered item that asks a decision needs the link
   on its own line. Every decision lives on GitHub; the hand-off only points at it.
+- On any stop whose first line hands something to the human, if the message links an open PR in the
+  apb repo (the repository in the plugin's manifest) that touches templates/, hooks/, agents/, a
+  skill's SKILL.md or docs/playbook.md, and that PR's description has no "Projects:" line ("Projects: none",
+  or "Projects:" with links to the projects' PRs that apply the change), the hook sends the message
+  back once, with a note that starts "An apb PR in this hand-off changes how projects run." It looks
+  each PR up with gh (at most MAX_PRS, within PR_BUDGET seconds); a PR it can't look up is let through.
 - It appends a Stop line to the events file, with who holds the ball when the message says so, the
-  unchecked facts ("unchecked") and "decision-without-link" when those were why it sent the message back.
+  unchecked facts ("unchecked"), "decision-without-link" and the PRs missing their Projects line
+  ("projects-line-missing") when those were why it sent the message back.
 - If the human holds the ball, it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
   new first line ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
@@ -94,6 +101,22 @@ NO_DECISION = re.compile(r"(?i:\b(?:no|0|zero)\s+decisions?\b)")
 # A link to a PR or an issue, on a line that isn't quoted.
 LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d+")
 QUOTED = re.compile(r"\s*>")
+
+PROJECTS = ("An apb PR in this hand-off changes how projects run (it touches templates/, hooks/, "
+            "agents/, a skill's SKILL.md or docs/playbook.md), and its description has no \"Projects:\" line: %s. "
+            "Apply the change to every project in use, then add one line to the PR's description: "
+            "\"Projects: <links to those projects' PRs>\", or \"Projects: none\" when no project needs a "
+            "change. Then hand off.")
+# A path in the apb repo whose change reaches projects: a template, a hook, an agent's file, a skill's
+# instructions or the playbook.
+CHANGES_PROJECTS = re.compile(r"(?:templates|hooks|agents)/(?:[^/]+/)*[^/]+|skills/[^/]+/SKILL\.md|docs/playbook\.md")
+# "Projects: none" (a reason may follow), or "Projects:" with at least one link to a PR.
+PROJECTS_LINE = re.compile(r"Projects:\s*(.*)")
+PROJECTS_NONE = re.compile(r"(?i:none)\b")
+PR_LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/pull/\d+|\b[\w.-]+/[\w.-]+#\d+")
+MAX_PRS = 3  # apb PRs looked up in one stop
+PR_TIME_LIMIT = 4  # seconds for one gh call
+PR_BUDGET = 6  # seconds for all of them; the Stop hook has 10 in all
 
 NOTHING = re.compile(r"Nothing for you to do right now\. Waiting on .+, about \d+ minutes?\.?$")
 ONE = re.compile(r"1 thing for you to do right now: (.+?)\.?$")
@@ -187,6 +210,84 @@ def decision_without_link(message):
     if asks_decision(message) and not has_link(message):
         return True
     return any(decides(item) and not LINK.search(item) for item in items(message))
+
+
+def apb_repo():
+    """The apb plugin's own GitHub repo, owner/name, from the repository in its manifest, or None."""
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".claude-plugin",
+                        "plugin.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            url = json.load(f).get("repository")
+    except (OSError, ValueError, AttributeError):
+        return None
+    m = re.fullmatch(r"https://github\.com/([\w.-]+/[\w.-]+?)(?:\.git)?/?", url) if isinstance(url, str) else None
+    return m.group(1) if m else None
+
+
+def apb_prs(message, repo):
+    """The numbers of the repo's PRs the message links outside a quoted line, once each, in order."""
+    if not isinstance(message, str) or not isinstance(repo, str):
+        return []
+    link = re.compile(r"(?<![\w.-])github\.com/%s/pull/(\d+)" % re.escape(repo))
+    numbers = []
+    for line in message.splitlines():
+        if QUOTED.match(line):
+            continue
+        for m in link.finditer(line):
+            n = int(m.group(1))
+            if n not in numbers:
+                numbers.append(n)
+    return numbers
+
+
+def changes_projects(path):
+    """True if a change to this path in the apb repo reaches the projects that use apb."""
+    return isinstance(path, str) and bool(CHANGES_PROJECTS.fullmatch(path))
+
+
+def has_projects_line(body):
+    """True if the PR description has a "Projects:" line, outside a quote, that says "none" or links a PR."""
+    if not isinstance(body, str):
+        return False
+    for line in body.splitlines():
+        # Markdown around the line doesn't matter: bold, code, a list item or a heading. A quoted line
+        # starts with ">", so it never matches.
+        m = PROJECTS_LINE.fullmatch(re.sub(r"[*`]", "", line).strip().lstrip("#-+ ").strip())
+        if m and (PROJECTS_NONE.match(m.group(1)) or PR_LINK.search(m.group(1))):
+            return True
+    return False
+
+
+def view_pr(repo, number, time_limit=PR_TIME_LIMIT):
+    """The PR's state, description and files, from gh."""
+    out = subprocess.run(["gh", "pr", "view", str(number), "--repo", repo, "--json", "state,body,files"],
+                         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
+                         timeout=time_limit).stdout
+    return json.loads(out)
+
+
+def projects_line_missing(message, lookup=None):
+    """The open apb PRs the message links that change how projects run and whose description has no
+    Projects line. A PR that can't be looked up in time is let through."""
+    repo = apb_repo()
+    started = time.time()
+    missing = []
+    for number in apb_prs(message, repo)[:MAX_PRS]:
+        left = PR_BUDGET - (time.time() - started)
+        if left <= 0:
+            break
+        try:
+            pr = lookup(repo, number) if lookup else view_pr(repo, number, min(PR_TIME_LIMIT, left))
+        except (OSError, ValueError, subprocess.SubprocessError):
+            continue
+        if not isinstance(pr, dict) or pr.get("state") != "OPEN":
+            continue
+        files = pr.get("files") if isinstance(pr.get("files"), list) else []
+        if (any(changes_projects(f.get("path")) for f in files if isinstance(f, dict))
+                and not has_projects_line(pr.get("body"))):
+            missing.append(number)
+    return missing
 
 
 def parse_time(text):
@@ -335,8 +436,8 @@ def append(project, line):
         return f.tell()
 
 
-def handle(p, project, now):
-    """Decide on one stop and log it.
+def handle(p, project, now, pr_lookup=None):
+    """Decide on one stop and log it. pr_lookup(repo, number) stands in for gh in tests.
     Returns {"send_back": bool, "remind": what or None, "end": the events file's size after the line}."""
     session = p.get("session_id")
     if not isinstance(session, str):
@@ -352,7 +453,10 @@ def handle(p, project, now):
     pending = departures(events) if said and said[0] == "human" else []
     departed = bool(pending) and departure_send_backs(events, session) < MAX_DEPARTURE_SEND_BACKS
     unlinked = not retry and decision_without_link(message)
-    send_back = no_line or bool(unchecked) or departed or unlinked
+    # A hand-off of an apb PR that changes how projects run needs its "Projects:" line.
+    no_projects = (projects_line_missing(message, pr_lookup)
+                   if not retry and said and said[0] == "human" else [])
+    send_back = no_line or bool(unchecked) or departed or unlinked or bool(no_projects)
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}
     if send_back:
@@ -363,6 +467,8 @@ def handle(p, project, now):
             line["departure"] = True
         if unlinked:
             line["decision-without-link"] = True
+        if no_projects:
+            line["projects-line-missing"] = no_projects
     elif said:
         line["holder"] = said[0]
         if said[1]:
@@ -375,6 +481,9 @@ def handle(p, project, now):
             notes.append(DEPARTED % quotes)
         if unlinked:
             notes.append(NO_LINK)
+        if no_projects:
+            links = ", ".join("https://github.com/%s/pull/%d" % (apb_repo(), n) for n in no_projects)
+            notes.append(PROJECTS % links)
         return {"send_back": True, "remind": None, "end": end, "note": "\n\n".join(notes)}
     if said:
         holder, todo = said
