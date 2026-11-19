@@ -259,6 +259,48 @@ class Messages(unittest.TestCase):
         self.assertFalse(ct.is_claude(quote))
         self.assertTrue(ct.is_claude("Fixed." + SIGN))
 
+    def test_unsigned_comments_from_claudes_account_do_not_count(self):
+        comments = [{"body": "why this name?", "author": "hornof", "createdAt": gh_at(13)},
+                    {"body": "Fixed in abc.", "author": "hornof-claude", "createdAt": gh_at(14)},
+                    {"body": "Research notes.\n\n— Claude (advisor)", "author": "hornof", "createdAt": gh_at(15)}]
+        r = ct.card_times(self.base, issue([pr(comments=comments)]), "hornof-claude")
+        self.assertEqual(r["pr_messages"], 1)
+        self.assertEqual(ct.card_times(self.base, issue([pr(comments=comments)]))["pr_messages"], 2)
+
+    def test_the_last_human_comment_ignores_claudes_account(self):
+        events = builder_54() + [stop(12, "human", "PR #58")]
+        comments = [{"body": "looks off", "author": "hornof", "createdAt": gh_at(16)},
+                    {"body": "Fixed.", "author": "hornof-claude", "createdAt": gh_at(18)}]
+        r = ct.card_times(events, issue([pr(merged=None, comments=comments)]), "hornof-claude")
+        self.assertEqual((r["human_min"], r["last_action"]), (4.0, "comment"))
+
+    def test_random_comments_by_author(self):
+        """Claude's comments carry no signature here; only the author login marks them."""
+        rng = random.Random(64)
+        texts = ["why?", "b", "go", "rename it", "Fixed.", "merged", "looks off"]
+        for i in range(300):
+            comments, want = [], 0
+            for _ in range(rng.randint(0, 8)):
+                minute, author, body = rng.randint(5, 35), rng.choice(["hornof", "hornof-claude"]), rng.choice(texts)
+                comments.append({"body": body, "author": author, "createdAt": gh_at(minute)})
+                if author == "hornof" and not ct.routine(body) and 12 < minute <= 30:
+                    want += 1
+            with self.subTest(i=i, comments=comments):
+                r = ct.card_times(self.base, issue([pr(comments=comments)]), "hornof-claude")
+                self.assertEqual(r["pr_messages"], want)
+
+    def test_github_authors_reach_the_comments(self):
+        node = {"number": 58, "createdAt": gh_at(10), "mergedAt": None, "closedAt": None, "headRefName": "b",
+                "comments": {"nodes": [{"body": "x", "createdAt": gh_at(13), "author": {"login": "hornof-claude"}}]},
+                "reviews": {"nodes": [{"body": "y", "submittedAt": gh_at(14), "author": None}]},
+                "reviewThreads": {"nodes": [{"comments": {"nodes": [
+                    {"body": "z", "createdAt": gh_at(15), "author": {"login": "hornof"}}]}}]}}
+        got = {"data": {"repository": {"issue": {"number": 54, "state": "OPEN", "comments": {"nodes": []},
+                                                 "closedByPullRequestsReferences": {"nodes": [node]}}}}}
+        authors = [c["author"] for c in ct.flatten(got)["prs"][0]["comments"]]
+        self.assertEqual(authors, ["hornof-claude", None, "hornof"])
+        self.assertEqual(ct.QUERY.count("author { login }"), 3)
+
     def test_a_message_logged_without_its_type_makes_the_count_unknown(self):
         events = self.base + [prompt(13, routine=False), {"time": at(14), "event": "UserPromptSubmit", "session": S}]
         r = ct.card_times(events, issue([pr()]))
@@ -445,6 +487,17 @@ class GitHub(unittest.TestCase):
         code, calls, printed = self.run_main(["54"], [json.dumps(GQL)], builder_54())
         self.assertEqual((code, len(calls)), (0, 1))
         self.assertIn("Build: 8 min", " ".join(str(a) for a in printed))
+
+    def test_main_takes_claudes_login(self):
+        gql = json.loads(json.dumps(GQL))
+        pr_node = gql["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"][0]
+        pr_node["comments"]["nodes"].append({"body": "Renamed it.", "createdAt": gh_at(16),
+                                             "author": {"login": "hornof-claude"}})
+        events = builder_54() + [stop(12, "human", "PR #58")]
+        _, _, printed = self.run_main(["54", "--claude-login", "hornof-claude"], [json.dumps(gql)], events)
+        self.assertIn("(chat 0, PR 1)", " ".join(str(a) for a in printed))  # "why?" only
+        _, _, printed = self.run_main(["54", "--claude-login", "someone-else"], [json.dumps(gql)], events)
+        self.assertIn("(chat 0, PR 2)", " ".join(str(a) for a in printed))
 
     def test_collect_prints_one_row_per_card(self):
         body = ct.comment(ct.card_times(builder_54(), ct.flatten(GQL)))
