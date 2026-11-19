@@ -26,7 +26,10 @@ import json, os, sys, time
 here = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(here, "argv.log"), "a") as f:
     f.write(json.dumps({"argv": sys.argv[1:], "cwd": os.getcwd(), "pid": os.getpid()}) + "\n")
-with open(os.path.join(here, "mode")) as f:
+name = "mode"
+if "--repo" in sys.argv and os.path.exists(os.path.join(here, "mode-coordination")):
+    name = "mode-coordination"  # the coordination watcher is the one given a --repo
+with open(os.path.join(here, name)) as f:
     mode = f.read().split()
 if mode[0] == "found":
     print("12:00:00 apb-watch (o/r):\nGitHub: Issue #25: 1 new comment (Coordination)", flush=True)
@@ -57,18 +60,27 @@ def apb_project(claude_md=None):
     return d
 
 
-def fake_watcher(mode):
+def fake_watcher(mode, coordination=None):
     d = tempfile.mkdtemp()
     path = os.path.join(d, "fake-watch.py")
     with open(path, "w") as f:
         f.write(FAKE)
-    set_mode(path, mode)
+    set_mode(path, mode, coordination)
     return path
 
 
-def set_mode(fake, mode):
+def set_mode(fake, mode, coordination=None):
+    """What the fake does; coordination, if given, is what the coordination watcher does instead."""
     with open(os.path.join(os.path.dirname(fake), "mode"), "w") as f:
         f.write(mode)
+    if coordination is not None:
+        with open(os.path.join(os.path.dirname(fake), "mode-coordination"), "w") as f:
+            f.write(coordination)
+
+
+def which(start):
+    """'coordination' or 'project', from a fake watcher's recorded arguments."""
+    return "coordination" if "--repo" in start["argv"] else "project"
 
 
 def starts_of(fake):
@@ -136,6 +148,10 @@ def wait_for(check, seconds=10):
 
 def pid_file(project):
     return os.path.join(project, ".apb", "watcher.pid")
+
+
+def coordination_pid_file(project):
+    return os.path.join(project, ".apb", "watcher-coordination.pid")
 
 
 def finish(proc):
@@ -332,19 +348,137 @@ class Restarts(unittest.TestCase):
         self.assertFalse(os.path.exists(pid_file(project)))
 
 
+COORD = "# rules\n- coordination: hornof/apb#25\n"
+
+
+class TwoWatchers(unittest.TestCase):
+    """The coordination issue is in another repo: one watcher on the project's repo, one on that repo."""
+
+    def test_each_watcher_starts_once(self):
+        project, fake = apb_project(COORD), fake_watcher("sleep 4")
+        first = start(project, fake)
+        try:
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 2))
+            t = time.time()
+            second = run(project, fake)
+            self.assertLess(time.time() - t, 3, "a second hook must return at once")
+            self.assertEqual((second.returncode, second.stderr), (0, b""))
+            time.sleep(0.3)
+            self.assertEqual(sorted(which(s) for s in starts_of(fake)), ["coordination", "project"])
+            self.assertEqual(sorted(e["watcher"] for e in events(project, "watcher-start")),
+                             ["coordination", "project"])
+            self.assertTrue(os.path.exists(pid_file(project)))
+            self.assertTrue(os.path.exists(coordination_pid_file(project)))
+        finally:
+            finish(first)
+
+    def test_hooks_fired_at_once_start_each_watcher_once(self):
+        project, fake = apb_project(COORD), fake_watcher("sleep 3")
+        procs = [start(project, fake) for _ in range(6)]
+        try:
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) >= 2))
+            time.sleep(1)
+            self.assertEqual(sorted(which(s) for s in starts_of(fake)), ["coordination", "project"])
+        finally:
+            for p in procs:
+                finish(p)
+
+    def test_the_watchers_get_their_own_repo_issue_and_state(self):
+        project, fake = apb_project(COORD), fake_watcher("hang", coordination="sleep 1")
+        run(project, fake)
+        by = {which(s): s["argv"] for s in starts_of(fake)}
+        own, other = by["project"], by["coordination"]
+        self.assertNotIn("--repo", own)
+        self.assertNotIn("--issue", own)
+        self.assertNotIn("--events", own)
+        self.assertEqual(own[own.index("--state") + 1], os.path.join(project, ".apb", "watch.json"))
+        self.assertEqual(other[other.index("--repo") + 1], "hornof/apb")
+        self.assertEqual(other[other.index("--issue") + 1], "25")
+        self.assertEqual(other[other.index("--state") + 1],
+                         os.path.join(project, ".apb", "watch-coordination.json"))
+        # Stuck commands and quiet agents are the project watcher's, so they wake Claude once.
+        self.assertNotIn("--root-pid", other)
+        self.assertFalse(os.path.exists(other[other.index("--events") + 1]))
+
+    def test_a_report_from_the_project_watcher_wakes_claude_and_stops_the_other(self):
+        project, fake = apb_project(COORD), fake_watcher("sleep 1", coordination="hang")
+        r = run(project, fake)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn(b"project watcher", r.stderr)
+        self.assertIn(b"PR #3 merged", r.stderr)
+        other = [s for s in starts_of(fake) if which(s) == "coordination"]
+        self.assertEqual(len(other), 1)
+        self.assertTrue(wait_for(lambda: not alive(other[0]["pid"])))
+        self.assertFalse(os.path.exists(pid_file(project)))
+        self.assertFalse(os.path.exists(coordination_pid_file(project)))
+
+    def test_a_report_from_the_coordination_watcher_wakes_claude_and_stops_the_other(self):
+        project, fake = apb_project(COORD), fake_watcher("hang", coordination="sleep 1")
+        r = run(project, fake)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn(b"coordination watcher", r.stderr)
+        own = [s for s in starts_of(fake) if which(s) == "project"]
+        self.assertEqual(len(own), 1)
+        self.assertTrue(wait_for(lambda: not alive(own[0]["pid"])))
+        self.assertFalse(os.path.exists(pid_file(project)))
+        self.assertFalse(os.path.exists(coordination_pid_file(project)))
+
+    def test_both_start_again_after_a_wake(self):
+        project, fake = apb_project(COORD), fake_watcher("hang", coordination="sleep 0.5")
+        self.assertEqual(run(project, fake).returncode, 2)
+        self.assertEqual(run(project, fake).returncode, 2)
+        self.assertEqual(sorted(which(s) for s in starts_of(fake)),
+                         ["coordination", "coordination", "project", "project"])
+
+    def test_a_hook_takes_only_the_watcher_that_is_free(self):
+        project, fake = apb_project(COORD), fake_watcher("hang", coordination="found")
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "apb-watch-start.py"])
+        try:
+            os.makedirs(os.path.join(project, ".apb"), exist_ok=True)
+            with open(pid_file(project), "w") as f:  # the project watcher runs in another live hook
+                json.dump({"pid": other.pid, "parent": os.getpid(), "session": "s1"}, f)
+            r = run(project, fake)
+            self.assertEqual(r.returncode, 2)
+            self.assertEqual([which(s) for s in starts_of(fake)], ["coordination"])
+            self.assertIsNone(other.poll())
+        finally:
+            other.kill()
+            other.wait(timeout=10)
+
+    def test_a_failing_watcher_leaves_the_other_running(self):
+        project, fake = apb_project(COORD), fake_watcher("sleep 1", coordination="fail")
+        r = run(project, fake, extra=["--backoff", "60"])
+        self.assertEqual(r.returncode, 2)
+        self.assertIn(b"project watcher", r.stderr)
+        exits = {e["watcher"]: e["reason"] for e in events(project, "watcher-exit")}
+        self.assertEqual(exits, {"coordination": "error", "project": "found"})
+        self.assertTrue(os.path.exists(os.path.join(project, ".apb", "watcher-coordination.failed")))
+        self.assertFalse(os.path.exists(os.path.join(project, ".apb", "watcher.failed")))
+        # Within the backoff, the next hook starts only the project watcher.
+        run(project, fake, extra=["--backoff", "60"])
+        self.assertEqual(sorted(which(s) for s in starts_of(fake)), ["coordination", "project", "project"])
+
+
 class Events(unittest.TestCase):
-    def test_the_start_line_names_the_session_repo_and_issue(self):
-        project = apb_project("# rules\n- coordination: hornof/apb#25\n")
+    def test_the_start_line_names_the_watcher_session_repo_and_issue(self):
+        project = apb_project("# rules\n- coordination: #25\n")
         fake = fake_watcher("found")
         run(project, fake)
         [line] = events(project, "watcher-start")
+        self.assertEqual(line["watcher"], "project")
         self.assertEqual(line["session"], "s1")
-        self.assertEqual(line["repo"], "hornof/apb")
+        self.assertIsNone(line["repo"])
         self.assertEqual(line["issue"], 25)
         self.assertIsInstance(line["pid"], int)
         self.assertRegex(line["time"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$")
         [done] = events(project, "watcher-exit")
-        self.assertEqual(done["reason"], "found")
+        self.assertEqual((done["watcher"], done["reason"]), ("project", "found"))
+
+    def test_the_coordination_start_line_names_the_other_repo(self):
+        project, fake = apb_project(COORD), fake_watcher("hang", coordination="sleep 0.5")
+        run(project, fake)
+        line = [e for e in events(project, "watcher-start") if e["watcher"] == "coordination"][0]
+        self.assertEqual((line["repo"], line["issue"]), ("hornof/apb", 25))
 
     def test_the_apb_folder_ignores_itself_in_git(self):
         project, fake = apb_project(), fake_watcher("found")
@@ -361,8 +495,13 @@ class Arguments(unittest.TestCase):
         self.assertEqual(os.path.realpath(s["cwd"]), os.path.realpath(project))
         return s["argv"], project
 
-    def test_the_coordination_line_gives_the_issue_and_repo(self):
-        argv, _ = self.argv("Rules\n- coordination: hornof/apb#25\n")
+    def coordination_argv(self, claude_md, extra=()):
+        project, fake = apb_project(claude_md), fake_watcher("hang", coordination="sleep 0.5")
+        run(project, fake, extra=extra)
+        return [s["argv"] for s in starts_of(fake) if which(s) == "coordination"]
+
+    def test_a_coordination_line_with_a_repo_gives_the_second_watcher_its_issue_and_repo(self):
+        [argv] = self.coordination_argv("Rules\n- coordination: hornof/apb#25\n")
         self.assertEqual(argv[argv.index("--issue") + 1], "25")
         self.assertEqual(argv[argv.index("--repo") + 1], "hornof/apb")
 
@@ -373,7 +512,7 @@ class Arguments(unittest.TestCase):
             self.assertNotIn("--repo", argv, text)
 
     def test_the_flag_wins_over_the_file(self):
-        argv, _ = self.argv("coordination: #7\n", extra=["--coordination", "a/b#9"])
+        [argv] = self.coordination_argv("coordination: #7\n", extra=["--coordination", "a/b#9"])
         self.assertEqual(argv[argv.index("--issue") + 1], "9")
         self.assertEqual(argv[argv.index("--repo") + 1], "a/b")
 
