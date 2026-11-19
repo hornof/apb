@@ -54,6 +54,10 @@ _spec = importlib.util.spec_from_file_location("apb_events", os.path.join(HERE, 
 events_hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(events_hook)
 routine = events_hook.routine  # one rule for what counts as routine, in the hook and here
+_spec = importlib.util.spec_from_file_location("apb_stop", os.path.join(HERE, "..", "hooks", "apb-stop.py"))
+stop_hook = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(stop_hook)
+running_agents = stop_hook.running_agents  # one rule for which agents are still running, in the hook and here
 _spec = importlib.util.spec_from_file_location("comment_author", os.path.join(HERE, "comment-author.py"))
 authors = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(authors)
@@ -141,10 +145,11 @@ def human_time(events, hands, end, data, p, claude_login=None):
 def resumes(events, first, last):
     """(time, session) of each Stop between first and last that starts a new wait for the human without
     a new hand-off: a Stop with no holder line, at the end of a turn the human started with a message,
-    while the session's last holder was the human. hooks/apb-stop.py reads such a Stop the same way: the
+    while the session's last holder was the human, and with no agent started in that session still
+    running (then the ball is with the agent). hooks/apb-stop.py reads such a Stop the same way: the
     orchestrator answered the human and the human holds the ball again."""
     found, holder, human_said = [], {}, {}
-    for e in events:
+    for i, e in enumerate(events):
         s = e.get("session")
         if e.get("event") == "UserPromptSubmit" and not e.get("automatic") and "routine" in e:
             human_said[s] = True
@@ -153,7 +158,8 @@ def resumes(events, first, last):
         t = seconds(e["time"])
         if e.get("holder"):
             holder[s] = e["holder"]
-        elif not e.get("sent_back") and holder.get(s) == "human" and human_said.get(s) and first < t < last:
+        elif not e.get("sent_back") and holder.get(s) == "human" and human_said.get(s) and first < t < last \
+                and not running_agents([x for x in events[:i] if x.get("session") == s], t):
             found.append((t, s))
         if not e.get("sent_back"):
             human_said[s] = False

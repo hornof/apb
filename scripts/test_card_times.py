@@ -44,8 +44,8 @@ def bash(minute, agent, command, kind="apb:builder"):
             "command": command, "exit": 0}
 
 
-def stop(minute, holder=None, todo=None, session=S, **extra):
-    line = {"time": at(minute), "event": "Stop", "session": session}
+def stop(minute, holder=None, todo=None, session=S, second=0, **extra):
+    line = {"time": at(minute, second), "event": "Stop", "session": session}
     if holder:
         line["holder"] = holder
     if todo:
@@ -76,7 +76,8 @@ def issue(prs, number=54, state="CLOSED", comments=(), card_comments=()):
 
 def builder_54():
     return [start(2, "b1"), bash(3, "b1", "gh issue view 54 --repo hornof/apb"),
-            bash(9, "b1", "git -C /wt/issue-54 push -u origin issue-54-brief-check")]
+            bash(9, "b1", "git -C /wt/issue-54 push -u origin issue-54-brief-check"),
+            {"time": at(10), "event": "SubagentStop", "session": S, "agent_id": "b1", "agent_type": "apb:builder"}]
 
 
 class Example(unittest.TestCase):
@@ -264,6 +265,22 @@ class HumanWaits(unittest.TestCase):
                                  stop(16), prompt(20, routine=True), stop(21), stop(25, "human", "merge PR #58")]
         r = ct.card_times(events, issue([pr()]))
         self.assertEqual((r["human_min"], r["hand_offs"]), (14.0, 2))  # 14-15, 16-20, 21-25, 25-30
+
+    def test_a_stop_while_a_builder_runs_does_not_start_a_wait(self):
+        # card #17: the human answered at 23:21:36, the orchestrator started a builder and stopped with no
+        # holder line at 23:21:50; the ball was with the builder until its report at 23:23:06
+        events = builder_54() + [stop(14, "human", "answer decision 3 on PR #58"), prompt(15, routine=False),
+                                 start(16, "fix"), stop(16, second=30),
+                                 {"time": at(20), "event": "SubagentStop", "session": S, "agent_id": "fix",
+                                  "agent_type": "apb:builder"},
+                                 prompt(20, automatic=True), stop(25, "human", "merge PR #58")]
+        self.assertEqual(ct.card_times(events, issue([pr()]))["human_min"], 6.0)  # 14-15, 25-30
+
+    def test_an_agent_running_in_another_session_does_not_stop_a_wait(self):
+        events = builder_54() + [stop(14, "human", "PR #58"), prompt(15, routine=False),
+                                 dict(start(15, "elsewhere"), session="another"), stop(16),
+                                 stop(25, "human", "PR #58")]
+        self.assertEqual(ct.card_times(events, issue([pr()]))["human_min"], 15.0)  # 14-15, 16-25, 25-30
 
     def test_a_turn_without_a_human_message_does_not_start_a_wait(self):
         events = builder_54() + [stop(14, "human", "PR #58"),
@@ -519,7 +536,12 @@ def oracle(events, data):
         holders = [x["holder"] for x in before if x["event"] == "Stop" and x.get("holder")]
         ends = [j for j, x in enumerate(before) if x["event"] == "Stop" and not x.get("sent_back")]
         turn = before[ends[-1] + 1:] if ends else before
-        if holders and holders[-1] == "human" and any(
+        lasts = {}
+        for x in before:
+            if x.get("agent_id"):
+                lasts[x["agent_id"]] = x["event"]
+        busy = any(kind != "SubagentStop" for kind in lasts.values())  # an agent of this session still runs
+        if holders and holders[-1] == "human" and not busy and any(
                 x["event"] == "UserPromptSubmit" and "routine" in x and not x.get("automatic") for x in turn):
             waits.append(e)
     waits.sort(key=lambda e: e["time"])
@@ -551,6 +573,9 @@ class Properties(unittest.TestCase):
                     events.append(start(t + rng.randint(1, 10), agent, kind))  # resumed later
                 branch = rng.choice(["issue-54-brief-check", "issue-53-other", "fix-times"])
                 events.append(bash(t + rng.randint(0, 5), agent, "git push origin " + branch, kind))
+                if rng.random() < 0.7:
+                    events.append({"time": at(t + rng.randint(6, 30)), "event": "SubagentStop", "session": S,
+                                   "agent_id": agent, "agent_type": kind})
             for _ in range(rng.randint(0, 10)):
                 t = rng.randint(0, 100)
                 holder = rng.choice(["human", "claude", None, None])
