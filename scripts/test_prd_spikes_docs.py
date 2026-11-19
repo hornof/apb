@@ -155,13 +155,27 @@ class Reviewer(unittest.TestCase):
         self.assertIn("`docs/spikes/", text)
 
 
+NAMES = re.compile(r"\b(sketch-gallery|tahoe|vail|luke|sam)\b")
+
+
+def names_in(text):
+    """Project and people names in `text`, as whole words, ignoring case."""
+    return NAMES.findall(text.lower())
+
+
 class Timeless(unittest.TestCase):
     def test_no_years_project_or_people_names(self):
         for rel in CHANGED:
             text = read(rel)
             self.assertIsNone(re.search(r"\b20\d\d\b", text), rel)
-            for word in ("sketch-gallery", "tahoe", "vail", "luke", "sam "):
-                self.assertNotIn(word, text.lower(), "%s: %s" % (rel, word))
+            self.assertEqual(names_in(text), [], rel)
+
+    def test_name_filter_matches_whole_words_only(self):
+        # Both directions: a name is caught, a word that merely contains one is not.
+        for text in ("Vail's cams", "ask Luke.", "a Sam project", "the Tahoe tracker", "see sketch-gallery"):
+            self.assertNotEqual(names_in(text), [], text)
+        for text in ("available", "prevail", "sample", "same", "lukewarm"):
+            self.assertEqual(names_in(text), [], text)
 
 
 if __name__ == "__main__":
