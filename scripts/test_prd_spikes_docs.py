@@ -15,7 +15,7 @@ TEMPLATE = "templates/PRD-template.md"
 PRD_SKILL = "skills/apb-prd/SKILL.md"
 REVIEW_SKILL = "skills/apb-review/SKILL.md"
 REVIEWER = "agents/reviewer.md"
-CHANGED = (TEMPLATE, PRD_SKILL, REVIEW_SKILL, REVIEWER, "agents/builder.md")
+CHANGED = (TEMPLATE, PRD_SKILL, REVIEW_SKILL, REVIEWER, "agents/builder.md", "docs/collaborator-guide.md")
 
 
 def read(rel):
@@ -161,6 +161,33 @@ NAMES = re.compile(r"\b(sketch-gallery|tahoe|vail|luke|sam)\b")
 def names_in(text):
     """Project and people names in `text`, as whole words, ignoring case."""
     return NAMES.findall(text.lower())
+
+
+def numbered_item(rel, n, start):
+    """Item `n` of the first numbered list in `rel` whose item 1 starts with `start`, flattened."""
+    text = read(rel)
+    first = text.index("1. **%s" % start)
+    items = re.split(r"^(\d+)\. ", text[first:], flags=re.M)
+    for i in range(1, len(items), 2):
+        if int(items[i]) == n:  # the first item n after that list's item 1
+            return flat(items[i + 1].split("\n\n")[0])
+    return ""
+
+
+class HumanDocs(unittest.TestCase):
+    def test_playbook_prd_stage_mentions_the_spike(self):
+        item = numbered_item("docs/playbook.md", 1, "PRD")
+        self.assertTrue(item.startswith("PRD (what and why)"), item)
+        self.assertIn("spike", item)
+        self.assertIn("`docs/spikes/`", item)
+        self.assertLess(item.index("spike"), item.index("gate 1"))
+
+    def test_collaborator_guide_prd_step_mentions_the_spike(self):
+        item = numbered_item("docs/collaborator-guide.md", 3, "")
+        self.assertTrue(item.startswith("PRD input."), item)
+        self.assertIn("spike", item)
+        self.assertIn("`docs/spikes/`", item)
+        self.assertIn("accept the risk", item)
 
 
 class Timeless(unittest.TestCase):
