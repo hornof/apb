@@ -10,7 +10,7 @@ line per thread:
   "Recommended: <letter>" and "Resolve with no reply = <letter>", naming the same option;
 - its answer: resolved, answered with an option letter in the human's last reply, a design discussion
   (three or more replies from the human and no letter), or waiting on the human.
-A reply signed "— Claude (<role>)" is Claude's, not the human's, since Claude uses the human's login.
+A reply signed "— Claude (<role>)" is Claude's, not the human's, since Claude may use the human's login (apb-setup step 5).
 It exits with 1 if any thread's shape is wrong, so nothing is handed over until the review is fixed.
 It reads GitHub and changes nothing.
 """

@@ -53,6 +53,7 @@ Claude can read and write a folder only after the developer gives it access. Kin
 | Piece | What it is | When it's used |
 |---|---|---|
 | `<path to the local copy of the repo>` | Local copy of the repo | Every stage |
+| `.claude/settings.local.json` in the local copy (git-ignored) | The token of Claude's GitHub account, and the git author that makes commits show the account. Remove this row if the project has no such account. | Every stage |
 
 ## Outside services
 Services outside GitHub and Claude that the project depends on. Which ones depends on what kind of software it is:
@@ -74,4 +75,5 @@ Services many kinds of project use: payments (Stripe), email sending, error trac
 
 | Piece | What it is | When it's used |
 |---|---|---|
+| Claude's GitHub account: `<account link>` | The account Claude Code acts as on GitHub, a collaborator on the repo and the board (apb-setup step 5). Its token's expiry: `<date, or never>`. Remove this row if the project has none. | Every stage |
 | `<service name and link>` | `<for example: hosting for the live product>` | `<for example: from the first deploy on>` |
