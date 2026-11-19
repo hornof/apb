@@ -122,9 +122,10 @@ def is_claude(comment, claude_login=None):
 
 
 # Words that, right after a letter at the start of a reply, make it a choice: "B sounds good.", "a works for
-# me". Any other word leaves it an article or a sentence: "A mockup first", "A question: ...", "B is risky".
-AGREE = r"sounds|works|looks|seems|please|thanks|thank you|is fine|is good|is better|is best|is the one|" \
-        r"for me|wins|makes sense|it is|then|definitely|for sure"
+# me". Any other word leaves it an article, a sentence or a rejection: "A mockup first", "A question: ...",
+# "B is risky", "A looks wrong to me.", "C works, but I'd rather have A."
+AGREE = r"(?:sounds|looks|seems)\s+(?:good|great|fine|right)|works for me|please|thanks|thank you|is fine|" \
+        r"is good|is better|is best|is the one|for me|wins|makes sense|for sure"
 
 
 def chosen(reply, letters):

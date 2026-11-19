@@ -151,7 +151,8 @@ class Letter(unittest.TestCase):
     def test_a_letter_first_in_a_question_or_a_sentence_is_not_a_choice(self):
         for reply in ["A question: why not both?", "A question: what does (b) cost?",
                       "B sounds good, but is it slower?", "A small change to the title would help.",
-                      "B is risky.", "A question first."]:
+                      "B is risky.", "A question first.", "A looks wrong to me.", "B seems too slow.",
+                      "A sounds risky.", "A definitely not", "C works, but I'd rather have A."]:
             with self.subTest(reply=reply):
                 self.assertIsNone(dc.chosen(reply, ["a", "b", "c"]))
 
