@@ -141,6 +141,24 @@ class Letter(unittest.TestCase):
             with self.subTest(reply=reply):
                 self.assertIsNone(dc.chosen(reply, ["a", "b", "c"]))
 
+    def test_a_letter_first_then_words_of_agreement(self):
+        for reply, want in [("B sounds good.", "b"), ("a works for me", "a"), ("b, thanks", "b"),
+                            ("C is fine", "c"), ("b please", "b"), ("A looks good to me.", "a"),
+                            ("> (a) Save\n\nB sounds good.", "b")]:
+            with self.subTest(reply=reply):
+                self.assertEqual(dc.chosen(reply, ["a", "b", "c"]), want)
+
+    def test_a_letter_first_in_a_question_or_a_sentence_is_not_a_choice(self):
+        for reply in ["A question: why not both?", "A question: what does (b) cost?",
+                      "B sounds good, but is it slower?", "A small change to the title would help.",
+                      "B is risky.", "A question first.", "A looks wrong to me.", "B seems too slow.",
+                      "A sounds risky.", "A definitely not", "C works, but I'd rather have A."]:
+            with self.subTest(reply=reply):
+                self.assertIsNone(dc.chosen(reply, ["a", "b", "c"]))
+
+    def test_a_letter_first_that_is_not_an_option(self):
+        self.assertIsNone(dc.chosen("D sounds good.", ["a", "b", "c"]))
+
     def test_a_quote_reply_reads_only_the_humans_words(self):
         self.assertEqual(dc.chosen("> (a) Save\n> (b) Keep\n\nb", ["a", "b"]), "b")
         self.assertEqual(dc.chosen("> Which word?\n> a) Save\n\n(b) please", ["a", "b"]), "b")
