@@ -42,10 +42,13 @@ Each requirement ends with the check that proves it.
 ## 10. Risks and assumptions
 `<What could go wrong, and what we assume is true.>`
 
-## 11. Decisions so far
+## 11. Technical uncertainties
+`<Numbered. Each is a technical question whose answer would change the design, the requirements, or how long the build takes, e.g. "Can the provider's video player be embedded on another site?". Each gets a spike before the review, with its findings in docs/spikes/<name>.md, linked here with the answer in one line. Write "None" if there are none: "None" is a valid entry, but it has to be written.>`
+
+## 12. Decisions so far
 | Question | Decision |
 |---|---|
-| `<question raised in review>` | `<answer, and where in the doc it now lives>` |
+| `<question raised in review>` | `<answer, and where in the doc it now lives; for a decision a spike drove, a link to its docs/spikes/ file>` |
 
-## 12. Open questions
+## 13. Open questions
 `<Numbered. Each has Claude's recommended answer, so "ok" is a valid reply. "None" once all are answered.>`
