@@ -190,6 +190,57 @@ class Status(unittest.TestCase):
         self.assertFalse(dc.ready(("discussion", None)))
 
 
+CLAUDE, HUMAN = "hornof-claude", "hornof"
+
+
+def by(author, body):
+    return {"body": body, "author": author}
+
+
+class ByAuthor(unittest.TestCase):
+    """With Claude's own account, the author login says whose a reply is; no signature needed."""
+
+    def test_an_unsigned_reply_from_claudes_account_is_not_the_humans(self):
+        t = thread(by(CLAUDE, GOOD), by(HUMAN, "b"), by(CLAUDE, "Starting on b, then a too."))
+        self.assertEqual(dc.status(t, CLAUDE), ("answered", "b"))
+        t = thread(by(CLAUDE, GOOD), by(CLAUDE, "a"))
+        self.assertEqual(dc.status(t, CLAUDE), ("waiting", None))
+
+    def test_unsigned_claude_replies_do_not_count_toward_the_three(self):
+        t = thread(by(CLAUDE, GOOD), by(HUMAN, "why?"), by(CLAUDE, "A."), by(CLAUDE, "B."), by(CLAUDE, "C."))
+        self.assertEqual(dc.status(t, CLAUDE), ("waiting", None))
+
+    def test_the_humans_replies_still_count(self):
+        t = thread(by(CLAUDE, GOOD), by(HUMAN, "why?"), by(CLAUDE, "A."), by(HUMAN, "but?"), by(HUMAN, "and?"))
+        self.assertEqual(dc.status(t, CLAUDE), ("discussion", None))
+
+    def test_without_the_login_signatures_decide(self):
+        t = thread(by(HUMAN, GOOD), by(HUMAN, "b"), by(HUMAN, "Starting on b." + SIGN))
+        self.assertEqual(dc.status(t, None), ("answered", "b"))
+        t = thread(by(HUMAN, GOOD), by(HUMAN, "a"), by(HUMAN, "Unsigned, so the human's: c"))
+        self.assertEqual(dc.status(t, None), ("waiting", None))
+
+    def test_a_quote_reply_from_the_human_is_the_humans(self):
+        quote = "> Starting on b.\n>\n> — Claude (orchestrator)\n\nNo, (a) after all."
+        self.assertEqual(dc.status(thread(GOOD, "b", quote)), ("answered", "a"))
+
+    def test_the_report_uses_the_login(self):
+        lines, _ = dc.report([thread(by(CLAUDE, GOOD), by(HUMAN, "b"), by(CLAUDE, "(a) is done too."))], CLAUDE)
+        self.assertIn("answered b", lines[0])
+
+    def test_main_asks_github_for_authors_and_takes_the_login(self):
+        got = {"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
+            {"isResolved": False, "path": "a.md", "line": 1, "comments": {"nodes": [
+                {"body": GOOD, "author": {"login": CLAUDE}}, {"body": "b", "author": {"login": HUMAN}},
+                {"body": "a", "author": {"login": CLAUDE}}, {"body": "gone", "author": None}]}}]}}}}}
+        with mock.patch.object(dc.subprocess, "run") as run, mock.patch("builtins.print") as out:
+            run.return_value = mock.Mock(stdout=__import__("json").dumps(got))
+            self.assertEqual(dc.main(["7", "--repo", "o/r", "--claude-login", CLAUDE]), 0)
+            self.assertIn("author { login }", " ".join(run.call_args.args[0]))
+            printed = " ".join(str(c.args[0]) for c in out.call_args_list)
+        self.assertIn("waiting on the human", printed)  # "gone" is the human's last reply, with no letter
+
+
 LETTER_REPLIES = ["{}", "{}.", "ok, {}", "({})", "option {}", "Go with {}, it's simpler.", "Let's pick {}."]
 OTHER_REPLIES = ["Why is this needed?", "I think a better name would help.", "Can you show me a mockup?",
                  "A mockup first, please.", "Let's talk about it.", "What does the map say?",
@@ -230,6 +281,27 @@ class StatusProperties(unittest.TestCase):
             t = thread("".join(parts.values()), *[r[0] for r in replies], resolved=resolved)
             with self.subTest(i=i, replies=replies, resolved=resolved):
                 self.assertEqual(dc.status(t), oracle(resolved, replies, rec))
+
+    def test_random_histories_by_author(self):
+        """Claude's replies carry no signature here: only the author login marks them."""
+        rng = random.Random(64)
+        for i in range(500):
+            parts, letters, rec = random_decision(rng)
+            replies = []
+            for _ in range(rng.randint(0, 6)):
+                kind = rng.random()
+                if kind < 0.3:
+                    c = rng.choice(letters)  # a letter from Claude must never count as the answer
+                    replies.append((by(CLAUDE, rng.choice(LETTER_REPLIES).format(c)), None, True))
+                elif kind < 0.6:
+                    c = rng.choice(letters)
+                    replies.append((by(HUMAN, rng.choice(LETTER_REPLIES).format(c)), c, False))
+                else:
+                    replies.append((by(HUMAN, rng.choice(OTHER_REPLIES)), None, False))
+            resolved = rng.random() < 0.3
+            t = thread(by(CLAUDE, "".join(parts.values())), *[r[0] for r in replies], resolved=resolved)
+            with self.subTest(i=i, replies=replies, resolved=resolved):
+                self.assertEqual(dc.status(t, CLAUDE), oracle(resolved, replies, rec))
 
 
 class Report(unittest.TestCase):

@@ -16,7 +16,10 @@ It works the times out from .apb/events.jsonl and GitHub, never by hand:
 - messages: the human's messages between the hand-off and that last action that aren't "go", a
   decision letter, "resolved" or "merged": prompts in the orchestrator's session (hooks/apb-events.py
   marks each one routine or not, without keeping its text) and the human's comments on the PR. A
-  comment signed "— Claude (<role>)" is Claude's, since Claude may use the human's login (apb-setup step 5). Prompts logged
+  comment from Claude's own GitHub account (apb-setup step 5) is Claude's, signed or not. A comment
+  signed "— Claude (<role>)" is Claude's too, since Claude may use the human's login (apb-setup step 5),
+  as in older comments and projects without the account. comment-author.py holds the rule, and says
+  where Claude's login comes from; --claude-login gives it directly. Prompts logged
   before apb 0.3.21 have no mark, so the count is then not known.
 
 It prints the comment. With --post it posts it on the issue, once: only when the issue is closed, and
@@ -42,6 +45,9 @@ _spec = importlib.util.spec_from_file_location("apb_events", os.path.join(HERE, 
 events_hook = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(events_hook)
 routine = events_hook.routine  # one rule for what counts as routine, in the hook and here
+_spec = importlib.util.spec_from_file_location("comment_author", os.path.join(HERE, "comment-author.py"))
+authors = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(authors)
 
 
 def seconds(text):
@@ -51,10 +57,13 @@ def seconds(text):
     return whole + (float("0." + m.group(1)) if m else 0.0)
 
 
-def is_claude(body):
-    """True if the comment is signed by Claude. Quoted lines (a GitHub "Quote reply") don't count."""
-    own = "\n".join(line for line in (body or "").splitlines() if not line.lstrip().startswith(">"))
-    return bool(re.search(r"[—-]\s*Claude \(\w+\)", own))
+def is_claude(body, author=None, claude_login=None):
+    """True if the comment is Claude's: from Claude's account, or signed by Claude outside quoted lines."""
+    return authors.is_claude(body, author, claude_login)
+
+
+def by_claude(c, claude_login):
+    return is_claude(c.get("body"), c.get("author"), claude_login)
 
 
 def minutes(a, b):
@@ -101,13 +110,13 @@ def hand_off(events, opened, end, pr, number):
     return (named or stops or [None])[0]
 
 
-def last_action(p):
+def last_action(p, claude_login=None):
     """(time, "merge" | "close" | "comment") or (None, None)."""
     if p.get("mergedAt"):
         return seconds(p["mergedAt"]), "merge"
     if p.get("closedAt"):
         return seconds(p["closedAt"]), "close"
-    human = [seconds(c["createdAt"]) for c in p.get("comments", []) if not is_claude(c.get("body"))]
+    human = [seconds(c["createdAt"]) for c in p.get("comments", []) if not by_claude(c, claude_login)]
     return (max(human), "comment") if human else (None, None)
 
 
@@ -120,8 +129,9 @@ def pick_pr(prs):
     return None
 
 
-def card_times(events, data):
-    """The card's times, from the events file's lines and the issue's GitHub data (see flatten)."""
+def card_times(events, data, claude_login=None):
+    """The card's times, from the events file's lines and the issue's GitHub data (see flatten).
+    claude_login is Claude's own GitHub login, or None when the project has no Claude account."""
     number = data["number"]
     r = dict.fromkeys(FIELDS + ["build_start", "opened", "hand_off", "end", "last_action", "unclassified"])
     r["issue"] = number
@@ -131,7 +141,7 @@ def card_times(events, data):
     r["pr"] = p["number"]
     events = sorted((e for e in events if isinstance(e.get("time"), str)), key=lambda e: seconds(e["time"]))
     opened = seconds(p["createdAt"])
-    end, r["last_action"] = last_action(p)
+    end, r["last_action"] = last_action(p, claude_login)
     start = builder_start(events, p.get("headRefName"), number, opened)
     r.update(build_start=start, opened=opened, end=end, build_min=minutes(start, opened))
     hand = hand_off(events, opened, end, p["number"], number) if end is not None else None
@@ -143,7 +153,7 @@ def card_times(events, data):
                and h < seconds(e["time"]) <= end and not e.get("automatic")]
     unknown = sum(1 for e in prompts if "routine" not in e)
     chat = sum(1 for e in prompts if e.get("routine") is False)
-    comments = sum(1 for c in p.get("comments", []) if not is_claude(c.get("body")) and not routine(c.get("body"))
+    comments = sum(1 for c in p.get("comments", []) if not by_claude(c, claude_login) and not routine(c.get("body"))
                    and h < seconds(c["createdAt"]) <= end)
     r.update(chat=chat, pr_messages=comments, unclassified=unknown,
              messages=None if unknown else chat + comments)
@@ -216,13 +226,19 @@ QUERY = """query($owner: String!, $name: String!, $number: Int!) { repository(ow
   issue(number: $number) { number state comments(last: 100) { nodes { body } }
     closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes {
       number createdAt mergedAt closedAt headRefName
-      comments(first: 100) { nodes { body createdAt } }
-      reviews(first: 100) { nodes { body submittedAt } }
-      reviewThreads(first: 100) { nodes { comments(first: 100) { nodes { body createdAt } } } } } } } } }"""
+      comments(first: 100) { nodes { body createdAt author { login } } }
+      reviews(first: 100) { nodes { body submittedAt author { login } } }
+      reviewThreads(first: 100) { nodes { comments(first: 100) { nodes { body createdAt author { login } } } } }
+    } } } } }"""
 
 
 def run(args):
     return subprocess.run(args, check=True, capture_output=True, text=True, timeout=TIME_LIMIT).stdout
+
+
+def login(node):
+    """The author's login; None for a deleted account, which GitHub gives no author."""
+    return (node.get("author") or {}).get("login")
 
 
 def flatten(got):
@@ -230,10 +246,10 @@ def flatten(got):
     i = got["data"]["repository"]["issue"]
     prs = []
     for p in i["closedByPullRequestsReferences"]["nodes"]:
-        comments = [{"body": c["body"], "createdAt": c["createdAt"]} for c in p["comments"]["nodes"]]
-        comments += [{"body": v["body"], "createdAt": v["submittedAt"]} for v in p["reviews"]["nodes"]
+        comments = [{"body": c["body"], "createdAt": c["createdAt"], "author": login(c)} for c in p["comments"]["nodes"]]
+        comments += [{"body": v["body"], "createdAt": v["submittedAt"], "author": login(v)} for v in p["reviews"]["nodes"]
                      if (v.get("body") or "").strip() and v.get("submittedAt")]
-        comments += [{"body": c["body"], "createdAt": c["createdAt"]}
+        comments += [{"body": c["body"], "createdAt": c["createdAt"], "author": login(c)}
                      for t in p["reviewThreads"]["nodes"] for c in t["comments"]["nodes"]]
         prs.append({k: p[k] for k in ("number", "createdAt", "mergedAt", "closedAt", "headRefName")}
                    | {"comments": comments})
@@ -265,6 +281,7 @@ def main(argv):
     parser.add_argument("--guessed", help="the times guessed before the card started, added as a line")
     parser.add_argument("--post", action="store_true", help="post the comment on the issue")
     parser.add_argument("--collect", action="store_true", help="list every card's numbers from the comments")
+    parser.add_argument("--claude-login", help="Claude's own GitHub login; by default, from the project's settings")
     args = parser.parse_args(argv)
     if args.issue is None and not args.collect:
         parser.error("give an issue number, or --collect")
@@ -284,7 +301,7 @@ def main(argv):
         owner, name = repo.split("/", 1)
         data = flatten(json.loads(run(["gh", "api", "graphql", "-f", "owner=" + owner, "-f", "name=" + name,
                                        "-F", "number=%d" % args.issue, "-f", "query=" + QUERY])))
-        text = comment(card_times(events, data), args.guessed)
+        text = comment(card_times(events, data, authors.claude_login(args.claude_login)), args.guessed)
         print(text)
         if not args.post:
             return 0
