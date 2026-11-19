@@ -47,7 +47,13 @@ Rank by value first. For each idea, ask:
 
 Then check the size. Find closed cards like it and look at what they took: `python3 <apb plugin folder>/scripts/card-times.py --collect`, run from the project's root, lists the build, review and human minutes of every card whose times were posted. "How long did cards like this take" is then a lookup, not a guess. Between two ideas of about the same value, the smaller one goes first.
 
-Write the ranking down as one numbered list, best first, one line per idea: the link, the value in a few words, the size. Keep it in the body of one pinned issue titled "Backlog ranking", and update it at each grooming; GitHub keeps every earlier version. Add the ranking issue to the project's `docs/MAP.md`. The human sets the final order. For an example of a ranked list of ideas, see https://github.com/hornof/apb/issues/24.
+Write the ranking down as one numbered list, best first, one line per idea: the link, the value in a few words, the size. Keep it in the body of one pinned issue titled "Backlog ranking", and update it at each grooming; GitHub keeps every earlier version. Add the ranking issue to the project's `docs/MAP.md`. The human sets the final order. For example:
+
+```
+1. #41 Visitors can filter the gallery by month: every visitor, small
+2. #38 Pages load in under a second on a phone: every visitor on a phone, medium
+3. #45 The owner can upload several images at once: the owner only, small
+```
 
 ## The next piece of work
 

@@ -95,7 +95,26 @@ class TheGuide(unittest.TestCase):
         self.assertIn("value", body)
         self.assertIn("card-times.py --collect", body)
         self.assertLess(body.index("value"), body.index("card-times.py --collect"))
-        self.assertIn("https://github.com/hornof/apb/issues/24", body)
+
+    def test_ranking_example_is_in_the_guides_own_format(self):
+        # Three lines, best first, each: number, link, result, then value and size, as the guide asks.
+        body = section(self.text, "Priorities")
+        block = re.search(r"```\n(.*?)```", body, re.S)
+        self.assertIsNotNone(block, "the Priorities section shows an example ranking")
+        lines = block.group(1).strip().splitlines()
+        self.assertEqual(len(lines), 3)
+        sizes = re.findall(r"(small|medium|large) \(", section(self.text, "The backlog"))
+        self.assertEqual(sizes, ["small", "medium", "large"])
+        for n, line in enumerate(lines, 1):
+            m = re.fullmatch(r"(\d+)\. #\d+ [A-Z][^:]+: [^,]+, (\w+)", line)
+            self.assertIsNotNone(m, line)
+            self.assertEqual(int(m.group(1)), n, line)
+            self.assertIn(m.group(2), sizes, line)
+
+    def test_links_to_no_other_project(self):
+        # A reusable doc: an example lives in the guide, not behind a link to one project's issue.
+        # The one GitHub link allowed is the placeholder form, github.com/<owner>/<repo>/...
+        self.assertEqual(re.findall(r"github\.com/(?!<owner>/<repo>/)\S*", self.text), [])
 
     def test_next_piece_turns_the_idea_into_a_build_card(self):
         body = self.parts["The next piece of work"]
@@ -177,6 +196,14 @@ class OtherDocsPointToIt(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("label:backlog", rows[0])
         self.assertIn("`docs/product-guide.md`", rows[0])
+
+    def test_map_template_has_a_backlog_ranking_row(self):
+        # The guide keeps the ranking in a pinned issue and lists it in the project's map.
+        self.assertIn('pinned issue titled "Backlog ranking"', flat(read(GUIDE)))
+        rows = [l for l in section(read("templates/MAP-template.md"), "GitHub").splitlines()
+                if l.startswith("| Backlog ranking:")]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("pinned issue", rows[0])
 
     def test_apb_board_creates_the_label(self):
         board = read("skills/apb-board/SKILL.md")

@@ -18,6 +18,7 @@ The map lists only things that rarely change. It never copies a status, such as 
 | Board: `<board link>` | Progress: one issue per early stage (PRD input, PRD, TDD), then one card per piece of work | Every stage |
 | PRD input: `<issue link>` | The original description of the project | Start |
 | Backlog: `<repo link>/issues?q=is:open+label:backlog` | Ideas for later that don't belong in the current work: one issue each, labeled `backlog`, not on the board. See apb's `docs/product-guide.md`. | Grooming, and choosing the next piece of work |
+| Backlog ranking: `<issue link>` | The pinned issue that ranks the backlog, best first, one line per idea: the link, the value, the size. Updated at each grooming. | Grooming, and choosing the next piece of work |
 | `docs/MAP.md` | The map, in the repo. The map artifact is built from it. | Any time |
 
 ## Claude artifacts
