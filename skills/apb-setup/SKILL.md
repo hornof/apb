@@ -18,6 +18,7 @@ This skill belongs in the orchestrator (the main Claude Code session, opened in 
    - What's a must-have, and what's a nice-to-have?
    - Public or private?
    - Where will people use it: a website, a phone app, a command-line tool, something else? If it's online, what address?
+   - Anything you're not sure is technically possible, or that depends on another site or service cooperating?
    - Any deadline?
 
    Link the issue from docs/MAP.md and docs/HISTORY.md. Add the issue to the board (step 3) in In progress. Move the card to the top of In progress (see apb-build step 1). When the PRD stage starts, close the issue; the board moves it to Done.
