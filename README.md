@@ -57,6 +57,7 @@ The orchestrator (the main Claude Code session, the one the human talks to) star
 | `templates/` | PRD, TDD, repo-CLAUDE.md, README, LOG, LESSONS, MAP, HISTORY, reviewer-notes and .gitignore starters, and the CI workflow |
 | `docs/collaborator-guide.md` | Step-by-step onboarding for a teammate new to AI-assisted building |
 | `docs/system-design-guide.md` | The design steps for the TDD, with common patterns and red flags |
+| `docs/product-guide.md` | Product management for the human: whether a new idea belongs in the current work, the backlog of ideas that don't, ranking it, and choosing what to build next |
 
 ## Install
 

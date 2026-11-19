@@ -144,6 +144,7 @@ The orchestrator never tells the human "I can't see what the agent did". It can 
   - It shows who holds the ball, the stages with the build count, how many board items are in Done, the board's cards by column, each running agent with its last step and how long ago that was, each open PR with its checks and who it waits on (you, CI, the reviewer or the builder), and how long recent agents took.
   - It reads the events file and GitHub, and changes nothing. Merging, commenting and approving stay on GitHub; the page links there.
   - It is a snapshot. The orchestrator builds and publishes it again each time it wakes up (a watcher exits, an agent reports back), each time it says who holds the ball, and whenever the human asks where things stand. The page shows when it was built.
+- **New ideas that don't belong in the current work** go in the backlog: one issue each, labeled `backlog`, not on the board. How to decide whether an idea belongs, write it up, go back over the backlog, rank it and choose what to build next: `docs/product-guide.md` in the apb plugin.
 - **Project history** (`docs/HISTORY.md`): one entry per stage, oldest first, with the date, the PR and what was decided, so someone new can see what happened.
 - **One question at a time.** Settle every part of the current question before asking the next. Ask in the chat, not with pop-up buttons, so the human can answer in their own words.
 - **Plain English.** No made-up terms, no unexplained jargon, one instruction per sentence.
