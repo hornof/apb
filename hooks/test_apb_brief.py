@@ -319,7 +319,7 @@ class Properties(unittest.TestCase):
 
 
 # Two reviewer briefs that were refused only because the PR's branch and worktree were named
-# review-format. Kept word for word, except the scratch folder.
+# review-format. Kept word for word, except the home and scratch folders.
 REFUSED_FOR_A_PATH = """Review PR https://github.com/hornof/sketch-gallery/pull/47 (issue hornof/sketch-gallery#46). The branch `review-format` is checked out in /Users/x/src/claude/sketch-gallery-wt/review-format. The apb plugin's files are in /Users/x/.claude/plugins/cache/apb/apb/0.3.29/. Don't wait on GitHub's browser tests.
 
 Your shell's `gh` acts as `hornof-claude` through GH_TOKEN; it's a collaborator here. Never print a token value.
@@ -386,9 +386,14 @@ class NamesAreNotInstructions(unittest.TestCase):
                      "Format the report in /tmp/review-format.md as a table.",
                      "Use the format in docs/review-format.md for the review.",
                      "On branch review-format, post it as one comment.",
-                     "Format your review like docs/reviewer-notes.md says."]:
+                     "Format your review like docs/reviewer-notes.md says.",
+                     "Format the review/report as a table.",
+                     "Use this format/layout for the review.",
+                     "Leave out the notes/decisions.",
+                     "No index/summary.",
+                     "Re-format the review as a table."]:
             with self.subTest(text=text):
-                self.assertTrue(brief.format_instructions(text))
+                self.assertTrue(brief.format_instructions(text, "apb:reviewer"))
 
     def test_the_hook_lets_the_refused_brief_through(self):
         r = run([SCRIPT], dispatch(REFUSED_FOR_A_PATH))

@@ -6,7 +6,7 @@ Claude Code runs this from hooks/hooks.json, with the event's JSON on stdin:
   to review, comment, report or PR; in a reviewer's brief also "leave out items" and "no index"), the
   call is refused, with a reason that names what was
   found and says to send the task only. Only the brief's own words count: words inside a path, URL,
-  branch or file name (…-wt/review-format, format.md) are left out. The format lives in agents/builder.md and agents/reviewer.md.
+  branch or file name (/w/review-format, review-format, format.md) are left out. The format lives in agents/builder.md and agents/reviewer.md.
 - SubagentStop: when an agent's report says it "departed from" its file, or did something "as you
   asked, instead of" what its file says, a Departure line goes into .apb/events.jsonl (apb projects
   only, the ones with docs/MAP.md). hooks/apb-stop.py then sends back any hand-off to the human until
@@ -57,13 +57,15 @@ REVIEWER_PHRASES = [re.compile(p, re.I) for p in [
     r"\b(?:no|without(?: an?| the)?|skip the) index\b",
 ]]
 # A word joined to a name by one of these is part of the name, not of the brief's own words: a branch
-# (review-format), a file (format.md), a flag (--format), an anchor (#review).
-BEFORE_NAME = r"(?<![-./\\#@])"
-AFTER_NAME = r"(?![-/\\#@]|\.\w)"
-FORMAT_WORD = re.compile(BEFORE_NAME + r"\bformat(?:s|ted|ting)?\b" + AFTER_NAME, re.I)
+# (review-format), a file (format.md), a flag (--format), an anchor (#review). A slash is not one of
+# them, so "the review/report" still counts; "re-format" is a word, not a name.
+BEFORE_NAME = r"(?<![-.\\#@])"
+AFTER_NAME = r"(?![-\\#@]|\.\w)"
+FORMAT_WORD = re.compile(r"(?:(?<=\bre-)|" + BEFORE_NAME + r")\bformat(?:s|ted|ting)?\b" + AFTER_NAME, re.I)
 OUTPUT_WORD = re.compile(BEFORE_NAME + r"\b" + OUTPUT + r"\b" + AFTER_NAME, re.I)
-# Paths and URLs: any run without spaces that holds a slash. Their words are never instructions.
-PATH = re.compile(r"\S*[/\\]\S*")
+# Paths and URLs: a run without spaces that starts with /, ~, ., a drive letter or a URL scheme, or
+# holds two slashes, or holds a slash and ends in a file extension. Their words are never instructions.
+PATH = re.compile(r"(?<!\S)(?:[/~.]|[A-Za-z]:\\|\S*://)\S*|\S*[/\\]\S*[/\\]\S*|\S*[/\\]\S*\.\w+")
 SENTENCE = re.compile(r"[.!?;]+(?=\s|$)|\n\s*\n|\n\s*(?=[-*+]|\d+[.)])")
 
 
