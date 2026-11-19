@@ -11,12 +11,17 @@ It works the times out from .apb/events.jsonl and GitHub, never by hand:
   (#N, issue-N, issue view N, issues/N). An agent resumed later keeps its first start.
 - hand-offs: the Stop lines with holder "human" between the PR opening and the human's last action
   (below) that name the PR or the card (#N, /pull/N), or else all of them. Their number is in the
-  comment: more than usual means the PR came back to Claude after a hand-off.
+  comment. A card with a Decision usually has 2 ("answer the decision", then "merge"); more means the
+  PR came back to Claude after a hand-off.
 - review: the PR opening to the first hand-off.
-- human: the last hand-off to the human's last action on the PR: the merge, or the close, or for a PR
-  still open, the human's last comment. So a second pass by the builder after a hand-off (a red test
-  suite, a missed fix) is not counted as the human's time. GitHub doesn't say when a thread was
-  resolved, so that isn't used.
+- human: the sum of the human's waits. Each wait runs from a hand-off to the human's next action: a
+  chat message in the orchestrator's session, or a comment on the PR or the card. The last wait runs
+  to the human's last action on the PR: the merge, or the close, or for a PR still open, the human's
+  last comment. So a second pass by the builder after a hand-off (a red test suite, a missed fix) is
+  not counted as the human's time, and answering a Decision is. A wait with no action seen runs on
+  to the next hand-off. When the orchestrator answers the human and stops with no holder line, a new
+  wait starts there, as hooks/apb-stop.py reads it. GitHub doesn't say when a thread was resolved,
+  so that isn't used.
 - messages: the human's messages between the first hand-off and that last action that aren't "go", a
   decision letter, "resolved" or "merged": prompts in the orchestrator's session (hooks/apb-events.py
   marks each one routine or not, without keeping its text) and the human's comments on the PR. A
@@ -113,6 +118,48 @@ def hand_offs(events, opened, end, pr, number):
     return [e for e in stops if names(e.get("todo"), pr, number)] or stops
 
 
+def human_time(events, hands, end, data, p, claude_login=None):
+    """Seconds the human held the PR: the sum of each wait, from each hand-off to the human's next action,
+    and from the last hand-off to end. An action is a chat message in the hand-off's session that Claude
+    Code didn't send itself, or the human's comment on the PR or the card. A wait with no action seen
+    runs on to the next hand-off. GitHub doesn't say when a thread was resolved, so that isn't used."""
+    comments = [seconds(c["createdAt"]) for c in p.get("comments", []) + data.get("card_comments", [])
+                if c.get("createdAt") and not by_claude(c, claude_login)]
+    starts = sorted([(seconds(e["time"]), e.get("session")) for e in hands] +
+                    resumes(events, seconds(hands[0]["time"]), seconds(hands[-1]["time"])))
+    total = 0.0
+    for i, (t, session) in enumerate(starts):
+        if i == len(starts) - 1:
+            total += end - t
+            break
+        chat = [seconds(e["time"]) for e in events if e.get("event") == "UserPromptSubmit"
+                and e.get("session") == session and not e.get("automatic")]
+        total += min([a for a in chat + comments if a > t] + [starts[i + 1][0]]) - t
+    return total
+
+
+def resumes(events, first, last):
+    """(time, session) of each Stop between first and last that starts a new wait for the human without
+    a new hand-off: a Stop with no holder line, at the end of a turn the human started with a message,
+    while the session's last holder was the human. hooks/apb-stop.py reads such a Stop the same way: the
+    orchestrator answered the human and the human holds the ball again."""
+    found, holder, human_said = [], {}, {}
+    for e in events:
+        s = e.get("session")
+        if e.get("event") == "UserPromptSubmit" and not e.get("automatic") and "routine" in e:
+            human_said[s] = True
+        if e.get("event") != "Stop":
+            continue
+        t = seconds(e["time"])
+        if e.get("holder"):
+            holder[s] = e["holder"]
+        elif not e.get("sent_back") and holder.get(s) == "human" and human_said.get(s) and first < t < last:
+            found.append((t, s))
+        if not e.get("sent_back"):
+            human_said[s] = False
+    return found
+
+
 def last_action(p, claude_login=None):
     """(time, "merge" | "close" | "comment") or (None, None)."""
     if p.get("mergedAt"):
@@ -155,7 +202,7 @@ def card_times(events, data, claude_login=None):
     times = [seconds(e["time"]) for e in hands]
     h, last = times[0], times[-1]
     r.update(first_hand_off=h, last_hand_off=last, hand_off_times=times, hand_offs=len(hands),
-             review_min=minutes(opened, h), human_min=minutes(last, end))
+             review_min=minutes(opened, h), human_min=round(human_time(events, hands, end, data, p, claude_login) / 60, 1))
     prompts = [e for e in events if e.get("event") == "UserPromptSubmit" and e.get("session") == hand.get("session")
                and h < seconds(e["time"]) <= end and not e.get("automatic")]
     unknown = sum(1 for e in prompts if "routine" not in e)
@@ -187,7 +234,8 @@ def comment(r, guessed=None):
     if r.get("review_min") is not None:
         lines.append("- Review: %d min, %s opened %s to the first hand-off to the human %s" % (
             round(r["review_min"]), pr, clock(r["opened"]), clock(r["first_hand_off"])))
-        lines.append("- Human: %d min, the last hand-off to the human %s to the %s %s" % (
+        lines.append("- Human: %d min, the human's waits: from each hand-off to their next message or comment, "
+                     "and from the last hand-off %s to the %s %s" % (
             round(r["human_min"]), clock(r["last_hand_off"]),
             {"merge": "merge", "close": "close", "comment": "human's last comment"}[r["last_action"]],
             clock(r["end"])))
@@ -235,7 +283,7 @@ def collect(bodies):
 # ---------------------------------------------------------------- GitHub
 
 QUERY = """query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
-  issue(number: $number) { number state comments(last: 100) { nodes { body } }
+  issue(number: $number) { number state comments(last: 100) { nodes { body createdAt author { login } } }
     closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes {
       number createdAt mergedAt closedAt headRefName
       comments(first: 100) { nodes { body createdAt author { login } } }
@@ -266,6 +314,8 @@ def flatten(got):
         prs.append({k: p[k] for k in ("number", "createdAt", "mergedAt", "closedAt", "headRefName")}
                    | {"comments": comments})
     return {"number": i["number"], "state": i["state"], "comments": [c["body"] for c in i["comments"]["nodes"]],
+            "card_comments": [{"body": c["body"], "createdAt": c.get("createdAt"), "author": login(c)}
+                              for c in i["comments"]["nodes"]],
             "prs": prs}
 
 

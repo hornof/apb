@@ -69,8 +69,9 @@ def pr(number=58, opened=10, merged=30, closed=None, branch="issue-54-brief-chec
             else None, "headRefName": branch, "comments": list(comments)}
 
 
-def issue(prs, number=54, state="CLOSED", comments=()):
-    return {"number": number, "state": state, "comments": list(comments), "prs": prs}
+def issue(prs, number=54, state="CLOSED", comments=(), card_comments=()):
+    return {"number": number, "state": state, "comments": list(comments), "prs": prs,
+            "card_comments": list(card_comments)}
 
 
 def builder_54():
@@ -92,8 +93,12 @@ class Example(unittest.TestCase):
              "agent_type": "apb:builder", "command": "git -C /wt push -u origin issue-54-brief-check", "exit": 0},
             {"time": "2026-11-18T22:34:09.664Z", "event": "Stop", "session": S, "holder": "human",
              "todo": "answer [decision 9 on PR #58 (Card #54)](https://github.com/hornof/apb/pull/58)"},
+            {"time": "2026-11-18T22:35:46.227Z", "event": "UserPromptSubmit", "session": S,
+             "automatic": True},  # the builder reporting back: not the human
+            {"time": "2026-11-18T22:36:57.828Z", "event": "UserPromptSubmit", "session": S, "routine": True},
             {"time": "2026-11-18T22:40:05.152Z", "event": "Stop", "session": S, "holder": "human",
              "todo": "merge [PR #58 (Card #54)](https://github.com/hornof/apb/pull/58)"},
+            {"time": "2026-11-18T22:40:50.000Z", "event": "UserPromptSubmit", "session": S, "routine": False},
             {"time": "2026-11-18T22:41:11.109Z", "event": "SubagentStart", "session": S,
              "agent_id": "ab0", "agent_type": "apb:builder"},  # the suite was red: the builder again
             {"time": "2026-11-18T22:44:02.493Z", "event": "Stop", "session": S, "holder": "human",
@@ -106,7 +111,8 @@ class Example(unittest.TestCase):
         self.assertEqual(r["pr"], 58)
         self.assertAlmostEqual(r["build_min"], 6.4, places=1)
         self.assertAlmostEqual(r["review_min"], 4.6, places=1)
-        self.assertAlmostEqual(r["human_min"], 3.8, places=1)  # from the last hand-off, 22:44:02
+        # waits: 22:34:09 to 22:36:57, 22:40:05 to 22:40:50, 22:44:02 to the merge; the builder's pass is out
+        self.assertAlmostEqual(r["human_min"], 7.4, places=1)
         self.assertEqual(r["hand_offs"], 3)
         self.assertEqual(r["last_action"], "merge")
 
@@ -165,7 +171,7 @@ class Review(unittest.TestCase):
                                  stop(12, "human", "answer decision 3 on PR #58"), stop(15, "human", "merge PR #58")]
         r = ct.card_times(events, issue([pr()]))
         self.assertEqual(r["review_min"], 2.0)
-        self.assertEqual(r["human_min"], 15.0)  # from the last hand-off, minute 15
+        self.assertEqual(r["human_min"], 18.0)  # no action from the human seen: 12 to 15, then 15 to 30
         self.assertEqual(r["hand_offs"], 2)
 
     def test_a_stop_naming_the_pr_beats_an_earlier_one_that_does_not(self):
@@ -203,11 +209,12 @@ class HandOffs(unittest.TestCase):
     """The PR came back after a hand-off: the builder's second pass is not the human's time."""
 
     def test_two_hand_offs(self):
-        events = builder_54() + [stop(14, "human", "merge PR #58"), bash(16, "b1", "git push origin issue-54-brief-check"),
+        events = builder_54() + [stop(14, "human", "merge PR #58"), prompt(15, routine=False),
+                                 bash(16, "b1", "git push origin issue-54-brief-check"),
                                  stop(18, "claude"), stop(25, "human", "merge PR #58")]
         r = ct.card_times(events, issue([pr()]))
         self.assertEqual(r["review_min"], 4.0)  # opened to the first hand-off
-        self.assertEqual(r["human_min"], 5.0)  # the last hand-off to the merge
+        self.assertEqual(r["human_min"], 6.0)  # 14 to the human's message at 15, then 25 to the merge
         self.assertEqual(r["hand_offs"], 2)
         self.assertEqual((r["first_hand_off"], r["last_hand_off"]), (ct.seconds(at(14)), ct.seconds(at(25))))
 
@@ -218,9 +225,10 @@ class HandOffs(unittest.TestCase):
 
     def test_only_stops_naming_the_pr_count_when_some_do(self):
         events = builder_54() + [stop(12, "human", "merge PR #57"), stop(14, "human", "merge PR #58"),
-                                 stop(20, "human", "say go for the next card"), stop(25, "human", "merge PR #58")]
+                                 stop(20, "human", "say go for the next card"), stop(25, "human", "merge PR #58"),
+                                 prompt(16, routine=False)]
         r = ct.card_times(events, issue([pr()]))
-        self.assertEqual((r["review_min"], r["human_min"], r["hand_offs"]), (4.0, 5.0, 2))
+        self.assertEqual((r["review_min"], r["human_min"], r["hand_offs"]), (4.0, 7.0, 2))
 
     def test_stops_outside_the_pr_do_not_count(self):
         events = builder_54() + [stop(8, "human", "merge PR #58"), stop(14, "human", "merge PR #58"),
@@ -232,6 +240,66 @@ class HandOffs(unittest.TestCase):
         events = builder_54() + [stop(14, "human", "PR #58"), prompt(15, routine=False), stop(25, "human", "PR #58"),
                                  prompt(26, routine=False)]
         self.assertEqual(ct.card_times(events, issue([pr()]))["messages"], 2)
+
+
+class HumanWaits(unittest.TestCase):
+    """Human = the sum of the human's waits: each hand-off to the human's next action (a chat message,
+    a GitHub comment on the PR or the card, or the merge), and the last hand-off to the merge."""
+
+    def test_a_decision_then_the_merge(self):  # card #17: decision 23:15, reply 23:21, merge hand-off 23:23
+        events = builder_54() + [stop(15, "human", "answer decision 9 on PR #58"), prompt(21, routine=True),
+                                 stop(23, "human", "merge PR #58")]
+        r = ct.card_times(events, issue([pr(merged=24)]))
+        self.assertEqual((r["human_min"], r["hand_offs"]), (7.0, 2))  # 15 to 21, then 23 to 24
+
+    def test_a_question_mid_wait_does_not_restart_the_clock(self):
+        events = builder_54() + [stop(14, "human", "merge PR #58"), prompt(20, routine=False),
+                                 stop(21, "human", "merge PR #58")]
+        self.assertEqual(ct.card_times(events, issue([pr()]))["human_min"], 15.0)  # 14 to 20, then 21 to 30
+
+    def test_an_answer_to_the_humans_question_with_no_new_hand_off_starts_a_new_wait(self):
+        # card #17: the human asked at 23:17, the orchestrator answered and stopped at 23:18 with no
+        # holder line, so the human held the PR again (as hooks/apb-stop.py reads it)
+        events = builder_54() + [stop(14, "human", "answer decision 3 on PR #58"), prompt(15, routine=False),
+                                 stop(16), prompt(20, routine=True), stop(21), stop(25, "human", "merge PR #58")]
+        r = ct.card_times(events, issue([pr()]))
+        self.assertEqual((r["human_min"], r["hand_offs"]), (14.0, 2))  # 14-15, 16-20, 21-25, 25-30
+
+    def test_a_turn_without_a_human_message_does_not_start_a_wait(self):
+        events = builder_54() + [stop(14, "human", "PR #58"),
+                                 prompt(17, automatic=True), stop(18),  # the builder reporting back
+                                 prompt(19), stop(20),  # a prompt logged before the routine mark
+                                 stop(21, sent_back=True), stop(25, "human", "PR #58")]
+        self.assertEqual(ct.card_times(events, issue([pr()]))["human_min"], 10.0)  # 14-19, 25-30
+
+    def test_a_github_only_reply_ends_the_wait(self):
+        events = builder_54() + [stop(14, "human", "answer decision 3 on PR #58"), stop(25, "human", "merge PR #58")]
+        reply = {"body": "b", "author": "hornof", "createdAt": gh_at(18)}
+        on_pr = ct.card_times(events, issue([pr(comments=[reply])]), "hornof-claude")
+        on_card = ct.card_times(events, issue([pr()], card_comments=[reply]), "hornof-claude")
+        self.assertEqual((on_pr["human_min"], on_card["human_min"]), (9.0, 9.0))  # 14 to 18, then 25 to 30
+
+    def test_claudes_comments_and_automatic_prompts_do_not_end_a_wait(self):
+        events = builder_54() + [stop(14, "human", "PR #58"), prompt(15, automatic=True),
+                                 prompt(16, routine=False, session="another"), stop(25, "human", "PR #58")]
+        fixed = {"body": "Fixed.", "author": "hornof-claude", "createdAt": gh_at(17)}
+        signed = {"body": "Fixed." + SIGN, "author": "hornof", "createdAt": gh_at(18)}
+        r = ct.card_times(events, issue([pr(comments=[fixed])], card_comments=[signed]), "hornof-claude")
+        self.assertEqual(r["human_min"], 16.0)  # nothing from the human: 14 to 25, then 25 to 30
+
+    def test_an_action_before_the_hand_off_does_not_end_it(self):
+        events = builder_54() + [prompt(13, routine=False), stop(14, "human", "PR #58")]
+        reply = {"body": "b", "author": "hornof", "createdAt": gh_at(12)}
+        self.assertEqual(ct.card_times(events, issue([pr(comments=[reply])]), "hornof-claude")["human_min"], 16.0)
+
+    def test_card_comments_come_from_github(self):
+        got = json.loads(json.dumps(GQL))
+        got["data"]["repository"]["issue"]["comments"]["nodes"] = [
+            {"body": "go", "createdAt": gh_at(13), "author": {"login": "hornof"}}]
+        data = ct.flatten(got)
+        self.assertEqual(data["comments"], ["go"])
+        self.assertEqual(data["card_comments"], [{"body": "go", "createdAt": gh_at(13), "author": "hornof"}])
+        self.assertEqual(ct.QUERY.count("author { login }"), 4)
 
 
 class LastAction(unittest.TestCase):
@@ -342,7 +410,7 @@ class Messages(unittest.TestCase):
                                                  "closedByPullRequestsReferences": {"nodes": [node]}}}}}
         authors = [c["author"] for c in ct.flatten(got)["prs"][0]["comments"]]
         self.assertEqual(authors, ["hornof-claude", None, "hornof"])
-        self.assertEqual(ct.QUERY.count("author { login }"), 3)
+        self.assertEqual(ct.QUERY.count("author { login }"), 4)
 
     def test_a_message_logged_without_its_type_makes_the_count_unknown(self):
         events = self.base + [prompt(13, routine=False), {"time": at(14), "event": "UserPromptSubmit", "session": S}]
@@ -378,7 +446,8 @@ class Comment(unittest.TestCase):
         events = builder_54() + [stop(12, "human", "PR #58"), stop(25, "human", "PR #58")]
         text = ct.comment(ct.card_times(events, issue([pr()])))
         self.assertIn("Review: 2 min, PR #58 opened 12:10 to the first hand-off to the human 12:12", text)
-        self.assertIn("Human: 5 min, the last hand-off to the human 12:25 to the merge 12:30", text)
+        self.assertIn("Human: 18 min, the human's waits: from each hand-off to their next message or comment, "
+                      "and from the last hand-off 12:25 to the merge 12:30", text)
         self.assertIn("Hand-offs: 2, at 12:12 and 12:25", text)
         self.assertEqual(ct.data_of(text)["hand_offs"], 2)
 
@@ -429,12 +498,42 @@ def oracle(events, data):
     hands = named or stops
     if not hands:
         return build, None, None, None, None
-    first, last = hands[0], hands[-1]
+    first = hands[0]
     h = ct.seconds(first["time"])
+    human_comments = [ct.seconds(c["createdAt"]) for c in p["comments"] + data["card_comments"]
+                      if c["author"] == "hornof"]
     chat = [e for e in ordered if e["event"] == "UserPromptSubmit" and e["session"] == first["session"]
             and h < ct.seconds(e["time"]) <= merged and not e.get("automatic")]
-    count = None if any("routine" not in e for e in chat) else sum(1 for e in chat if not e["routine"])
-    return build, (h - opened) / 60, (merged - ct.seconds(last["time"])) / 60, count, len(hands)
+    count = None if any("routine" not in e for e in chat) else (
+        sum(1 for e in chat if not e["routine"]) +
+        sum(1 for c in p["comments"] if c["author"] == "hornof" and not ct.routine(c["body"])
+            and h < ct.seconds(c["createdAt"]) <= merged))
+    first_t, last_t = ct.seconds(hands[0]["time"]), ct.seconds(hands[-1]["time"])
+    waits = list(hands)
+    for i, e in enumerate(ordered):  # a holderless Stop ending a turn the human started resumes the wait
+        if e["event"] != "Stop" or e.get("holder") or e.get("sent_back"):
+            continue
+        if not first_t < ct.seconds(e["time"]) < last_t:
+            continue
+        before = [x for x in ordered[:i] if x["session"] == e["session"]]
+        holders = [x["holder"] for x in before if x["event"] == "Stop" and x.get("holder")]
+        ends = [j for j, x in enumerate(before) if x["event"] == "Stop" and not x.get("sent_back")]
+        turn = before[ends[-1] + 1:] if ends else before
+        if holders and holders[-1] == "human" and any(
+                x["event"] == "UserPromptSubmit" and "routine" in x and not x.get("automatic") for x in turn):
+            waits.append(e)
+    waits.sort(key=lambda e: e["time"])
+    human = 0.0
+    for i, w in enumerate(waits):  # each wait, one at a time
+        t = ct.seconds(w["time"])
+        if i == len(waits) - 1:
+            human += merged - t
+            continue
+        acts = [ct.seconds(e["time"]) for e in ordered if e["event"] == "UserPromptSubmit"
+                and e["session"] == w["session"] and not e.get("automatic")] + human_comments
+        later = [a for a in acts if a > t] + [ct.seconds(waits[i + 1]["time"])]
+        human += min(later) - t
+    return build, (h - opened) / 60, human / 60, count, len(hands)
 
 
 class Properties(unittest.TestCase):
@@ -452,12 +551,12 @@ class Properties(unittest.TestCase):
                     events.append(start(t + rng.randint(1, 10), agent, kind))  # resumed later
                 branch = rng.choice(["issue-54-brief-check", "issue-53-other", "fix-times"])
                 events.append(bash(t + rng.randint(0, 5), agent, "git push origin " + branch, kind))
-            for _ in range(rng.randint(0, 5)):
+            for _ in range(rng.randint(0, 10)):
                 t = rng.randint(0, 100)
-                holder = rng.choice(["human", "claude", None])
+                holder = rng.choice(["human", "claude", None, None])
                 todo = rng.choice(["merge PR #58", "go for the next card", None])
                 events.append(stop(t, holder, todo, session=rng.choice([S, S, "other"])))
-            for _ in range(rng.randint(0, 6)):
+            for _ in range(rng.randint(0, 10)):
                 kind = rng.choice(["routine", "other", "auto", "unknown"])
                 session = rng.choice([S, S, "other"])
                 t = rng.randint(0, 100)
@@ -465,10 +564,21 @@ class Properties(unittest.TestCase):
                     events.append({"time": at(t), "event": "UserPromptSubmit", "session": session})
                 else:
                     events.append(prompt(t, routine=kind == "routine", automatic=kind == "auto", session=session))
+            if rng.random() < 0.5:  # a question mid-wait: hand-off, the human asks, an answer with no holder line
+                a = rng.randint(opened - 5, merged)
+                kind = rng.choice(["routine", "other", "auto", "unknown"])
+                asked = {"time": at(a + 1), "event": "UserPromptSubmit", "session": S} if kind == "unknown" else \
+                    prompt(a + 1, routine=kind == "routine", automatic=kind == "auto")
+                events += [stop(a, "human", "answer decision 3 on PR #58"), asked,
+                           stop(a + 2, sent_back=rng.random() < 0.3),
+                           stop(rng.randint(a + 3, a + 20), "human", "merge PR #58")]
             rng.shuffle(events)
             events.sort(key=lambda e: e["time"])  # the file is in time order
-            data = issue([pr(opened=opened, merged=merged)])
-            r = ct.card_times(events, data)
+            comments = [[{"body": rng.choice(["b", "why?", "Fixed."]), "author": rng.choice(["hornof", "hornof-claude"]),
+                          "createdAt": gh_at(rng.randint(0, 100))} for _ in range(rng.randint(0, 2))]
+                        for _ in range(2)]
+            data = issue([pr(opened=opened, merged=merged, comments=comments[0])], card_comments=comments[1])
+            r = ct.card_times(events, data, "hornof-claude")
             want = oracle(events, data)
             got = (r["build_min"], r["review_min"], r["human_min"], r["messages"], r["hand_offs"])
             for g, w, name in zip(got, want, ["build", "review", "human", "messages", "hand_offs"]):
@@ -480,8 +590,9 @@ class Properties(unittest.TestCase):
                 self.assertTrue(g is None or g >= 0)
             if r["hand_offs"]:
                 self.assertLessEqual(r["first_hand_off"], r["last_hand_off"])
-                self.assertAlmostEqual(r["review_min"] + r["human_min"], (r["end"] - r["opened"]) / 60 -
-                                       (r["last_hand_off"] - r["first_hand_off"]) / 60, delta=0.11)
+                # the human's time is at least the last wait and at most the first hand-off to the end
+                self.assertGreaterEqual(r["human_min"], (r["end"] - r["last_hand_off"]) / 60 - 0.06)
+                self.assertLessEqual(r["human_min"], (r["end"] - r["first_hand_off"]) / 60 + 0.06)
 
 
 GQL = {"data": {"repository": {"issue": {
