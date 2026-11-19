@@ -37,15 +37,23 @@ which hooks/apb-events.py writes.
   link." A line that only mentions or quotes a decision asks nothing. Under an "N things" first line,
   each numbered item that names a decision needs the link on its own line. Every decision lives on
   GitHub; the hand-off only points at it.
+- On any stop whose first line hands something to the human, the hook looks up what the "1 thing" line,
+  or each numbered item under "N things", asks the human to act on: each decision thread it links
+  (…/pull/N#discussion_rM), and, when the line says "merge", each PR it links, or else each "PR #N" it
+  names, in the project's own repo. If a thread is already resolved, or a PR to merge is already merged
+  or closed, it sends the message back once, with a note that starts "A hand-off asks the human for
+  something that is already done." It looks up at most MAX_DONE of them.
 - On any stop whose first line hands something to the human, if the message links an open PR in the
   apb repo (the repository in the plugin's manifest) that touches templates/, hooks/, agents/, a
   skill's SKILL.md or docs/playbook.md, and that PR's description has no "Projects:" line ("Projects: none",
   or "Projects:" with links to the projects' PRs that apply the change), the hook sends the message
   back once, with a note that starts "An apb PR in this hand-off changes how projects run." It looks
-  each PR up with gh (at most MAX_PRS, within PR_BUDGET seconds); a PR it can't look up is let through.
+  each PR up with gh (at most MAX_PRS).
+- Both checks share one gh time budget (PR_BUDGET seconds, at most PR_TIME_LIMIT for one call) and look
+  each PR up once. Whatever can't be looked up in time is let through.
 - It appends a Stop line to the events file, with who holds the ball when the message says so, the
-  unchecked facts ("unchecked"), "decision-without-link" and the PRs missing their Projects line
-  ("projects-line-missing") when those were why it sent the message back.
+  unchecked facts ("unchecked"), "decision-without-link", what was already done ("already-done") and the
+  PRs missing their Projects line ("projects-line-missing") when those were why it sent the message back.
 - If the human holds the ball, other than after "All clear", it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
   new first line ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
@@ -152,7 +160,20 @@ PROJECTS_NONE = re.compile(r"(?i:none)\b")
 PR_LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/pull/\d+|\b[\w.-]+/[\w.-]+#\d+")
 MAX_PRS = 3  # apb PRs looked up in one stop
 PR_TIME_LIMIT = 4  # seconds for one gh call
-PR_BUDGET = 6  # seconds for all of them; the Stop hook has 10 in all
+PR_BUDGET = 6  # seconds for all the stop's gh calls, both checks together; the Stop hook has 10 in all
+
+DONE = ("A hand-off asks the human for something that is already done: %s. Look it up again, then hand "
+        "off only what is left.")
+# What a hand-off line asks the human to act on: a decision thread it links, or, when it says "merge",
+# the PRs it links, else the PRs it names ("merge PR #44", in the project's own repo).
+THREAD_LINK = re.compile(r"(?<![\w.-])github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)(?:/files)?#discussion_r(\d+)")
+PULL_LINK = re.compile(r"(?<![\w.-])github\.com/([\w.-]+/[\w.-]+)/pull/(\d+)")
+BARE_PR = re.compile(r"\bPR\s*#(\d+)\b")
+MERGE = re.compile(r"(?i:\bmerge\b)")
+MAX_DONE = 3  # threads and PRs looked up in one stop for this check
+THREADS_QUERY = ("query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) "
+                 "{ pullRequest(number: $number) { reviewThreads(first: 100) { nodes { isResolved "
+                 "comments(first: 100) { nodes { databaseId } } } } } } }")
 
 # The ETA is a clock time: 7:10 PM, 7:10pm, 7:10 p.m. or 19:10.
 NOTHING = re.compile(r"Nothing for you to do right now\. Waiting on .+, ETA \d{1,2}:\d{2}"
@@ -319,26 +340,138 @@ def has_projects_line(body):
     return False
 
 
-def view_pr(repo, number, time_limit=PR_TIME_LIMIT):
-    """The PR's state, description and files, from gh."""
-    out = subprocess.run(["gh", "pr", "view", str(number), "--repo", repo, "--json", "state,body,files"],
+def view_pr(repo, number, time_limit=PR_TIME_LIMIT, cwd=None):
+    """The PR's state, description and files, from gh. With no repo, gh uses the repo of the folder cwd."""
+    out = subprocess.run(["gh", "pr", "view", str(number)] + (["--repo", repo] if repo else [])
+                         + ["--json", "state,body,files"],
                          stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
-                         timeout=time_limit).stdout
+                         timeout=time_limit, cwd=cwd).stdout
     return json.loads(out)
 
 
-def projects_line_missing(message, lookup=None):
-    """The open apb PRs the message links that change how projects run and whose description has no
-    Projects line. A PR that can't be looked up in time is let through."""
-    repo = apb_repo()
-    started = time.time()
-    missing = []
-    for number in apb_prs(message, repo)[:MAX_PRS]:
-        left = PR_BUDGET - (time.time() - started)
-        if left <= 0:
+def view_threads(repo, number, time_limit=PR_TIME_LIMIT):
+    """{comment id: whether its thread is resolved}, for each comment in the PR's review threads, from gh."""
+    owner, name = repo.split("/", 1)
+    out = subprocess.run(["gh", "api", "graphql", "-F", "number=%d" % number, "-f", "owner=" + owner,
+                          "-f", "name=" + name, "-f", "query=" + THREADS_QUERY],
+                         stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
+                         timeout=time_limit).stdout
+    try:
+        nodes = json.loads(out)["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+        return {c["databaseId"]: t["isResolved"] is True for t in nodes for c in t["comments"]["nodes"]}
+    except (KeyError, TypeError) as e:
+        raise ValueError("unexpected answer: %s" % e)
+
+
+class OutOfTime(subprocess.SubprocessError):
+    """The stop's time for gh calls is used up."""
+
+
+class GitHub:
+    """The gh lookups of one stop: one time budget (PR_BUDGET) for all of them, each PR and each PR's
+    threads looked up once, a failure remembered like an answer. pr_lookup(repo, number) and
+    thread_lookup(repo, number) stand in for gh in tests. project is the folder whose repo gh uses for
+    a PR named with no repo."""
+
+    def __init__(self, project=None, pr_lookup=None, thread_lookup=None):
+        self.project, self.pr_lookup, self.thread_lookup = project, pr_lookup, thread_lookup
+        self.started = time.time()
+        self.answers = {}
+
+    def left(self):
+        return PR_BUDGET - (time.time() - self.started)
+
+    def pr(self, repo, number):
+        return self.ask(("pr", repo, number), self.pr_lookup,
+                        lambda limit: view_pr(repo, number, limit) if repo
+                        else view_pr(repo, number, limit, cwd=self.project))
+
+    def threads(self, repo, number):
+        return self.ask(("threads", repo, number), self.thread_lookup,
+                        lambda limit: view_threads(repo, number, limit))
+
+    def ask(self, key, fake, real):
+        if key not in self.answers:
+            try:
+                if fake:
+                    value = fake(key[1], key[2])
+                else:
+                    left = self.left()
+                    if left <= 0:
+                        raise OutOfTime()
+                    value = real(min(PR_TIME_LIMIT, left))
+                self.answers[key] = (True, value)
+            except (OSError, ValueError, subprocess.SubprocessError) as e:
+                self.answers[key] = (False, e)
+        ok, value = self.answers[key]
+        if not ok:
+            raise value
+        return value
+
+
+def hand_off_lines(message):
+    """What the hand-off asks the human to do: the "1 thing" first line, or each numbered item under an
+    "N things" first line. Any other message hands off nothing."""
+    said = first_line(message)
+    if not said or said[0] != "human" or said[1] == CLEAR:
+        return []
+    return items(message) or [clean(l) for l in message.splitlines() if l.strip()][:1]
+
+
+def targets(message):
+    """What the hand-off asks the human to act on, outside quoted words, once each, in order:
+    ("thread", repo, PR, comment id) for each decision thread a hand-off line links, and, on a line that
+    says "merge", ("pr", repo, number) for each PR it links, or, if it links none, ("pr", None, number)
+    for each PR it names ("merge PR #44"; the project's own repo)."""
+    found = []
+    for line in hand_off_lines(message):
+        text = QUOTE.sub(" ", line)
+        here = [("thread", m.group(1), int(m.group(2)), int(m.group(3))) for m in THREAD_LINK.finditer(text)]
+        if MERGE.search(text):
+            here += ([("pr", m.group(1), int(m.group(2))) for m in PULL_LINK.finditer(text)]
+                     or [("pr", None, int(m.group(1))) for m in BARE_PR.finditer(text)])
+        for t in here:
+            if t not in found:
+                found.append(t)
+    return found
+
+
+def already_done(message, github):
+    """What the hand-off asks the human to do that is already done: a decision thread that is resolved,
+    a PR to merge that is merged or closed. At most MAX_DONE lookups; one that fails or runs out of time
+    is let through."""
+    done = []
+    for t in targets(message)[:MAX_DONE]:
+        if github.left() <= 0:
             break
         try:
-            pr = lookup(repo, number) if lookup else view_pr(repo, number, min(PR_TIME_LIMIT, left))
+            if t[0] == "thread":
+                threads = github.threads(t[1], t[2])
+                if isinstance(threads, dict) and threads.get(t[3]) is True:
+                    done.append("the decision thread https://github.com/%s/pull/%d#discussion_r%d is resolved"
+                                % t[1:])
+                continue
+            pr = github.pr(t[1], t[2])
+        except (OSError, ValueError, subprocess.SubprocessError):
+            continue
+        state = pr.get("state") if isinstance(pr, dict) else None
+        if state in ("MERGED", "CLOSED"):
+            done.append("PR #%d is %s" % (t[2], state.lower())
+                        + (" (https://github.com/%s/pull/%d)" % (t[1], t[2]) if t[1] else ""))
+    return done
+
+
+def projects_line_missing(message, lookup=None, github=None):
+    """The open apb PRs the message links that change how projects run and whose description has no
+    Projects line. A PR that can't be looked up in time is let through."""
+    github = github or GitHub(pr_lookup=lookup)
+    repo = apb_repo()
+    missing = []
+    for number in apb_prs(message, repo)[:MAX_PRS]:
+        if github.left() <= 0:
+            break
+        try:
+            pr = github.pr(repo, number)
         except (OSError, ValueError, subprocess.SubprocessError):
             continue
         if not isinstance(pr, dict) or pr.get("state") != "OPEN":
@@ -520,8 +653,9 @@ def append(project, line):
         return f.tell()
 
 
-def handle(p, project, now, pr_lookup=None):
-    """Decide on one stop and log it. pr_lookup(repo, number) stands in for gh in tests.
+def handle(p, project, now, pr_lookup=None, thread_lookup=None):
+    """Decide on one stop and log it. pr_lookup(repo, number) and thread_lookup(repo, number) stand in
+    for gh in tests.
     Returns {"send_back": bool, "remind": what or None, "end": the events file's size after the line}."""
     session = p.get("session_id")
     if not isinstance(session, str):
@@ -538,10 +672,13 @@ def handle(p, project, now, pr_lookup=None):
     pending = departures(events) if said and said[0] == "human" else []
     departed = bool(pending) and departure_send_backs(events, session) < MAX_DEPARTURE_SEND_BACKS
     unlinked = not retry and decision_without_link(message)
+    hand_off = not retry and bool(said) and said[0] == "human"
+    github = GitHub(project, pr_lookup, thread_lookup)
+    # A hand-off never asks for something already done: a resolved thread, a merged PR.
+    done = already_done(message, github) if hand_off else []
     # A hand-off of an apb PR that changes how projects run needs its "Projects:" line.
-    no_projects = (projects_line_missing(message, pr_lookup)
-                   if not retry and said and said[0] == "human" else [])
-    send_back = no_line or bool(unchecked) or departed or unlinked or bool(no_projects)
+    no_projects = projects_line_missing(message, github=github) if hand_off else []
+    send_back = no_line or bool(unchecked) or departed or unlinked or bool(done) or bool(no_projects)
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}
     if send_back:
@@ -552,6 +689,8 @@ def handle(p, project, now, pr_lookup=None):
             line["departure"] = True
         if unlinked:
             line["decision-without-link"] = True
+        if done:
+            line["already-done"] = [d[:MAX] for d in done]
         if no_projects:
             line["projects-line-missing"] = no_projects
     elif said:
@@ -566,6 +705,8 @@ def handle(p, project, now, pr_lookup=None):
             notes.append(DEPARTED % quotes)
         if unlinked:
             notes.append(NO_LINK)
+        if done:
+            notes.append(DONE % "; ".join(done))
         if no_projects:
             links = ", ".join("https://github.com/%s/pull/%d" % (apb_repo(), n) for n in no_projects)
             notes.append(PROJECTS % links)

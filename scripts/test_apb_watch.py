@@ -454,6 +454,117 @@ class GitHubChanges(unittest.TestCase):
         self.assertIn("i7: issue(number: 7)", q)
 
 
+def thread_nodes(threads):
+    """A PR's reviewThreads answer. threads: {first comment's id: resolved}."""
+    return {"nodes": [{"isResolved": r, "comments": {"totalCount": 2}, "opening": {"nodes": [{"databaseId": i}]}}
+                      for i, r in threads.items()]}
+
+
+def snap_with(threads, open_prs=(), merged=()):
+    """A snapshot holding the PRs' review threads: threads {PR: {first comment's id: resolved}}."""
+    snap = {"open": {}, "merged": {}, "closed": {}, "issues": {}, "max": max([0] + list(open_prs) + list(merged))}
+    for n in open_prs:
+        t = threads.get(n, {})
+        snap["open"][str(n)] = {"title": "pr %d" % n, "checks": "NONE", "threads": len(t),
+                                "open_threads": sum(1 for r in t.values() if not r), "comments": 0,
+                                "replies": 0, "reviews": 0}
+    for n in merged:
+        snap["merged"][str(n)] = "pr %d" % n
+    snap["threads"] = {str(n): {str(i): r for i, r in t.items()} for n, t in threads.items() if t}
+    return snap
+
+
+class DecisionThreads(unittest.TestCase):
+    """Each Decision thread that becomes resolved is reported, on an open PR or a merged or closed one,
+    and a merged or closed PR stays watched while it has an unresolved thread."""
+
+    def test_normalize_records_each_prs_threads(self):
+        data = gh_answer(open_prs=[5], merged=[4])
+        data["open"]["nodes"][0]["reviewThreads"] = thread_nodes({101: True, 102: False})
+        data["merged"]["nodes"][0]["reviewThreads"] = thread_nodes({90: False})
+        data["closed"]["nodes"] = [{"number": 3, "title": "X", "reviewThreads": thread_nodes({})}]
+        data["w2"] = {"number": 2, "reviewThreads": thread_nodes({80: True})}
+        data["w1"] = None  # a PR GitHub no longer has
+        snap = w.normalize(data, [])
+        self.assertEqual(snap["threads"], {"5": {"101": True, "102": False}, "4": {"90": False}, "2": {"80": True}})
+        self.assertEqual(snap["open"]["5"]["open_threads"], 1)
+        self.assertEqual(snap["merged"], {"4": "pr 4"})  # a watched PR isn't news as a merge
+        self.assertEqual(snap["max"], 5)
+
+    def test_the_query_asks_for_each_watched_pr_and_each_threads_first_comment(self):
+        q = w.build_query([25], [82, 7])
+        self.assertIn("w82: pullRequest(number: 82)", q)
+        self.assertIn("w7: pullRequest(number: 7)", q)
+        self.assertEqual(q.count("opening: comments(first: 1) { nodes { databaseId } }"), 5)  # open, merged, closed, 2 watched
+        self.assertNotIn("pullRequest(number", w.build_query([25]))
+
+    def test_a_resolved_thread_on_an_open_pr(self):
+        old = snap_with({5: {101: False, 102: False}}, open_prs=[5])
+        new = snap_with({5: {101: True, 102: False}}, open_prs=[5])
+        self.assertEqual(w.gh_changes(old, new, "o/n"),
+                         ["PR #5: decision thread resolved: https://github.com/o/n/pull/5#discussion_r101"])
+
+    def test_the_last_one_is_also_all_resolved(self):
+        old = snap_with({5: {101: True, 102: False}}, open_prs=[5])
+        new = snap_with({5: {101: True, 102: True}}, open_prs=[5])
+        self.assertEqual(w.gh_changes(old, new, "o/n"),
+                         ["PR #5: decision thread resolved: https://github.com/o/n/pull/5#discussion_r102",
+                          "PR #5: all review comments resolved"])
+
+    def test_a_resolved_thread_on_a_merged_pr(self):
+        old = snap_with({82: {4627001605: False}}, merged=[82])
+        new = snap_with({82: {4627001605: True}}, merged=[82])
+        self.assertEqual(w.gh_changes(old, new, "hornof/apb"),
+                         ["PR #82: decision thread resolved: "
+                          "https://github.com/hornof/apb/pull/82#discussion_r4627001605"])
+
+    def test_merged_and_resolved_in_one_round(self):
+        old = snap_with({82: {1: False, 2: False}}, open_prs=[82])
+        new = snap_with({82: {1: True, 2: True}}, merged=[82])
+        self.assertEqual(w.gh_changes(old, new), ["PR #82 merged: pr 82", "PR #82: decision thread resolved: r1",
+                                                  "PR #82: decision thread resolved: r2"])
+
+    def test_not_news(self):
+        cases = [
+            ({}, {5: {1: True}}),  # a thread new to us: its resolution isn't a change
+            ({5: {1: True}}, {5: {1: False}}),  # unresolved again
+            ({5: {1: False}}, {}),  # deleted, or the PR no longer read
+            ({5: {1: True}}, {5: {1: True}}),
+        ]
+        for before, after in cases:
+            old, new = snap_with(before, merged=[5]), snap_with(after, merged=[5])
+            self.assertEqual(w.gh_changes(old, new), [], (before, after))
+        old = snap_with({5: {1: False}}, merged=[5])
+        del old["threads"]  # a state saved by an older version
+        self.assertEqual(w.gh_changes(old, snap_with({5: {1: True}}, merged=[5])), [])
+
+    def test_random_thread_changes_match_an_oracle(self):
+        rng = random.Random(85)
+        states = [True, False, None]  # None: no such thread
+        for _ in range(1000):
+            before, after = {}, {}
+            for n in rng.sample(range(1, 9), rng.randint(0, 4)):
+                for i in rng.sample(range(100, 106), rng.randint(0, 4)):
+                    b, a = rng.choice(states), rng.choice(states)
+                    if b is not None:
+                        before.setdefault(n, {})[i] = b
+                    if a is not None:
+                        after.setdefault(n, {})[i] = a
+            want = sorted("PR #%d: decision thread resolved: r%d" % (n, i) for n, t in after.items()
+                          for i, r in t.items() if r and before.get(n, {}).get(i) is False)
+            got = w.gh_changes(snap_with(before, merged=range(1, 9)), snap_with(after, merged=range(1, 9)))
+            self.assertEqual(sorted(got), want, (before, after))
+
+    def test_still_watched(self):
+        snap = snap_with({5: {1: False}, 6: {1: True}, 7: {1: True, 2: False}, 8: {1: False}}, open_prs=[8],
+                         merged=[5, 6, 7])
+        self.assertEqual(w.still_watched(snap), [7, 5])  # 8 is open, 6 has nothing unresolved
+        many = snap_with({n: {1: False} for n in range(1, 40)}, merged=range(1, 40))
+        self.assertEqual(w.still_watched(many), list(range(39, 39 - w.MAX_WATCHED, -1)))
+        self.assertEqual(w.still_watched({}), [])
+        self.assertEqual(w.still_watched(None), [])
+
+
 # ---------------------------------------------------------------- the events file
 
 def ev(t, event, agent=None, kind=None, **extra):
@@ -543,8 +654,10 @@ class Loop(unittest.TestCase):
         self.clock = FakeClock()
         self.snaps = []
         self.ps = ""
+        self.watched = []  # the merged or closed PRs each snapshot was asked to keep watching
 
-    def snapshot(self, repo, issues):
+    def snapshot(self, repo, issues, prs=()):
+        self.watched.append(list(prs))
         s = self.snaps.pop(0) if len(self.snaps) > 1 else self.snaps[0]
         if isinstance(s, Exception):
             raise s
@@ -592,6 +705,22 @@ class Loop(unittest.TestCase):
         self.assertEqual(out[1:], ["GitHub: PR #5 merged: A"])  # the issue's 7 old comments are not news
         out = self.run_watch("--issue", "25")
         self.assertEqual(out[1:], ["GitHub: Issue #25: 1 new comment (C)"])
+
+    def test_a_merged_pr_stays_watched_until_its_threads_are_resolved(self):
+        # The night of PR #82: it merged, and the human resolved its Decision thread after that.
+        open_ = snap_with({82: {1: False}}, open_prs=[82])
+        merged = snap_with({82: {1: False}}, merged=[82])
+        self.snaps = [open_, merged]
+        self.assertEqual(self.run_watch()[1:], ["GitHub: PR #82 merged: pr 82"])
+        later = snap_with({82: {1: True}})  # dropped out of the recent merges; read as a watched PR
+        self.snaps = [later]
+        out = self.run_watch()
+        self.assertEqual(out[1:], ["GitHub: PR #82: decision thread resolved: "
+                                   "https://github.com/o/n/pull/82#discussion_r1"])
+        self.assertEqual(self.watched, [[], [], [82]])
+        self.snaps = [later]
+        self.run_watch("--limit", "1")
+        self.assertEqual(self.watched[-1], [])  # nothing left unresolved: no longer watched
 
     def test_nothing_happens_until_the_limit(self):
         self.snaps = [{"open": {}, "merged": {}, "closed": {}, "issues": {}, "max": 0}]
@@ -693,6 +822,19 @@ class RealScript(unittest.TestCase):
         out = self.run_script("--repo", "o/n", "--limit", "1")
         self.assertIn("o/n", out[0])
         self.assertEqual(out[1:], ["GitHub: PR #7 merged: pr 7"])
+
+    def test_a_thread_resolved_after_the_merge_is_reported(self):
+        opened, merged, later = gh_answer(open_prs=[7]), gh_answer(merged=[7]), gh_answer()
+        opened["open"]["nodes"][0]["reviewThreads"] = thread_nodes({41: False})
+        merged["merged"]["nodes"][0]["reviewThreads"] = thread_nodes({41: False})
+        later["w7"] = {"number": 7, "reviewThreads": thread_nodes({41: True})}
+        self.answers([opened, merged, later])
+        self.assertEqual(self.run_script("--repo", "o/n", "--limit", "0.02")[1:], ["GitHub: PR #7 merged: pr 7"])
+        out = self.run_script("--repo", "o/n", "--limit", "0.02")
+        self.assertEqual(out[1:], ["GitHub: PR #7: decision thread resolved: https://github.com/o/n/pull/7#discussion_r41"])
+        with open(os.path.join(self.dir, "args")) as f:
+            third = json.loads(f.read().splitlines()[2])
+        self.assertTrue(any("w7: pullRequest(number: 7)" in a for a in third), third)
 
     def test_the_repo_comes_from_gh_when_not_given_and_issues_are_asked_for(self):
         self.answers([gh_answer()])
