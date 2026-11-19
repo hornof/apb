@@ -61,7 +61,8 @@ MAX = 300  # longest string kept in a line, in characters
 
 REASON = ("Say who holds the ball. Your work just ran out, so start the message with one of these "
           "lines (playbook, \"Helping the human keep track\"):\n"
-          "- Nothing for you to do right now. Waiting on <what>, about M minutes.\n"
+          "- Nothing for you to do right now. Waiting on <what>, ETA <time>. (A clock time, such as "
+          "7:10 PM; run date first.)\n"
           "- 1 thing for you to do right now: <the thing>.\n"
           "- N things for you to do right now: followed by a numbered list of exactly N things.\n"
           "- All clear: <boards> empty, no open PRs, as of <time>. (Once, when nothing is open on any "
@@ -120,7 +121,9 @@ MAX_PRS = 3  # apb PRs looked up in one stop
 PR_TIME_LIMIT = 4  # seconds for one gh call
 PR_BUDGET = 6  # seconds for all of them; the Stop hook has 10 in all
 
-NOTHING = re.compile(r"Nothing for you to do right now\. Waiting on .+, about \d+ minutes?\.?$")
+# The ETA is a clock time: 7:10 PM, 7:10pm, 7:10 p.m. or 19:10.
+NOTHING = re.compile(r"Nothing for you to do right now\. Waiting on .+, ETA \d{1,2}:\d{2}"
+                     r"(?:\s*[AaPp]\.?[Mm]\.?)?\.?$")
 ONE = re.compile(r"1 thing for you to do right now: (.+?)\.?$")
 MANY = re.compile(r"(\d+) things for you to do right now:$")
 ALL_CLEAR = re.compile(r"All clear: .+ empty, no open PRs, as of .+")

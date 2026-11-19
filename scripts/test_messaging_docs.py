@@ -12,7 +12,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SECTION = "Helping the human keep track"
 ALL_CLEAR = "All clear: <boards> empty, no open PRs, as of <time>."
-NOTHING = "Nothing for you to do right now. Waiting on <what>, about M minutes."
+NOTHING = "Nothing for you to do right now. Waiting on <what>, ETA <time>."
 
 
 def read(rel):
@@ -58,6 +58,10 @@ class Playbook(unittest.TestCase):
         text = flat(read("docs/playbook.md"))
         self.assertIn("an ETA as a clock time, for example \"ETA 2:40 PM\", not \"about 10 minutes\"", text)
         self.assertIn("Run `date` in the same turn as any clock time you state", text)
+        self.assertNotIn("about M minutes", text)
+
+    def test_template_has_no_old_first_line(self):
+        self.assertNotIn("about M minutes", flat(read("templates/CLAUDE-template.md")))
 
     def test_rules_from_the_orchestrators_notes(self):
         for words in ("Status messages are about now",  # no past timings in them

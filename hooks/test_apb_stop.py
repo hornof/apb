@@ -24,7 +24,7 @@ spec = importlib.util.spec_from_file_location("apb_stop", SCRIPT)
 stop = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stop)
 
-NOTHING = "Nothing for you to do right now. Waiting on GitHub checks for PR #40, about 8 minutes."
+NOTHING = "Nothing for you to do right now. Waiting on GitHub checks for PR #40, ETA 7:10 PM."
 ONE = "1 thing for you to do right now: merge PR #44."
 MANY = "2 things for you to do right now:\n1. Merge PR #44.\n2. Answer the question on #41."
 ALL_CLEAR = "All clear: both boards empty, no open PRs, as of 11:58 PM."
@@ -147,6 +147,11 @@ class FirstLine(unittest.TestCase):
                         "Done.\n" + ALL_CLEAR]:  # not the first line
             self.assertIsNone(stop.first_line(message), message)
 
+    def test_nothing_takes_an_eta_as_a_clock_time(self):
+        for eta in ["7:10 PM", "7:10 PM.", "7:10pm", "7:10 p.m.", "19:10", "9:05 AM"]:
+            message = "Nothing for you to do right now. Waiting on the builder, ETA %s" % eta
+            self.assertEqual(stop.first_line(message), ("claude", None), message)
+
     def test_text_after_the_first_line_is_allowed(self):
         self.assertEqual(stop.first_line(ONE + "\n\nPR #44 (Card #41): in review.")[0], "human")
         self.assertEqual(stop.first_line(NOTHING + "\nPR #40: checks running.")[0], "claude")
@@ -173,10 +178,13 @@ class FirstLine(unittest.TestCase):
                         "Nothing for you to do right now. Waiting on CI.",  # no time
                         "1 things for you to do right now: merge PR #44.",
                         "1 things for you to do right now:\n1. Merge PR #44.",
-                        "Nothing for you to do right now. Waiting on CI, about soon.",
+                        "Nothing for you to do right now. Waiting on CI, ETA soon.",
+                        "Nothing for you to do right now. Waiting on CI, about 5 minutes.",  # the old form
+                        "Nothing for you to do right now. Waiting on CI, ETA 5 minutes.",  # not a clock time
+                        "Nothing for you to do right now. Waiting on CI, ETA 7:10 PM. Then I start #5.",
                         "0 things for you to do right now:",
                         "1 thing for you to do right now:",
-                        "NOTHING FOR YOU TO DO RIGHT NOW. Waiting on CI, about 5 minutes.",
+                        "NOTHING FOR YOU TO DO RIGHT NOW. Waiting on CI, ETA 7:10 PM.",
                         "Here is the summary.\n" + ONE,  # not the first line
                         "2 things for you to do right now: merge and answer."]:
             self.assertIsNone(stop.first_line(message), message)
@@ -191,12 +199,12 @@ class StatedFacts(unittest.TestCase):
                         "Bumped to v1.2.0.", "3 of 5 cards are done.", "13 PRs merged today.",
                         "1 PR waits for review.", "2 checks failed.", "4 open issues left.",
                         "Card #41 is in the In review column.", "Moved it on the board.",
-                        "Waiting on GitHub checks for PR #40, about 8 minutes."]:
+                        "Waiting on GitHub checks for PR #40, ETA 7:10 PM."]:
             self.assertTrue(stop.stated_facts(message), message)
 
     def test_not_facts(self):
         for message in [None, "", "Done. The builder finished.", "Answer the question on #41.",
-                        "Waiting on the builder, about 10 minutes.", "2 things for you to do right now:",
+                        "Waiting on the builder, ETA 7:10 PM.", "2 things for you to do right now:",
                         "It took 1.5 seconds.", "The address is 10.0.0.12.", "On 2026-11-18 at 10:30.",
                         "The keyboard and dashboard work.", "We need one approval.",
                         "45 tests pass.", "Onboarding is next."]:
@@ -353,7 +361,7 @@ class AsksDecision(unittest.TestCase):
 
     def test_not_decisions(self):
         for message in [None, "", ONE, NOTHING, MANY, ALL_CLEAR, "Done. The builder finished.",
-                        "Nothing for you to do right now. Waiting on the reviewer to decide, about 5 minutes.",
+                        "Nothing for you to do right now. Waiting on the reviewer to decide, ETA 7:10 PM.",
                         "1 thing for you to do right now: pick up the build after lunch.",
                         "The builder picked a layout.\nDecide later.",  # not the first line
                         "Indecisive tests, rerun.",
@@ -688,8 +696,8 @@ class ProjectsLine(unittest.TestCase):
         self.assertEqual(last["holder"], "human")
 
     def test_only_a_hand_off_to_the_human_is_checked(self):
-        r, calls = self.run_with("Nothing for you to do right now. Waiting on the reviewer for %s, about "
-                                 "10 minutes." % (APB_PR % 74), {74: pr(["hooks/a.py"], "")})
+        r, calls = self.run_with("Nothing for you to do right now. Waiting on the reviewer for %s, ETA "
+                                 "7:10 PM." % (APB_PR % 74), {74: pr(["hooks/a.py"], "")})
         self.assertFalse(sent_back(r))
         self.assertEqual(calls, [])
 
