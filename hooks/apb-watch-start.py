@@ -125,6 +125,7 @@ def holder(path):
 
 def claim(path, me):
     """Write the pid file if no live watcher holds it. Returns True if this hook now holds it.
+    me() gives what to write; it is called only when this hook takes the file.
     A lock file makes the check and the write one step, so hooks fired at once start one watcher."""
     with open(path + ".lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -138,7 +139,7 @@ def claim(path, me):
                 pass
         tmp = "%s.%d" % (path, os.getpid())
         with open(tmp, "w") as f:
-            json.dump(me, f)
+            json.dump(me(), f)
         os.replace(tmp, path)
         return True
 
@@ -226,13 +227,20 @@ def main(argv):
     session = session[:MAX] if isinstance(session, str) else None
     pid_path = os.path.join(folder, "watcher.pid")
     me = os.getpid()
-    if not claim(pid_path, {"pid": me, "parent": os.getppid(), "session": session}):
+    found = {}
+
+    def mine():
+        # The parent is Claude Code, not the hook's direct parent: that may be a shell that outlives it.
+        found["root"] = root_pid()
+        return {"pid": me, "parent": found["root"] or os.getppid(), "session": session}
+
+    if not claim(pid_path, mine):
         return 0
     signal.signal(signal.SIGTERM, on_term)
     try:
         repo, issue = coordination(opts.coordination) if opts.coordination else \
             coordination(read(os.path.join(project, "CLAUDE.md")))
-        root = root_pid()
+        root = found.get("root")
         start = time.time()
         while True:
             left = opts.budget - (time.time() - start)

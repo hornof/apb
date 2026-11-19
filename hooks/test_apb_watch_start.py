@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import random
+import shlex
 import signal
 import subprocess
 import sys
@@ -31,6 +32,9 @@ if mode[0] == "found":
     print("12:00:00 apb-watch (o/r):\nGitHub: Issue #25: 1 new comment (Coordination)", flush=True)
 elif mode[0] == "nochange":
     print("12:00:00 apb-watch (o/r):\nNo change in 0 min.", flush=True)
+elif mode[0] == "nochange-errors":
+    print("12:00:00 apb-watch (o/r):\nNo change in 0 min.\n"
+          "GitHub could not be read 3 times; last error: HTTP 401", flush=True)
 elif mode[0] == "fail":
     sys.exit("apb-watch: no --repo given")
 elif mode[0] == "sleep":
@@ -179,6 +183,25 @@ class StartsOnce(unittest.TestCase):
             for p in procs:
                 finish(p)
 
+    def test_the_pid_file_names_claude_code_not_a_shell_between(self):
+        # Run the hook through a shell, as Claude Code may. "; true" keeps the shell from exec'ing python,
+        # so the hook's direct parent is the shell, and the first ancestor that isn't one is this test.
+        project, fake = apb_project(), fake_watcher("sleep 3")
+        with tempfile.NamedTemporaryFile("wb", delete=False) as f:
+            f.write(json.dumps(payload()).encode())
+        line = " ".join(shlex.quote(a) for a in args(fake)) + " < " + shlex.quote(f.name) + "; true"
+        proc = subprocess.Popen(["/bin/sh", "-c", line], env=env_for(project), cwd=tempfile.gettempdir(),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 1))
+            with open(pid_file(project)) as held:
+                written = json.load(held)
+            self.assertEqual(written["parent"], os.getpid())
+            self.assertNotEqual(written["parent"], proc.pid)
+        finally:
+            finish(proc)
+            os.remove(f.name)
+
     def test_a_stale_pid_file_does_not_block_a_start(self):
         project, fake = apb_project(), fake_watcher("found")
         dead = subprocess.Popen([sys.executable, "-c", "pass"])
@@ -259,6 +282,14 @@ class Restarts(unittest.TestCase):
         self.assertGreaterEqual(len(starts_of(fake)), 2)
         self.assertEqual(len(events(project, "watcher-start")), len(starts_of(fake)))
         self.assertFalse(os.path.exists(pid_file(project)))
+
+    def test_no_change_with_github_errors_runs_it_again_without_waking_claude(self):
+        project, fake = apb_project(), fake_watcher("nochange-errors")
+        r = run(project, fake, budget=1.5)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(r.stderr, b"")
+        self.assertGreaterEqual(len(starts_of(fake)), 2)
+        self.assertEqual({e["reason"] for e in events(project, "watcher-exit")}, {"no change"})
 
     def test_an_error_does_not_wake_claude_and_the_next_call_retries(self):
         project, fake = apb_project(), fake_watcher("fail")
