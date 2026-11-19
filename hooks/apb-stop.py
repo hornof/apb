@@ -88,6 +88,8 @@ NO_LINK = ("A decision was asked without a GitHub link. Put it on the PR or the 
            "with the link.")
 # A first line that asks the human to decide something.
 DECIDE = re.compile(r"(?i:\b(?:decide|decisions?|your call|choose|pick(?!\s+up\b))\b)")
+# "No decisions", "0 decisions", "zero decisions": says there is nothing to decide.
+NO_DECISION = re.compile(r"(?i:\b(?:no|0|zero)\s+decisions?\b)")
 # A link to a PR or an issue, on a line that isn't quoted.
 LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d+")
 QUOTED = re.compile(r"\s*>")
@@ -144,7 +146,7 @@ def asks_decision(message):
     lines = [clean(l) for l in message.splitlines() if l.strip()]
     if not lines or NOTHING.match(lines[0]):
         return False
-    return bool(DECIDE.search(lines[0]))
+    return bool(DECIDE.search(NO_DECISION.sub(" ", lines[0])))
 
 
 def has_link(message):

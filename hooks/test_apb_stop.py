@@ -317,7 +317,9 @@ class AsksDecision(unittest.TestCase):
                         "1 thing: decide on the card.", "2 decisions on the PR.\n1. A.\n2. B.",
                         "1 thing for you to do right now: 1 decision on the PR.",
                         "**Your call** on the colors.", "\n\nChoose a host.", "Pick a name for the site.",
-                        "1 thing for you to do right now: make a Decision."]:
+                        "1 thing for you to do right now: make a Decision.",
+                        "No decisions on #70, but decide the layout on PR #72.",
+                        "1 thing for you to do right now: 1 decision on PR #72 (no rush)."]:
             self.assertTrue(stop.asks_decision(message), message)
 
     def test_not_decisions(self):
@@ -325,7 +327,10 @@ class AsksDecision(unittest.TestCase):
                         "Nothing for you to do right now. Waiting on the reviewer to decide, about 5 minutes.",
                         "1 thing for you to do right now: pick up the build after lunch.",
                         "The builder picked a layout.\nDecide later.",  # not the first line
-                        "Indecisive tests, rerun."]:
+                        "Indecisive tests, rerun.",
+                        "1 thing for you to do right now: merge PR #72 (no decisions).",
+                        "No decisions on PR #72; merge it.", "0 decisions on PR #72.",
+                        "Zero decisions left, merge PR #72."]:
             self.assertFalse(stop.asks_decision(message), message)
 
 
