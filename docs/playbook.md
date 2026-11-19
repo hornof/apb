@@ -196,7 +196,7 @@ The orchestrator acts only when something wakes it: a message from the human, an
   - an hour has passed with no change, so it never runs forever.
 - **The plugin starts it.** A hook, `hooks/apb-watch-start.py`, keeps the watcher running for the orchestrator's session. It starts the watcher at the session's start, and again on the next prompt, tool call or stop whenever it isn't running. Builders' and reviewers' tool calls don't start it.
   - The coordination issue is the issue where the orchestrator and the advisor talk. It comes from a line in the project's `CLAUDE.md`: `coordination: #N` for an issue in the project's repo, or `coordination: owner/name#N` for an issue in another repo.
-  - With `#N`, or with no such line, the hook runs one watcher, on the project's repo and the issue, if there is one.
+  - With `#N`, or with no such line, the hook runs one watcher, on the project's repo and the issue, if there is one. A line that names the project's own repo as `owner/name#N` counts as `#N`.
   - With `owner/name#N`, the hook runs two watchers: one on the project's repo (its PRs, stuck commands and quiet agents), and one on the other repo (its PRs and the issue). Only one copy of each runs.
   - When a watcher reports something, the hook wakes the orchestrator with the report. When it reports no change, the hook starts it again at once. When it fails, the hook waits a minute before trying that watcher again.
   - Each start writes a `watcher-start` line to the events file, and each exit a `watcher-exit` line with the reason. Both name the watcher: `project` or `coordination`.

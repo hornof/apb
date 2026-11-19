@@ -445,6 +445,38 @@ class TwoWatchers(unittest.TestCase):
             other.kill()
             other.wait(timeout=10)
 
+    def with_origin(self, project, url):
+        subprocess.run(["git", "init", "-q", project], check=True, capture_output=True, timeout=30)
+        subprocess.run(["git", "-C", project, "remote", "add", "origin", url], check=True,
+                       capture_output=True, timeout=30)
+
+    def test_a_line_naming_the_projects_own_repo_runs_one_watcher(self):
+        for url in ["https://github.com/hornof/sketch-gallery.git", "git@github.com:hornof/sketch-gallery.git",
+                    "ssh://git@github.com/Hornof/Sketch-Gallery", "https://github.com/hornof/sketch-gallery/"]:
+            project = apb_project("- coordination: hornof/sketch-gallery#5\n")
+            self.with_origin(project, url)
+            fake = fake_watcher("found")
+            self.assertEqual(run(project, fake).returncode, 2, url)
+            [s] = starts_of(fake)
+            self.assertEqual(s["argv"][s["argv"].index("--issue") + 1], "5", url)
+            self.assertNotIn("--repo", s["argv"], url)
+            self.assertEqual([e["watcher"] for e in events(project, "watcher-start")], ["project"], url)
+
+    def test_a_line_naming_another_repo_still_runs_two(self):
+        project = apb_project("- coordination: hornof/apb#25\n")
+        self.with_origin(project, "https://github.com/hornof/sketch-gallery.git")
+        fake = fake_watcher("hang", coordination="sleep 0.5")
+        run(project, fake)
+        self.assertEqual(sorted(which(s) for s in starts_of(fake)), ["coordination", "project"])
+
+    def test_remote_urls_give_owner_and_name(self):
+        hook = load_hook()
+        cases = {"https://github.com/a/b.git\n": "a/b", "git@github.com:a/b.git": "a/b",
+                 "ssh://git@github.com/a/b": "a/b", "https://github.com/a.x/b-y_z/": "a.x/b-y_z",
+                 "": None, "not a url": None}
+        for url, want in cases.items():
+            self.assertEqual(hook.repo_of(url), want, url)
+
     def test_a_failing_watcher_leaves_the_other_running(self):
         project, fake = apb_project(COORD), fake_watcher("sleep 1", coordination="fail")
         r = run(project, fake, extra=["--backoff", "60"])

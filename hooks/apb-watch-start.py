@@ -13,7 +13,7 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
   - the project watcher, on the project's own repo: its PRs, stuck commands and quiet agents. When
     the coordination issue is in this repo, it also watches that issue.
   - the coordination watcher, only when the coordination issue is in another repo: that repo's PRs
-    and the issue. It leaves stuck commands and quiet agents to the project watcher, so they wake
+    and the issue. A line that names the project's own repo (its git origin) counts as "#N". It leaves stuck commands and quiet agents to the project watcher, so they wake
     the orchestrator once.
   With no coordination line, the project watcher runs without an issue.
 - No second copy of either. Each watcher has its own pid file in .apb/ (watcher.pid,
@@ -77,6 +77,22 @@ def coordination(text):
     if not m:
         m = re.fullmatch(r"\s*(?:([\w.-]+/[\w.-]+))?#(\d+)\s*", text or "")
     return (m.group(1), int(m.group(2))) if m else (None, None)
+
+
+def repo_of(url):
+    """'owner/name' from a git remote URL (https, ssh or scp style), or None."""
+    m = re.search(r"[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?\s*$", url or "")
+    return "%s/%s" % (m.group(1), m.group(2)) if m else None
+
+
+def own_repo(project):
+    """The project's own repo, 'owner/name', from its origin remote; None if git can't tell."""
+    try:
+        out = subprocess.run(["git", "-C", project, "remote", "get-url", "origin"], capture_output=True,
+                             text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return repo_of(out.stdout) if out.returncode == 0 else None
 
 
 def watchers(folder, repo, issue):
@@ -299,6 +315,8 @@ def main(argv):
     session = session[:MAX] if isinstance(session, str) else None
     repo, issue = coordination(opts.coordination) if opts.coordination else \
         coordination(read(os.path.join(project, "CLAUDE.md")))
+    if repo and (own_repo(project) or "").lower() == repo.lower():
+        repo = None  # the project's own repo: one watcher, as with "#N"
     me = os.getpid()
     found = {}
 
