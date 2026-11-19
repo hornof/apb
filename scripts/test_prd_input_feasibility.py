@@ -64,6 +64,8 @@ class PrdSeedsFromTheAnswer(unittest.TestCase):
         self.assertIn("section 11 (Technical uncertainties)", body)
         self.assertIn("PRD input", body)
         self.assertIn("technically possible", body)
+        # Step 3 quotes the question in full, so it must match step 1b's wording exactly.
+        self.assertIn(QUESTION, body)
         self.assertRegex(body, r"adds? (its|your) own")
 
     def test_seeding_comes_before_the_none_case(self):
