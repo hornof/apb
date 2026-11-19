@@ -12,8 +12,10 @@ which hooks/apb-events.py writes.
 - Then the message must start with one of the four first lines. If it doesn't, the hook sends the
   message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
   and Claude goes on to add the line. "All clear: ..." is logged as holder human, todo "all clear".
-- On any stop, if the message states a GitHub fact (a PR number, a version, a count such as "3 of 5"
-  or "13 PRs", or the word "board" or "column") and the orchestrator itself ran no lookup that
+- On any stop, if the message states a GitHub fact (a sentence that gives a PR, issue or card with a
+  number, a link to one, or a count such as "13 PRs", a state: open, merged, closed, done, in review,
+  on the board or in a column), outside quotes and outside a plan ("once …", "after …"), and the
+  orchestrator itself ran no lookup that
   finished without error in this turn, the hook sends the message back once, with a note that starts
   "You stated a GitHub fact without checking it this turn." A lookup is a gh or git command, or a run
   of scripts/map-artifact.py or scripts/progress-page.py, which call gh themselves. It checks only
@@ -23,11 +25,13 @@ which hooks/apb-events.py writes.
   from its file (a Departure line, which hooks/apb-brief.py writes) and no DepartureResolved line came
   after it, the hook sends the message back, on a retry too, with a note that quotes the report and
   says how to resolve it. After MAX_DEPARTURE_SEND_BACKS in one turn it lets the stop through.
-- On any stop, if the message's first line asks the human to decide something ("decide", "decision",
-  "your call", "choose", "pick") and the message has no link to a GitHub PR or issue outside a quoted
-  line, the hook sends the message back once, with a note that starts "A decision was asked without a
-  GitHub link." Under an "N things" first line, each numbered item that asks a decision needs the link
-  on its own line. Every decision lives on GitHub; the hand-off only points at it.
+- On any stop, if the message asks the human for a decision (a "1 thing" or "N things" line that names
+  one, "answer decision N", "N decisions for you", "which do you want", "your call", a question that
+  names one, or lettered options) and has no link to a GitHub PR or issue outside a quoted line, the
+  hook sends the message back once, with a note that starts "A decision was asked without a GitHub
+  link." A line that only mentions or quotes a decision asks nothing. Under an "N things" first line,
+  each numbered item that names a decision needs the link on its own line. Every decision lives on
+  GitHub; the hand-off only points at it.
 - On any stop whose first line hands something to the human, if the message links an open PR in the
   apb repo (the repository in the plugin's manifest) that touches templates/, hooks/, agents/, a
   skill's SKILL.md or docs/playbook.md, and that PR's description has no "Projects:" line ("Projects: none",
@@ -77,19 +81,29 @@ MAX_DEPARTURE_SEND_BACKS = 3  # in one turn; then the stop goes through, so Clau
 UNCHECKED = ("You stated a GitHub fact without checking it this turn. Look it up with gh or git "
              "(for example gh pr view, gh issue list, git log), then restate it or drop it: ")
 
-# A GitHub fact: a PR number, a version, a count, or the word "board" or "column". The hook checks
-# only that some lookup (LOOKUP) ran in the turn, not which one, and not whether the fact is true.
-FACTS = re.compile("|".join([
-    r"\bPRs?\s*#?\d+",  # PR #44, PRs #44 and #45, PR 44
-    r"(?i:\bpull requests?\s*#?\d+)",
-    r"/pull/\d+",  # a link to a PR
-    r"(?<![\w.])v?\d+\.\d+\.\d+(?!\.?\d)",  # 0.3.18, v1.2.0; not 10.0.0.12
-    r"\b\d+ of (?:the )?\d+\b",  # 3 of 5
-    r"\b\d+ (?:(?:open|merged|closed|failing|passing|green|red) )?"
-    r"(?:PRs?|pull requests?|issues?|cards?|checks?|commits?|branch(?:es)?)\b",  # 13 PRs, 2 checks
-    r"(?i:\b(?:board|column)s?\b)",  # the word board or column
+# A GitHub fact: a sentence that gives a PR, issue or card with a number (REF) a state (STATE). The
+# hook checks only that some lookup (LOOKUP) ran in the turn, not which one, and not whether the fact
+# is true.
+REF = re.compile("|".join([
+    r"\bPRs?\s*#?\d+",  # PR #44, PRs #44, PR 44
+    r"(?i:\b(?:pull requests?|issues?|cards?)\s*#?\d+)",  # pull request 12, issue #70, card #3
+    r"[\w.-]*#\d+\b",  # #70, apb#75
+    r"/(?:pull|issues)/\d+",  # a link to a PR or an issue
+    # A count: 13 PRs, 5 cards, 4 open issues
+    r"(?i:\b\d+\s+(?:(?:open|merged|closed)\s+)?(?:PRs?|pull requests?|issues?|cards?)\b)",
 ]))
+STATE = re.compile(r"(?i:\b(?:merged|closed|reopened)\b"  # PR #44 merged, you merged PR #44
+                   r"|\b(?:is|are|was|were|now|still|stays|remains)\s+(?:(?:now|still|already)\s+)?"
+                   r"(?:open|done|in\s+(?:\w+\s+)?review|on\s+the\s+board"
+                   r"|in\s+(?:the\s+)?[\w ]{1,30}?\s+column)\b"
+                   r"|\bopen\s+(?:PRs?|pull requests?|issues?|cards?)\b)")  # the open PR #44
+SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
+# A plan: from "after", "once", "when", "if", "until" or "before" to the next comma. A state in it
+# ("once PR #80 is merged, I'll rebase") says nothing about now.
+PLAN = re.compile(r"(?i:\b(?:after|once|when|if|until|before)\b[^,;]*)")
 MAX_FACTS = 5  # facts named in the note and the log
+# Quoted words: in quotation marks or backticks, or in single quotes that aren't an apostrophe.
+QUOTE = re.compile(r"\"[^\"\n]*\"|“[^”\n]*”|`[^`\n]*`|(?<!\w)'[^'\n]*'(?!\w)")
 # A command that looks GitHub up: gh, git, or apb's map or progress-page script, which call gh
 # themselves. First in the command, or after a separator or a timeout.
 LOOKUP = re.compile(r"(?:^|[;&|(])\s*(?:timeout\s+\S+\s+)?"
@@ -97,10 +111,24 @@ LOOKUP = re.compile(r"(?:^|[;&|(])\s*(?:timeout\s+\S+\s+)?"
 
 NO_LINK = ("A decision was asked without a GitHub link. Put it on the PR or the card, then hand off "
            "with the link.")
-# A first line that asks the human to decide something.
-DECIDE = re.compile(r"(?i:\b(?:decide|decisions?|your call|choose|pick(?!\s+up\b))\b)")
+# A line that names a decision. It asks one when it is the human's thing to do: the "1 thing" or
+# "N things" line, or an item under "N things".
+DECIDE = re.compile(r"(?i:\b(?:decide|decisions?|your call|choose|pick(?!\s+(?:\w+\s+)?up\b))\b)")
 # "No decisions", "0 decisions", "zero decisions": says there is nothing to decide.
 NO_DECISION = re.compile(r"(?i:\b(?:no|0|zero)\s+decisions?\b)")
+THINGS_LINE = re.compile(r"(?i:\b(?:1 thing|\d+ things) for you to do right now\b)")
+# Words that ask the human for a decision on any line.
+ASK = re.compile("|".join([
+    r"\banswer\s+\[?decisions?\s+\d+",  # answer decision 3, answer [decision 3 on PR #69](...)
+    r"\b(?:\d+|a|one|two|three|four|five)\s+decisions?\s+for\s+you\b",  # 2 decisions for you
+    r"\bwhich(?:\s+\w+)?\s+(?:do|would|will)\s+you\s+(?:want|prefer|like|pick|choose)\b",  # which do you want
+    r"\byour\s+call\b",
+]), re.I)
+# A question that names a decision: "decide …?", "should we pick the grid?"
+QUESTION = re.compile(r"[^.!?]*\?")
+ASK_WORD = re.compile(r"(?i:\b(?:decide|decisions?|choose|pick(?!\s+(?:\w+\s+)?up\b))\b)")
+# An option in a lettered list, for the human to pick from: "(a) …", "a) …", "- **(b)** …".
+OPTION = re.compile(r"[-*+\s]*\(?([a-z])\)\s*\S")
 # A link to a PR or an issue, on a line that isn't quoted.
 LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d+")
 QUOTED = re.compile(r"\s*>")
@@ -171,20 +199,38 @@ def first_line(message):
     return ("human", "%d things" % n)
 
 
-def asks_decision(message):
-    """True if the message's first line asks the human to decide something.
-    "Nothing for you to do right now" asks nothing, whatever it waits on."""
+def unquoted(message):
+    """The message's lines that aren't quoted (">"), each without the words it quotes."""
     if not isinstance(message, str):
+        return []
+    return [QUOTE.sub(" ", l) for l in message.splitlines() if not QUOTED.match(l)]
+
+
+def asks_decision(message):
+    """True if the message asks the human for a decision: a "1 thing" or "N things" line that names
+    one, words that ask for one ("answer decision 3", "2 decisions for you", "which do you want",
+    "your call"), a question that names one ("decide …?"), or a list of lettered options. A line that
+    only mentions a decision, quotes one or talks about the check asks nothing, and "Nothing for you to
+    do right now" asks nothing, whatever follows it."""
+    lines = [clean(l) for l in unquoted(message)]
+    lines = [NO_DECISION.sub(" ", l) for l in lines if l]
+    if not lines or NOTHING.match(lines[0]) or lines[0].startswith("Nothing for you to do right now"):
         return False
-    lines = [clean(l) for l in message.splitlines() if l.strip()]
-    if not lines or NOTHING.match(lines[0]):
-        return False
-    return decides(lines[0])
+    letters = set()
+    for line in lines:
+        if THINGS_LINE.search(line) and DECIDE.search(line):
+            return True
+        if ASK.search(line) or any(ASK_WORD.search(q) for q in QUESTION.findall(line)):
+            return True
+        option = OPTION.match(re.sub(r"[*_]", "", line))
+        if option:
+            letters.add(option.group(1))
+    return {"a", "b"} <= letters
 
 
 def decides(line):
-    """True if the line asks the human to decide something. "No decisions" asks nothing."""
-    return bool(DECIDE.search(NO_DECISION.sub(" ", line)))
+    """True if the line names a decision, outside quoted words. "No decisions" names none."""
+    return bool(DECIDE.search(NO_DECISION.sub(" ", QUOTE.sub(" ", line))))
 
 
 def has_link(message):
@@ -366,14 +412,20 @@ def work_ran_out(events, session, now, tasks=None):
 
 
 def stated_facts(message):
-    """The GitHub facts the message states, each once, in order: at most MAX_FACTS."""
-    if not isinstance(message, str):
-        return []
+    """The PRs, issues and cards (by number, or a count such as "13 PRs") the message gives a state,
+    outside quotes, each once, in order: at most MAX_FACTS. A number with no state ("the builder opened
+    PR #57") states nothing to check, nor does the word "board" or "column" with no number, nor a state
+    in a plan ("once PR #80 is merged, I'll rebase"). Bold or italics around a state don't hide it."""
     facts = []
-    for m in FACTS.finditer(message):
-        fact = m.group(0).strip()
-        if fact not in facts:
-            facts.append(fact)
+    for line in unquoted(message):
+        for sentence in SENTENCE_END.split(re.sub(r"[*_]", "", line)):  # bold or italics don't matter
+            sentence = PLAN.sub(" ", sentence)
+            if not STATE.search(sentence):
+                continue
+            for m in REF.finditer(sentence):
+                fact = m.group(0).strip()
+                if fact not in facts:
+                    facts.append(fact)
     return facts[:MAX_FACTS]
 
 

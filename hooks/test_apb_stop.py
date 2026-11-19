@@ -191,15 +191,25 @@ class FirstLine(unittest.TestCase):
 
 
 class StatedFacts(unittest.TestCase):
-    """What counts as a GitHub fact in a message: a PR number, a version, a count, a board column."""
+    """What counts as a GitHub fact in a message: a sentence that gives a PR, issue or card #N (or a
+    link to one, or a count of them) a state: open, merged, closed, done, in review, on the board or in
+    a column. Not in quotes, and not in a plan ("once PR #80 is merged")."""
 
     def test_facts(self):
-        for message in ["PR #44 is ready.", "PRs #44 and #45 merged.", "pull request 12 is open.",
-                        "See https://github.com/hornof/apb/pull/52.", "The plugin is at 0.3.18.",
-                        "Bumped to v1.2.0.", "3 of 5 cards are done.", "13 PRs merged today.",
-                        "1 PR waits for review.", "2 checks failed.", "4 open issues left.",
-                        "Card #41 is in the In review column.", "Moved it on the board.",
-                        "Waiting on GitHub checks for PR #40, ETA 7:10 PM."]:
+        for message in ["PR #44 is merged.", "PRs #44 and #45 merged.", "pull request 12 is open.",
+                        "https://github.com/hornof/apb/pull/52 is merged.", "Issue #70 is closed.",
+                        "#70 is closed.", "apb#75 is open.", "Card #41 is in the In review column.",
+                        "Card #9 is on the board.", "Card #3 is now in In review, and the reviewer is on it.",
+                        "[PR #66](https://github.com/hornof/apb/pull/66) is merged.", "You merged PR #66.",
+                        "PR #78 is still open.", "The open PR #44 waits for review.",
+                        "Done. PR #44 merged at 7:05 PM.", "**PR #44:** merged.",
+                        # A state in bold or italics.
+                        "PR #44 is **open**.", "Card #3 is in **In review**.", "PR #44 is _merged_.",
+                        # A count of PRs, cards or issues with a state.
+                        "13 PRs merged Monday.", "5 cards are done.", "3 of 5 cards are done.",
+                        "4 open issues left.", "2 issues are closed.",
+                        # A plan clause doesn't hide a fact outside it.
+                        "When I checked, PR #44 was merged.", "PR #44 merged before the checks finished."]:
             self.assertTrue(stop.stated_facts(message), message)
 
     def test_not_facts(self):
@@ -207,11 +217,33 @@ class StatedFacts(unittest.TestCase):
                         "Waiting on the builder, ETA 7:10 PM.", "2 things for you to do right now:",
                         "It took 1.5 seconds.", "The address is 10.0.0.12.", "On 2026-11-18 at 10:30.",
                         "The keyboard and dashboard work.", "We need one approval.",
-                        "45 tests pass.", "Onboarding is next."]:
+                        "45 tests pass.", "Onboarding is next.",
+                        # No #N, or no state: the word "board" or "column" alone, a version, a count.
+                        "Moved it on the board.", "Updating a status, label or board column: a change.",
+                        "The plugin is at 0.3.18.", "3 of 5 checks passed.", "13 PRs today.",
+                        "The builder opened 2 PRs.",
+                        # A state after "after", "once", "when", "if", "until" or "before" is a plan.
+                        "I'll check the live site after PR #44 is merged.", "Once PR #80 is merged, I'll rebase.",
+                        "If PR #81 is closed, I'll reopen it.", "Wait until PR #44 is merged.",
+                        "Nothing for you to do right now. I'll say so when PR #45's review is done.",
+                        "Waiting on GitHub checks for PR #40, ETA 7:10 PM.", "The builder opened PR #57.",
+                        "Merge PR #44.", "After you merge PR #42, I'll start.", "Closes #79.",
+                        "The builder is still on card #64.",
+                        "Say \"go\" if you want apb#75 and apb#70 on the board.",
+                        # A quoted fact is not stated: in quotation marks, backticks or a quoted line.
+                        "The extra messages, like \"I checked GitHub: PR #78 is still open\", come from the check.",
+                        "It printed `PR #78 is merged` twice.", "> PR #44 is merged."]:
             self.assertEqual(stop.stated_facts(message), [], message)
 
+    def test_names_the_numbers_in_a_fact(self):
+        self.assertEqual(stop.stated_facts("PRs #44 and #45 merged."), ["PRs #44", "#45"])
+        self.assertEqual(stop.stated_facts("[PR #66](https://github.com/hornof/apb/pull/66) is merged."),
+                         ["PR #66", "/pull/66"])
+        self.assertEqual(stop.stated_facts("13 PRs merged Monday."), ["13 PRs"])
+        self.assertEqual(stop.stated_facts("When I checked, PR #44 was merged."), ["PR #44"])
+
     def test_each_fact_is_named_once(self):
-        facts = stop.stated_facts("PR #44, PR #44 and PR #44.")
+        facts = stop.stated_facts("PR #44, PR #44 and PR #44 are merged.")
         self.assertEqual(facts, ["PR #44"])
 
 
@@ -285,7 +317,7 @@ class CheckFirst(unittest.TestCase):
 
     def test_sends_back_an_unchecked_fact(self):
         write_events(self.project, [{"event": "UserPromptSubmit"}])
-        r = run(payload("PR #44 is merged and the plugin is at 0.3.18."), self.project)
+        r = run(payload("PR #44 is merged and card #43 is closed."), self.project)
         self.assertEqual(r.returncode, 0)
         out = json.loads(r.stdout)
         self.assertNotIn("decision", out)  # a quiet note, not a block
@@ -293,10 +325,10 @@ class CheckFirst(unittest.TestCase):
         self.assertEqual(note["hookEventName"], "Stop")
         self.assertIn("You stated a GitHub fact without checking it this turn.", note["additionalContext"])
         self.assertIn("PR #44", note["additionalContext"])
-        self.assertIn("0.3.18", note["additionalContext"])
+        self.assertIn("card #43", note["additionalContext"])
         last = read_events(self.project)[-1]
         self.assertEqual((last["event"], last["sent_back"]), ("Stop", True))
-        self.assertEqual(last["unchecked"], ["PR #44", "0.3.18"])
+        self.assertEqual(last["unchecked"], ["PR #44", "card #43"])
 
     def test_names_at_most_five_facts(self):
         write_events(self.project, [{"event": "UserPromptSubmit"}])
@@ -331,14 +363,14 @@ class CheckFirst(unittest.TestCase):
     def test_both_notes_in_one_send_back(self):
         # The work ran out, the first line is missing, and a fact is unchecked: one send-back says both.
         write_events(self.project, FINISHED_AGENT[:-1])
-        r = run(payload("PR #44 is ready."), self.project)
+        r = run(payload("PR #44 is merged."), self.project)
         context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertTrue(context.startswith("Say who holds the ball"))
         self.assertIn("You stated a GitHub fact without checking it this turn.", context)
 
     def test_a_valid_first_line_with_an_unchecked_fact_is_sent_back_and_starts_no_reminder(self):
         write_events(self.project, FINISHED_AGENT[:-1])
-        r = run(payload(ONE), self.project)
+        r = run(payload(ONE + "\nPR #43 is merged."), self.project)
         self.assertTrue(sent_back(r))
         context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertFalse(context.startswith("Say who holds the ball"))
@@ -347,27 +379,47 @@ class CheckFirst(unittest.TestCase):
 
 
 class AsksDecision(unittest.TestCase):
-    """Whether a hand-off's first line asks the human to decide something."""
+    """Whether a message asks the human for a decision. Mentioning a decision, quoting one or talking
+    about the check doesn't."""
 
     def test_decisions(self):
         for message in ["1 thing for you to do right now: decide the layout.",
-                        "1 thing: decide on the card.", "2 decisions on the PR.\n1. A.\n2. B.",
                         "1 thing for you to do right now: 1 decision on the PR.",
-                        "**Your call** on the colors.", "\n\nChoose a host.", "Pick a name for the site.",
                         "1 thing for you to do right now: make a Decision.",
-                        "No decisions on #70, but decide the layout on PR #72.",
-                        "1 thing for you to do right now: 1 decision on PR #72 (no rush)."]:
+                        "1 thing for you to do right now: choose a host.",
+                        "1 thing for you to do right now: 1 decision on PR #72 (no rush).",
+                        "**1 thing for you to do right now: answer decision 3 on PR #69.**",
+                        "Still 1 thing for you to do right now: rule on the review of PR #45, including decision 7.",
+                        "Answer decision 3 on PR #69 when you can.", "Please answer [decision 8 on PR #71].",
+                        "2 decisions for you on PR #71.", "Two decisions for you on the card.",
+                        "Do you want to decide the layout now?", "Should we pick the grid or the list?",
+                        "Which do you want, the grid or the list?", "Which one would you prefer?",
+                        "**Your call** on the colors.", "It's your call.",
+                        "The layout:\n(a) a grid\n(b) a list",
+                        "The layout:\n- **(a)** a grid\n- **(b)** a list",
+                        "The layout:\na) a grid\nb) a list"]:
             self.assertTrue(stop.asks_decision(message), message)
 
     def test_not_decisions(self):
         for message in [None, "", ONE, NOTHING, MANY, ALL_CLEAR, "Done. The builder finished.",
                         "Nothing for you to do right now. Waiting on the reviewer to decide, ETA 7:10 PM.",
+                        "Nothing for you to do right now. Waiting on the reviewer, ETA 7:10 PM.\n"
+                        "There will likely be one decision for you. Which do you want?",
                         "1 thing for you to do right now: pick up the build after lunch.",
-                        "The builder picked a layout.\nDecide later.",  # not the first line
-                        "Indecisive tests, rerun.",
                         "1 thing for you to do right now: merge PR #72 (no decisions).",
-                        "No decisions on PR #72; merge it.", "0 decisions on PR #72.",
-                        "Zero decisions left, merge PR #72."]:
+                        "Indecisive tests, rerun.", "No decisions on PR #72; merge it.", "0 decisions on PR #72.",
+                        "Zero decisions left, merge PR #72.", "No decisions for you.",
+                        # Mentioning a decision, quoting one, or talking about the check.
+                        "Decision 8 was presented the same way.",
+                        "(the automatic check again, triggered by the word 'decision')",
+                        "It fires if a line contains a word like \"decide\".",
+                        "In your question \"what do I need to decide on? Are we consistent?\" I saw two parts.",
+                        "> Which do you want?",
+                        "Choose a host.", "Pick a name for the site.", "Decide later.",
+                        "When you want to pick it up again, say so.",
+                        "The builder picked a layout.\n1. Decide the colors.",
+                        "Recommended: (b). Resolving the thread counts as (b).",
+                        "1. **The decision hand-off for PR #78.** It named only option (b)."]:
             self.assertFalse(stop.asks_decision(message), message)
 
 
@@ -401,7 +453,10 @@ class DecisionWithoutLink(unittest.TestCase):
                 "2 things for you to do right now:\n1. 2 decisions on PR #71.\n2. merge PR #72.\n\n" + self.PR71,
                 "2 things for you to do right now:\n\n1. merge PR #72.\n2. **Your call** on the colors.",
                 "4 things for you to do right now:\n1. A.\n2. B.\n3. Pick a host.",  # a count that doesn't match
-                "2 things for you to do right now:\n1. merge PR #72.\n2. 1 decision on PR #71 (no rush)."]:
+                "2 things for you to do right now:\n1. merge PR #72.\n2. 1 decision on PR #71 (no rush).",
+                "Still 1 thing for you to do right now: rule on the review of PR #45, including decision 7.",
+                "The builder is done. Which do you want, the grid or the list?",
+                "The layout:\n(a) a grid\n(b) a list\n\n> https://github.com/hornof/apb/pull/44"]:
             self.assertTrue(stop.decision_without_link(message), message)
 
     def test_passes(self):
@@ -413,8 +468,49 @@ class DecisionWithoutLink(unittest.TestCase):
                 "2 things for you to do right now:\n1. Zero decisions on PR #72; merge it.\n2. 0 decisions on #73.",
                 # Below the list, a decision word is no longer an item.
                 "2 things for you to do right now:\n1. merge PR #72.\n2. merge PR #73.\n\nDecide later on the rest.",
-                "Progress: the builder picked a layout.\n1. Decide the colors."]:  # no "N things" line
+                "Progress: the builder picked a layout.\n1. Decide the colors.",  # no "N things" line
+                "1 thing for you to do right now: answer [decision 3 on PR #69](%s#discussion_r1)." % self.PR71,
+                "Which do you want? Both options are on %s." % self.PR71,
+                "Decision 8 was presented the same way.", "I'll leave PR #78. When you want to pick it up, say so."]:
             self.assertFalse(stop.decision_without_link(message), message)
+
+
+with open(os.path.join(HERE, "test_apb_stop_cases.json"), encoding="utf-8") as f:
+    # Messages the hook sent back on one evening, each trimmed to its first line and the lines that set
+    # the check off. "sent_back_for" is what the old checks said; "still_caught" is what a person reading
+    # the message says: only a real unchecked fact or a decision handed off without its link.
+    REPLAYED = json.load(f)
+
+
+class Replay(unittest.TestCase):
+    """The evening's send-backs, replayed: the false ones pass, the real ones are still caught."""
+
+    def test_the_evening_has_both_kinds(self):
+        self.assertGreaterEqual(len(REPLAYED), 40)
+        caught = [c for c in REPLAYED if c["still_caught"]]
+        self.assertEqual(sorted(k for c in caught for k in c["still_caught"]),
+                         ["decision-without-link", "github-fact"])
+        for c in REPLAYED:
+            self.assertTrue(set(c["still_caught"]) <= set(c["sent_back_for"]), c["time"])
+
+    def test_each_check_says_what_a_reader_says(self):
+        for c in REPLAYED:
+            self.assertEqual(bool(stop.stated_facts(c["message"])), "github-fact" in c["still_caught"],
+                             (c["time"], c["message"], stop.stated_facts(c["message"])))
+            self.assertEqual(stop.decision_without_link(c["message"]),
+                             "decision-without-link" in c["still_caught"], (c["time"], c["message"]))
+
+    def test_the_hook_sends_back_only_the_real_ones(self):
+        for c in REPLAYED:
+            project = apb_project()
+            # A turn the human started, with no lookup in it: only the two checks can send it back.
+            write_events(project, [{"event": "UserPromptSubmit"}])
+            r = stop.handle(payload(c["message"]), project, time.time())
+            self.assertEqual(r["send_back"], bool(c["still_caught"]), (c["time"], c["message"]))
+            last = read_events(project)[-1]
+            self.assertEqual("unchecked" in last, "github-fact" in c["still_caught"], c["time"])
+            self.assertEqual("decision-without-link" in last, "decision-without-link" in c["still_caught"],
+                             c["time"])
 
 
 class DecisionLink(unittest.TestCase):
@@ -479,7 +575,7 @@ class DecisionLink(unittest.TestCase):
     def test_joins_the_other_notes_in_one_send_back(self):
         project = apb_project()
         write_events(project, FINISHED_AGENT[:-1])  # the work ran out, and no lookup this turn
-        r = run(payload("Your call on PR #44."), project)
+        r = run(payload("Your call on PR #44, which is open."), project)
         context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertTrue(context.startswith("Say who holds the ball"))
         self.assertIn("You stated a GitHub fact without checking it this turn.", context)
@@ -1156,51 +1252,68 @@ class Properties(unittest.TestCase):
     """Random session histories. A simulation tracks running agents, how each turn started and
     what happened in it; its answer must match the hook's, which only reads the events file."""
 
-    # (thing, states a GitHub fact, asks a decision, holds a GitHub link)
-    THINGS = [("merge PR #4", True, False, False), ("answer #9", False, False, False),
-              ("sign in to Cloudflare", False, False, False), ("decide the layout on #9", False, True, False),
-              ("pick a host on https://github.com/o/r/issues/9", False, True, True),
-              ("your call on https://github.com/o/r/pull/4", True, True, True)]
-    # (tail, states a GitHub fact, holds a GitHub link)
-    TAILS = [("", False, False), ("3 of 5 cards are done.", True, False), ("The plugin is at 0.3.18.", True, False),
-             ("It took 1.5 seconds.", False, False), ("Card #9 is on the board.", True, False),
-             ("45 tests pass.", False, False), ("See https://github.com/o/r/pull/7.", True, True),
-             ("Card: https://github.com/o/r/issues/7", False, True),
-             ("> https://github.com/o/r/pull/7", True, False)]  # a quoted link doesn't count
+    # (thing, states a GitHub fact, names a decision, asks a decision on any line, holds a GitHub link).
+    # A thing that names a decision asks it when it is the human's thing to do: after "1 thing for you
+    # to do right now:" or as an item under "N things".
+    THINGS = [("merge PR #4", False, False, False, False), ("answer #9", False, False, False, False),
+              ("sign in to Cloudflare", False, False, False, False),
+              ("decide the layout on #9", False, True, False, False),
+              ("pick a host on https://github.com/o/r/issues/9", False, True, False, True),
+              ("your call on https://github.com/o/r/pull/4", False, True, True, True),
+              ("answer decision 3 on #9", False, True, True, False),
+              ("merge PR #4, now that PR #3 is merged", True, False, False, False),
+              ("merge PR #4 once PR #3 is merged", False, False, False, False),  # a plan, not a fact
+              ("merge https://github.com/o/r/pull/4, which is open", True, False, False, True)]
+    # (tail, states a GitHub fact, holds a GitHub link, asks a decision)
+    TAILS = [("", False, False, False), ("3 of 5 cards are done.", True, False, False),
+             ("3 of 5 checks passed.", False, False, False),
+             ("Once PR #7 is merged, I'll rebase.", False, False, False),  # a plan, not a fact
+             ("PR #7 is **merged**.", True, False, False),
+             ("The plugin is at 0.3.18.", False, False, False), ("It took 1.5 seconds.", False, False, False),
+             ("Card #9 is on the board.", True, False, False), ("Moved it on the board.", False, False, False),
+             ("45 tests pass.", False, False, False), ("See https://github.com/o/r/pull/7.", False, True, False),
+             ("https://github.com/o/r/pull/7 is merged.", True, True, False),
+             ("Card: https://github.com/o/r/issues/7", False, True, False),
+             ("Decision 8 was presented the same way.", False, False, False),
+             ("Which do you want?", False, False, True),
+             ("The note said \"PR #7 is merged\".", False, False, False),  # a quoted fact isn't stated
+             ("> https://github.com/o/r/pull/7 is merged.", False, False, False)]  # nor a quoted line or link
 
     def message(self, rng):
         """A random message and, known by construction: whether it starts with a valid first line,
         whether it states a GitHub fact, and whether it asks a decision with no GitHub link."""
-        text, valid, fact, decision, link, item_unlinked = self.body(rng)
-        tail, tail_fact, tail_link = rng.choice(self.TAILS)
+        text, valid, fact, asks, link, item_unlinked, nothing = self.body(rng)
+        tail, tail_fact, tail_link, tail_asks = rng.choice(self.TAILS)
         if tail:
             text += "\n\n" + tail
-        return text, valid, fact or tail_fact, (decision and not (link or tail_link)) or item_unlinked
+        # Under "Nothing for you to do right now", nothing is asked.
+        asks = not nothing and (asks or tail_asks)
+        return text, valid, fact or tail_fact, (asks and not (link or tail_link)) or item_unlinked
 
     def body(self, rng):
-        """(text, valid first line, states a fact, the first line asks a decision, holds a link,
-        a numbered item under "N things" asks a decision with no link on its own line)."""
+        """(text, valid first line, states a fact, asks a decision, holds a link, a numbered item under
+        "N things" asks a decision with no link on its own line, starts with "Nothing for you")."""
         kind = rng.randrange(7)
-        thing, fact, decision, link = rng.choice(self.THINGS)
+        thing, fact, names, asks, link = rng.choice(self.THINGS)
         if kind == 0:
-            return NOTHING, True, True, False, False, False  # it names PR #40
+            return NOTHING, True, False, False, False, False, True
         if kind == 5:
-            return ALL_CLEAR, True, True, False, False, False  # it names the boards
+            return ALL_CLEAR, True, False, False, False, False, False
         if kind == 1:
-            return "1 thing for you to do right now: %s." % thing, True, fact, decision, link, False
+            return "1 thing for you to do right now: %s." % thing, True, fact, names, link, False, False
         n = rng.randint(2, 6)
         items = ["%d. %s." % (i, thing) for i in range(1, n + 1)]
         # In a list, the thing is an item: a decision there needs the link on the item's own line,
         # so a link in the tail doesn't help it.
         if kind == 2:
-            return ("%d things for you to do right now:\n" % n + "\n".join(items), True, fact, False, link,
-                    decision and not link)
+            return ("%d things for you to do right now:\n" % n + "\n".join(items), True, fact, asks, link,
+                    names and not link, False)
         if kind == 3:
-            return ("%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False, fact, False, link,
-                    decision and not link)
+            return ("%d things for you to do right now:\n" % (n + 1) + "\n".join(items), False, fact, asks, link,
+                    names and not link, False)
         if kind == 4:
-            return "Progress: " + thing, False, fact, decision, link, False
-        return "", False, False, False, False, False
+            return "Progress: " + thing, False, fact, asks, link, False, False
+        return "", False, False, False, False, False, False
 
     def test_random_histories(self):
         rng = random.Random(41)
