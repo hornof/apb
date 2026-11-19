@@ -128,7 +128,7 @@ class OtherDocs(unittest.TestCase):
         for rel in ("scripts/decision-check.py", "scripts/card-times.py"):
             text = flat(read(rel))
             self.assertNotIn("since Claude uses the human's login", text, rel)
-            self.assertIn("since Claude may use the human's login (apb-setup step 5)", text, rel)
+            self.assertIn("Claude's own GitHub account (apb-setup step 5), signed or not", text, rel)
 
     def test_map_template_has_a_row(self):
         self.assertIn("Claude's GitHub account", read("templates/MAP-template.md"))

@@ -12,6 +12,8 @@ Claude's login comes from, in order: the --claude-login option of the script; th
 .claude/settings.local.json, when its env block holds GH_TOKEN and GIT_AUTHOR_NAME, as
 claude-account.py writes them; the same two variables in the environment, as Claude Code sets
 them from that file. None of these means there is no Claude account, and only signatures count.
+A builder worktree has no .claude/settings.local.json, since it is git-ignored; there the login comes
+from GH_TOKEN and GIT_AUTHOR_NAME in the environment, so never copy the settings file into worktrees.
 """
 import json
 import os

@@ -16,10 +16,10 @@ It works the times out from .apb/events.jsonl and GitHub, never by hand:
 - messages: the human's messages between the hand-off and that last action that aren't "go", a
   decision letter, "resolved" or "merged": prompts in the orchestrator's session (hooks/apb-events.py
   marks each one routine or not, without keeping its text) and the human's comments on the PR. A
-  comment from Claude's own GitHub account (apb-setup step 5) is Claude's, signed or not. A comment
-  signed "— Claude (<role>)" is Claude's too, since Claude may use the human's login (apb-setup step 5),
-  as in older comments and projects without the account. comment-author.py holds the rule, and says
-  where Claude's login comes from; --claude-login gives it directly. Prompts logged
+  comment is Claude's when it comes from Claude's own GitHub account (apb-setup step 5), signed or not,
+  or when it is signed "— Claude (<role>)", as in older comments, the advisor's, and projects without
+  the account. comment-author.py holds the rule and says where Claude's login comes from;
+  --claude-login gives it directly. Prompts logged
   before apb 0.3.21 have no mark, so the count is then not known.
 
 It prints the comment. With --post it posts it on the issue, once: only when the issue is closed, and

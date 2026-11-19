@@ -10,10 +10,9 @@ line per thread:
   "Recommended: <letter>" and "Resolve with no reply = <letter>", naming the same option;
 - its answer: resolved, answered with an option letter in the human's last reply, a design discussion
   (three or more replies from the human and no letter), or waiting on the human.
-A reply from Claude's own GitHub account (apb-setup step 5) is Claude's, not the human's, signed or not.
-A reply signed "— Claude (<role>)" is Claude's too, since Claude may use the human's login (apb-setup step 5),
-as in older comments and projects without the account. comment-author.py holds the rule, and says where
-Claude's login comes from; --claude-login gives it directly.
+A reply is Claude's when it comes from Claude's own GitHub account (apb-setup step 5), signed or not, or
+when it is signed "— Claude (<role>)", as in older comments, the advisor's, and projects without the account.
+comment-author.py holds the rule and says where Claude's login comes from; --claude-login gives it directly.
 It exits with 1 if any thread's shape is wrong, so nothing is handed over until the review is fixed.
 It reads GitHub and changes nothing.
 """
