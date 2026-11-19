@@ -1003,6 +1003,43 @@ class Hook(unittest.TestCase):
         self.assertFalse(sent_back(run(payload("Watching PR #44.", background_tasks=tasks), self.project)))
         self.assertTrue(sent_back(run(payload("Done.", background_tasks=[]), self.project)))
 
+    def woken(self, earlier_line=True, helper=False):
+        """A session where, after the human's prompt, the orchestrator stopped (with a first line, or
+        without one), and then a watcher woke it: a turn with no prompt and no agent. With helper, the
+        turn starts with the SubagentStop that Claude Code's own helper logs after each stop."""
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        run(payload(NOTHING if earlier_line else "Looking.", background_tasks=[]), self.project)
+        if helper:
+            write_events(self.project, [{"event": "SubagentStop", "agent_id": "x9", "agent_type": ""}])
+        write_events(self.project, [{"event": "PostToolUse", "command": "gh pr view 44", "exit": 0}])
+
+    def test_a_wake_up_that_changes_nothing_may_end_with_no_message(self):
+        for message, helper in [("", False), ("  \n", False), ("Noted.", False), ("**Ok**", False),
+                                ("", True), ("Noted.", True)]:
+            self.setUp()
+            self.woken(helper=helper)
+            r = run(payload(message, background_tasks=[]), self.project)
+            self.assertFalse(sent_back(r), repr(message))
+            last = read_events(self.project)[-1]
+            self.assertEqual(last["event"], "Stop")
+            self.assertNotIn("sent_back", last)
+            self.assertNotIn("holder", last)  # the ball stays where the last line put it
+
+    def test_a_wake_up_with_more_than_one_word_still_needs_the_line(self):
+        self.woken()
+        r = run(payload("That alert was my own reply on the card.", background_tasks=[]), self.project)
+        self.assertTrue(sent_back(r))
+
+    def test_a_quiet_ending_needs_an_earlier_first_line(self):
+        self.woken(earlier_line=False)
+        self.assertTrue(sent_back(run(payload("", background_tasks=[]), self.project)))
+
+    def test_an_agents_report_is_not_a_quiet_wake_up(self):
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        run(payload(NOTHING, background_tasks=[]), self.project)
+        write_events(self.project, FINISHED_AGENT[1:])
+        self.assertTrue(sent_back(run(payload("Done.", background_tasks=[]), self.project)))
+
     def test_reads_the_message_from_the_transcript_when_it_is_not_given(self):
         write_events(self.project, FINISHED_AGENT)
         transcript = os.path.join(self.project, "t.jsonl")
@@ -1275,7 +1312,7 @@ class Properties(unittest.TestCase):
              ("https://github.com/o/r/pull/7 is merged.", True, True, False),
              ("Card: https://github.com/o/r/issues/7", False, True, False),
              ("Decision 8 was presented the same way.", False, False, False),
-             ("Which do you want?", False, False, True),
+             ("Which do you want?", False, False, True), ("Noted.", False, False, False),
              ("The note said \"PR #7 is merged\".", False, False, False),  # a quoted fact isn't stated
              ("> https://github.com/o/r/pull/7 is merged.", False, False, False)]  # nor a quoted line or link
 
@@ -1317,6 +1354,8 @@ class Properties(unittest.TestCase):
 
     def test_random_histories(self):
         rng = random.Random(41)
+        quiet_stops = 0  # quiet wake-ups the histories reached, so the exception is really tested
+        quiet_after_helper = 0  # those whose turn starts with the helper's SubagentStop
         for history in range(40):
             project = apb_project()
             sim_running = set()
@@ -1324,9 +1363,16 @@ class Properties(unittest.TestCase):
             checks = 0
             prompts_logged = rng.random() < 0.9
             seen_prompt = False
+            said_holder = False  # a stop that went through has said who holds the ball
             sends_tasks = rng.random() < 0.5
             for turn in range(rng.randint(3, 12)):
                 events = []
+                # Claude Code's own helper logs a SubagentStop with agent_type "" (and no SubagentStart)
+                # just after a stop, so it lands at the start of the next turn. It is no agent's report.
+                helper = turn > 0 and rng.random() < 0.4
+                if helper:
+                    next_id[0] += 1
+                    events.append({"event": "SubagentStop", "agent_id": "h%d" % next_id[0], "agent_type": ""})
                 # Background agents may finish before the turn; one finishing wakes the turn.
                 woken = False
                 for a in sorted(sim_running):
@@ -1380,26 +1426,38 @@ class Properties(unittest.TestCase):
                 if by_prompt and prompts_logged:
                     seen_prompt = True
                 message, valid, fact, unlinked = self.message(rng)
+                if not by_prompt and rng.random() < 0.5:  # a wake-up often ends quietly
+                    message, valid, fact, unlinked = rng.choice(["", "Noted.", "  "]), False, False, False
                 # A turn that no prompt started counts only once prompts are known to be logged.
+                # The hook's work-ran-out check counts the helper's SubagentStop like any other.
                 ran_out = (not sim_running and not background_bash
-                           and (stopped_now or (not by_prompt and seen_prompt)))
+                           and (stopped_now or helper or (not by_prompt and seen_prompt)))
                 hook_active = False
                 extra = {}
                 if sends_tasks:  # Claude Code lists what's in flight
                     extra["background_tasks"] = (
                         [{"id": a, "type": "subagent", "status": "running"} for a in sorted(sim_running)]
                         + ([{"id": "w", "type": "shell", "status": "running"}] if background_bash else []))
+                # A watcher's wake-up (no prompt, no agent stopped) may end with at most one word, once
+                # an earlier stop has said who holds the ball.
+                woken_quietly = not stopped_now and not (by_prompt and prompts_logged) and said_holder
                 while True:
-                    want_send_back = not hook_active and ((ran_out and not valid) or (fact and not checked)
-                                                          or unlinked)
+                    quiet = woken_quietly and len(message.split()) <= 1
+                    quiet_stops += quiet and ran_out and not valid and not hook_active
+                    quiet_after_helper += quiet and helper and not valid and not hook_active
+                    want_send_back = not hook_active and ((ran_out and not valid and not quiet)
+                                                          or (fact and not checked) or unlinked)
                     r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time())
                     checks += 1
                     self.assertEqual(r["send_back"], want_send_back, (history, turn, message, events))
                     if not r["send_back"]:
+                        said_holder = said_holder or valid
                         break
                     hook_active = True  # Claude Code tries again; it may still have no line
                     message, valid, fact, unlinked = self.message(rng)
             self.assertGreater(checks, 0)
+        self.assertGreater(quiet_stops, 0)
+        self.assertGreater(quiet_after_helper, 0)
 
 
 class HooksFile(unittest.TestCase):
