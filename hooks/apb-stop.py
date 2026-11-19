@@ -421,15 +421,16 @@ def hand_off_lines(message):
 def targets(message):
     """What the hand-off asks the human to act on, outside quoted words, once each, in order:
     ("thread", repo, PR, comment id) for each decision thread a hand-off line links, and, on a line that
-    says "merge", ("pr", repo, number) for each PR it links, or, if it links none, ("pr", None, number)
-    for each PR it names ("merge PR #44"; the project's own repo)."""
+    says "merge", ("pr", repo, number) for each PR it links (a thread link isn't one), or, if it links
+    none, ("pr", None, number) for each PR it names ("merge PR #44"; the project's own repo)."""
     found = []
     for line in hand_off_lines(message):
         text = QUOTE.sub(" ", line)
         here = [("thread", m.group(1), int(m.group(2)), int(m.group(3))) for m in THREAD_LINK.finditer(text)]
         if MERGE.search(text):
-            here += ([("pr", m.group(1), int(m.group(2))) for m in PULL_LINK.finditer(text)]
-                     or [("pr", None, int(m.group(1))) for m in BARE_PR.finditer(text)])
+            rest = THREAD_LINK.sub(" ", text)  # a thread link names a decision, not a PR to merge
+            here += ([("pr", m.group(1), int(m.group(2))) for m in PULL_LINK.finditer(rest)]
+                     or [("pr", None, int(m.group(1))) for m in BARE_PR.finditer(rest)])
         for t in here:
             if t not in found:
                 found.append(t)

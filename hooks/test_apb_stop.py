@@ -902,9 +902,14 @@ class Targets(unittest.TestCase):
             "2 things for you to do right now:\n1. answer [decision 3](%s)\n2. merge [PR #82](%s)"
             % (THREAD, APB_PR % 82): [("thread", APB, 82, 4627001605), ("pr", APB, 82)],
             "**2 things for you to do right now:**\n\n1. merge PR #4.\n2. merge PR #4 again.": [("pr", None, 4)],
-            # The thread is a target on any hand-off line; the merge's PR comes from the links.
+            # The thread is a target on any hand-off line. A thread link names no PR to merge, so the
+            # merge's PR is the one the line names.
             "1 thing for you to do right now: merge PR #82 after you answer [decision 3](%s)." % THREAD:
-                [("thread", APB, 82, 4627001605), ("pr", APB, 82)],
+                [("thread", APB, 82, 4627001605), ("pr", None, 82)],
+            "1 thing for you to do right now: answer [decision 3](https://github.com/hornof/apb/pull/82"
+            "#discussion_r111) so I can merge PR #84.": [("thread", APB, 82, 111), ("pr", None, 84)],
+            "1 thing for you to do right now: answer decision 3 (https://github.com/hornof/apb/pull/82"
+            "#discussion_r111), then merge [PR #84](%s)." % (APB_PR % 84): [("thread", APB, 82, 111), ("pr", APB, 84)],
         }
         for message, want in cases.items():
             self.assertEqual(stop.targets(message), want, message)
