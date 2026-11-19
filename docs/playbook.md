@@ -40,6 +40,8 @@ The builder and reviewer each start fresh, with their own instructions, and can'
 
 On a shared project, the project owner approves the gates and merges. To bring in another person, assign them an issue or ask them to review a PR.
 
+On GitHub, the orchestrator, the builders and the reviewers all act as Claude's own GitHub account, a second account the human makes once (apb-setup step 5). GitHub then shows which PRs, comments, commits and board moves are Claude's and which are the human's. The role signature at the end of each post, such as `— Claude (reviewer)`, tells the Claude roles apart. The advisor posts through its own connection as the human, with its signature. Without the account, Claude uses the human's login and only the signatures tell them apart.
+
 The human never types git commands; the orchestrator does. The advisor never gives the human something to paste into Claude Code; it posts on the GitHub issue, and the orchestrator reads it there. Someone working alone can skip the advisor and do everything in Claude Code.
 
 ## How the orchestrator and the agents talk
@@ -95,7 +97,7 @@ The orchestrator never tells the human "I can't see what the agent did". It can 
 - **Give the human one way to review.** Don't offer a choice of ways to review. Give each open question a recommended answer, so "ok" is a valid reply.
 - **Give exact clicks.**
   - To comment on a line, use the PR's "Files changed" tab in source view (not the formatted view).
-  - GitHub doesn't let you approve your own PR, so submit reviews with **Submit review → Comment**.
+  - When Claude has its own GitHub account, its PRs aren't the human's, so the human can submit a review with **Submit review → Approve**. Without the account, Claude's PRs count as the human's own, which GitHub doesn't let them approve, so they submit with **Submit review → Comment**.
 - **Several items? Overview first, then one at a time.** List them in a numbered list, one sentence each. Then take item 1: one line of context, the exact files to look at, the question. Finish it before starting item 2, and say "item 2 of 10" each time. With several complex items in one message, the context for the later ones is lost by the time item 1 is settled.
 - **A question gets an answer, not an action.** When the human asks "where is it?" or "why is that?", answer and stop. If a change seems useful, say so in one line and wait. Unasked changes, such as a rewritten PR description or a new PR, cost the human time to undo.
   - When the choice doesn't matter, say "Either option is fine." first, then the default in a few words, for example "harmless: leave them".

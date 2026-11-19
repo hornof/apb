@@ -26,7 +26,7 @@
 - The progress page shows the status the map leaves out. Each time you wake up (a watcher exits, an agent reports back), each time you say who holds the ball, and whenever the human asks where things stand, run `python3 <apb plugin folder>/scripts/progress-page.py <output.html>`, then publish `<output.html>` to the progress page link in `docs/MAP.md`. Never edit it by hand.
 - Before showing the human a markdown doc, check how GitHub displays it: `gh api markdown -F mode=gfm -F text=@<file>`.
 - In a public repo, never name anyone who isn't on the repo.
-- Claude uses the human's GitHub login, so GitHub can't tell who did what. End every PR description and comment Claude writes with its role, for example `— Claude (orchestrator)`. Skip this once Claude has its own GitHub account.
+- Claude Code works on GitHub as its own GitHub account when the project has one (apb-setup step 5), and as the human otherwise. Its token lives only in `.claude/settings.local.json`, never in a committed file. The orchestrator, builders and reviewers share that one account, so end every PR description and comment Claude writes with its role, for example `— Claude (orchestrator)`.
 - Problems with the apb process itself go on hornof/apb as one issue per problem, labeled `from-` followed by this repo's name.
 ## Project rules
 (none yet; add one line per rule when something goes wrong)
