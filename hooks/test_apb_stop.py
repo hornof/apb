@@ -1,7 +1,7 @@
 """Tests for apb-stop.py, the Stop hook. Run from the repo root: python3 -m unittest discover hooks
 
 The hook decides, when the orchestrator's turn ends, whether its work just ran out and, if so,
-whether the message starts with one of the playbook's three first lines. Example tests check each
+whether the message starts with one of the playbook's four first lines. Example tests check each
 rule; property tests build random session histories and compare the hook's decision with a separate
 simulation that tracks the same state while it writes the events.
 """
@@ -24,9 +24,10 @@ spec = importlib.util.spec_from_file_location("apb_stop", SCRIPT)
 stop = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stop)
 
-NOTHING = "Nothing for you to do right now. Waiting on GitHub checks for PR #40, about 8 minutes."
+NOTHING = "Nothing for you to do right now. Waiting on GitHub checks for PR #40, ETA 7:10 PM."
 ONE = "1 thing for you to do right now: merge PR #44."
 MANY = "2 things for you to do right now:\n1. Merge PR #44.\n2. Answer the question on #41."
+ALL_CLEAR = "All clear: both boards empty, no open PRs, as of 11:58 PM."
 
 
 def apb_project():
@@ -134,6 +135,23 @@ class FirstLine(unittest.TestCase):
         self.assertEqual(stop.first_line(ONE), ("human", "merge PR #44"))
         self.assertEqual(stop.first_line(MANY), ("human", "2 things"))
 
+    def test_all_clear(self):
+        self.assertEqual(stop.first_line(ALL_CLEAR), ("human", "all clear"))
+        self.assertEqual(stop.first_line("**All clear: the apb and project boards empty, no open PRs, as of "
+                                         "9:05 AM**"), ("human", "all clear"))
+        for message in ["All clear.", "All clear: nothing open.",
+                        "All clear: both boards empty, no open PRs.",  # no time
+                        "All clear: both boards empty, as of 9:05 AM.",  # says nothing about PRs
+                        "all clear: both boards empty, no open PRs, as of 9:05 AM.",
+                        "ALL CLEAR: both boards empty, no open PRs, as of 9:05 AM.",
+                        "Done.\n" + ALL_CLEAR]:  # not the first line
+            self.assertIsNone(stop.first_line(message), message)
+
+    def test_nothing_takes_an_eta_as_a_clock_time(self):
+        for eta in ["7:10 PM", "7:10 PM.", "7:10pm", "7:10 p.m.", "19:10", "9:05 AM"]:
+            message = "Nothing for you to do right now. Waiting on the builder, ETA %s" % eta
+            self.assertEqual(stop.first_line(message), ("claude", None), message)
+
     def test_text_after_the_first_line_is_allowed(self):
         self.assertEqual(stop.first_line(ONE + "\n\nPR #44 (Card #41): in review.")[0], "human")
         self.assertEqual(stop.first_line(NOTHING + "\nPR #40: checks running.")[0], "claude")
@@ -160,10 +178,13 @@ class FirstLine(unittest.TestCase):
                         "Nothing for you to do right now. Waiting on CI.",  # no time
                         "1 things for you to do right now: merge PR #44.",
                         "1 things for you to do right now:\n1. Merge PR #44.",
-                        "Nothing for you to do right now. Waiting on CI, about soon.",
+                        "Nothing for you to do right now. Waiting on CI, ETA soon.",
+                        "Nothing for you to do right now. Waiting on CI, about 5 minutes.",  # the old form
+                        "Nothing for you to do right now. Waiting on CI, ETA 5 minutes.",  # not a clock time
+                        "Nothing for you to do right now. Waiting on CI, ETA 7:10 PM. Then I start #5.",
                         "0 things for you to do right now:",
                         "1 thing for you to do right now:",
-                        "NOTHING FOR YOU TO DO RIGHT NOW. Waiting on CI, about 5 minutes.",
+                        "NOTHING FOR YOU TO DO RIGHT NOW. Waiting on CI, ETA 7:10 PM.",
                         "Here is the summary.\n" + ONE,  # not the first line
                         "2 things for you to do right now: merge and answer."]:
             self.assertIsNone(stop.first_line(message), message)
@@ -178,12 +199,12 @@ class StatedFacts(unittest.TestCase):
                         "Bumped to v1.2.0.", "3 of 5 cards are done.", "13 PRs merged today.",
                         "1 PR waits for review.", "2 checks failed.", "4 open issues left.",
                         "Card #41 is in the In review column.", "Moved it on the board.",
-                        "Waiting on GitHub checks for PR #40, about 8 minutes."]:
+                        "Waiting on GitHub checks for PR #40, ETA 7:10 PM."]:
             self.assertTrue(stop.stated_facts(message), message)
 
     def test_not_facts(self):
         for message in [None, "", "Done. The builder finished.", "Answer the question on #41.",
-                        "Waiting on the builder, about 10 minutes.", "2 things for you to do right now:",
+                        "Waiting on the builder, ETA 7:10 PM.", "2 things for you to do right now:",
                         "It took 1.5 seconds.", "The address is 10.0.0.12.", "On 2026-11-18 at 10:30.",
                         "The keyboard and dashboard work.", "We need one approval.",
                         "45 tests pass.", "Onboarding is next."]:
@@ -339,8 +360,8 @@ class AsksDecision(unittest.TestCase):
             self.assertTrue(stop.asks_decision(message), message)
 
     def test_not_decisions(self):
-        for message in [None, "", ONE, NOTHING, MANY, "Done. The builder finished.",
-                        "Nothing for you to do right now. Waiting on the reviewer to decide, about 5 minutes.",
+        for message in [None, "", ONE, NOTHING, MANY, ALL_CLEAR, "Done. The builder finished.",
+                        "Nothing for you to do right now. Waiting on the reviewer to decide, ETA 7:10 PM.",
                         "1 thing for you to do right now: pick up the build after lunch.",
                         "The builder picked a layout.\nDecide later.",  # not the first line
                         "Indecisive tests, rerun.",
@@ -675,8 +696,8 @@ class ProjectsLine(unittest.TestCase):
         self.assertEqual(last["holder"], "human")
 
     def test_only_a_hand_off_to_the_human_is_checked(self):
-        r, calls = self.run_with("Nothing for you to do right now. Waiting on the reviewer for %s, about "
-                                 "10 minutes." % (APB_PR % 74), {74: pr(["hooks/a.py"], "")})
+        r, calls = self.run_with("Nothing for you to do right now. Waiting on the reviewer for %s, ETA "
+                                 "7:10 PM." % (APB_PR % 74), {74: pr(["hooks/a.py"], "")})
         self.assertFalse(sent_back(r))
         self.assertEqual(calls, [])
 
@@ -836,13 +857,13 @@ class Hook(unittest.TestCase):
         self.assertEqual(note["hookEventName"], "Stop")
         self.assertTrue(note["additionalContext"].startswith("Say who holds the ball"))
         for form in ["Nothing for you to do right now.", "1 thing for you to do right now:",
-                     "things for you to do right now:"]:
+                     "things for you to do right now:", "All clear: <boards> empty, no open PRs, as of <time>."]:
             self.assertIn(form, note["additionalContext"])
         last = read_events(self.project)[-1]
         self.assertEqual((last["event"], last["sent_back"]), ("Stop", True))
 
-    def test_allows_each_of_the_three_forms(self):
-        for message in [NOTHING, ONE, MANY]:
+    def test_allows_each_of_the_four_forms(self):
+        for message in [NOTHING, ONE, MANY, ALL_CLEAR]:
             project = apb_project()
             write_events(project, FINISHED_AGENT)
             r = run(payload(message), project)
@@ -856,6 +877,13 @@ class Hook(unittest.TestCase):
         run(payload(ONE), self.project)
         last = read_events(self.project)[-1]
         self.assertEqual((last["holder"], last["todo"]), ("human", "merge PR #44"))
+
+    def test_all_clear_is_logged_as_the_humans_turn(self):
+        write_events(self.project, FINISHED_AGENT)
+        self.assertFalse(sent_back(run(payload(ALL_CLEAR), self.project)))
+        last = read_events(self.project)[-1]
+        self.assertEqual((last["event"], last["holder"], last["todo"]), ("Stop", "human", "all clear"))
+        self.assertNotIn("sent_back", last)
 
     def test_never_sends_back_twice_in_a_row(self):
         write_events(self.project, FINISHED_AGENT)
@@ -960,6 +988,19 @@ class Reminder(unittest.TestCase):
     def test_no_reminder_when_claude_holds_the_ball(self):
         write_events(self.project, FINISHED_AGENT)
         run(payload(NOTHING), self.project, self.env)
+        self.assertEqual(self.alerts(3), [])
+
+    def test_no_reminder_after_all_clear(self):
+        # All clear gets one alert, from the orchestrator; nothing more until the human speaks.
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(ALL_CLEAR), self.project, self.env)
+        self.assertEqual(self.alerts(3), [])
+
+    def test_an_answer_after_all_clear_starts_no_reminder(self):
+        write_events(self.project, FINISHED_AGENT)
+        run(payload(ALL_CLEAR), self.project, self.env)
+        write_events(self.project, [{"event": "UserPromptSubmit"}])
+        run(payload("The last PR changed two files."), self.project, self.env)
         self.assertEqual(self.alerts(3), [])
 
     def test_no_reminder_after_the_human_acts(self):
@@ -1139,10 +1180,12 @@ class Properties(unittest.TestCase):
     def body(self, rng):
         """(text, valid first line, states a fact, the first line asks a decision, holds a link,
         a numbered item under "N things" asks a decision with no link on its own line)."""
-        kind = rng.randrange(6)
+        kind = rng.randrange(7)
         thing, fact, decision, link = rng.choice(self.THINGS)
         if kind == 0:
             return NOTHING, True, True, False, False, False  # it names PR #40
+        if kind == 5:
+            return ALL_CLEAR, True, True, False, False, False  # it names the boards
         if kind == 1:
             return "1 thing for you to do right now: %s." % thing, True, fact, decision, link, False
         n = rng.randint(2, 6)

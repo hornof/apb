@@ -9,9 +9,9 @@ which hooks/apb-events.py writes.
   playbook's "Helping the human keep track". What's running comes from the Stop input's
   background_tasks; without it, from the events file (agents started and not stopped, and background
   commands started in this turn).
-- Then the message must start with one of the three first lines. If it doesn't, the hook sends the
+- Then the message must start with one of the four first lines. If it doesn't, the hook sends the
   message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
-  and Claude goes on to add the line.
+  and Claude goes on to add the line. "All clear: ..." is logged as holder human, todo "all clear".
 - On any stop, if the message states a GitHub fact (a PR number, a version, a count such as "3 of 5"
   or "13 PRs", or the word "board" or "column") and the orchestrator itself ran no lookup that
   finished without error in this turn, the hook sends the message back once, with a note that starts
@@ -37,7 +37,7 @@ which hooks/apb-events.py writes.
 - It appends a Stop line to the events file, with who holds the ball when the message says so, the
   unchecked facts ("unchecked"), "decision-without-link" and the PRs missing their Projects line
   ("projects-line-missing") when those were why it sent the message back.
-- If the human holds the ball, it starts a reminder in the background: if the human has done
+- If the human holds the ball, other than after "All clear", it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
   new first line ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
   The reminder outlives the hook, so it is given a deadline (the wait plus LIFETIME_MARGIN) and
@@ -61,9 +61,12 @@ MAX = 300  # longest string kept in a line, in characters
 
 REASON = ("Say who holds the ball. Your work just ran out, so start the message with one of these "
           "lines (playbook, \"Helping the human keep track\"):\n"
-          "- Nothing for you to do right now. Waiting on <what>, about M minutes.\n"
+          "- Nothing for you to do right now. Waiting on <what>, ETA <time>. (A clock time, such as "
+          "7:10 PM; run date first.)\n"
           "- 1 thing for you to do right now: <the thing>.\n"
-          "- N things for you to do right now: followed by a numbered list of exactly N things.")
+          "- N things for you to do right now: followed by a numbered list of exactly N things.\n"
+          "- All clear: <boards> empty, no open PRs, as of <time>. (Once, when nothing is open on any "
+          "board or repo you watch; nothing under it.)")
 
 DEPARTED = ("An agent's report says it departed from its file, and that isn't resolved: %s. Put it right "
             "before the human sees anything (for example, launch the agent again with the task only). Then "
@@ -118,9 +121,13 @@ MAX_PRS = 3  # apb PRs looked up in one stop
 PR_TIME_LIMIT = 4  # seconds for one gh call
 PR_BUDGET = 6  # seconds for all of them; the Stop hook has 10 in all
 
-NOTHING = re.compile(r"Nothing for you to do right now\. Waiting on .+, about \d+ minutes?\.?$")
+# The ETA is a clock time: 7:10 PM, 7:10pm, 7:10 p.m. or 19:10.
+NOTHING = re.compile(r"Nothing for you to do right now\. Waiting on .+, ETA \d{1,2}:\d{2}"
+                     r"(?:\s*[AaPp]\.?[Mm]\.?)?\.?$")
 ONE = re.compile(r"1 thing for you to do right now: (.+?)\.?$")
 MANY = re.compile(r"(\d+) things for you to do right now:$")
+ALL_CLEAR = re.compile(r"All clear: .+ empty, no open PRs, as of .+")
+CLEAR = "all clear"  # the todo an All clear line logs; it starts no reminder
 ITEM = re.compile(r"(\d+)[.)]\s+\S")
 
 
@@ -130,8 +137,8 @@ def clean(line):
 
 
 def first_line(message):
-    """(holder, todo) if the message starts with one of the three lines, else None.
-    holder is "claude" or "human"; todo is what the human has to do, for the reminder."""
+    """(holder, todo) if the message starts with one of the four lines, else None.
+    holder is "claude" or "human"; todo is what the human has to do, for the reminder, or CLEAR."""
     if not isinstance(message, str):
         return None
     lines = [clean(l) for l in message.splitlines()]
@@ -142,6 +149,8 @@ def first_line(message):
     head = lines[0]
     if NOTHING.match(head):
         return ("claude", None)
+    if ALL_CLEAR.fullmatch(head):
+        return ("human", CLEAR)
     m = ONE.match(head)
     if m:
         return ("human", m.group(1).strip())
@@ -491,7 +500,8 @@ def handle(p, project, now, pr_lookup=None):
         holder, todo = holder_now(events, session)  # the prompt ended the last wait; start a new one
     else:
         holder, todo = None, None  # woken with no new line: the running wait carries on
-    return {"send_back": False, "remind": todo if holder == "human" else None, "end": end}
+    # All clear got its one alert from the orchestrator; nothing more until the human writes.
+    return {"send_back": False, "remind": todo if holder == "human" and todo != CLEAR else None, "end": end}
 
 
 def remind_after():
