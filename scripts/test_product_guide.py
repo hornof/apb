@@ -54,11 +54,36 @@ class TheGuide(unittest.TestCase):
         for words in ("PRD", "current card", "backlog", "the human"):
             self.assertIn(words, body, words)
 
+    def test_ideas_are_raised_only_in_the_hand_off(self):
+        body = self.parts["Out of scope or not"]
+        self.assertIn("only in the card's hand-off", body)
+        self.assertIn("never in the middle of a card", body)
+
     def test_backlog_is_a_labeled_issue_with_a_write_up(self):
         body = self.parts["The backlog"]
-        for words in ("`backlog`", "gh label create backlog --force", "gh issue create",
-                      "Where it came from", "Why it matters", "Size"):
+        for words in ("`backlog`", "gh label create backlog --force", "Where it came from", "Why it matters",
+                      "Size"):
             self.assertIn(words, body, words)
+
+    def test_every_gh_issue_create_needs_no_prompt(self):
+        # Without --title and --body (or --body-file), gh issue create prompts, and Claude's shell can't answer.
+        cmds = re.findall(r"`(gh issue create[^`]*)`", self.text)
+        self.assertTrue(cmds)
+        for cmd in cmds:
+            self.assertIn("--title", cmd, cmd)
+            self.assertRegex(cmd, r"--body(-file)? ", cmd)
+
+    def test_card_times_is_named_as_the_plugin_script(self):
+        # It lives in the apb plugin, not the project: named the way the playbook and apb-build name it.
+        self.assertIn("`python3 <apb plugin folder>/scripts/card-times.py --collect`", self.text)
+        self.assertNotIn("`scripts/card-times.py", self.text)
+
+    def test_one_name_for_acceptance_criteria(self):
+        self.assertIn("acceptance criteria", self.text)
+        self.assertNotIn("acceptance check", self.text)
+
+    def test_written_for_the_human_not_you(self):
+        self.assertIsNone(re.search(r"\b[Yy]ou(r)?\b", self.text))
 
     def test_grooming_updates_merges_and_drops(self):
         body = self.parts["Grooming"]
@@ -76,6 +101,11 @@ class TheGuide(unittest.TestCase):
         body = self.parts["The next piece of work"]
         for words in ("`build`", "--remove-label backlog", "Todo", "gh project item-add"):
             self.assertIn(words, body, words)
+
+    def test_next_piece_is_chosen_before_todo_runs_out(self):
+        body = self.parts["The next piece of work"]
+        self.assertIn("Todo on the board is down to one card", body)
+        self.assertNotIn("Todo on the board is empty", body)
 
     def test_board_gets_no_new_column(self):
         body = self.parts["How the backlog shows on the board"]
@@ -134,6 +164,19 @@ class OtherDocsPointToIt(unittest.TestCase):
 
     def test_playbook_points_to_it(self):
         self.assertIn("`%s`" % GUIDE, section(read("docs/playbook.md"), "Helping the human keep track"))
+
+    def test_builder_is_told_what_the_guide_says_it_does(self):
+        text = flat(read("agents/builder.md"))
+        self.assertIn("When you find an idea outside your issue, leave it out of the PR and name it in your "
+                      "final report.", text)
+        self.assertIn("`agents/builder.md`", section(read(GUIDE), "Out of scope or not"))
+
+    def test_map_template_has_a_backlog_row(self):
+        rows = [l for l in section(read("templates/MAP-template.md"), "GitHub").splitlines()
+                if l.startswith("| Backlog:")]
+        self.assertEqual(len(rows), 1)
+        self.assertIn("label:backlog", rows[0])
+        self.assertIn("`docs/product-guide.md`", rows[0])
 
     def test_apb_board_creates_the_label(self):
         board = read("skills/apb-board/SKILL.md")

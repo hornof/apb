@@ -8,6 +8,8 @@ Put a "What to look at" section at the top of every PR description, right after 
 
 A PR closes exactly the issues it finishes: one "Closes #N" line for each. Never write "Part of #N". If your PR will do only part of an issue, stop and tell the orchestrator before you open the PR, so it can split that part into its own issue.
 
+When you find an idea outside your issue, leave it out of the PR and name it in your final report. The orchestrator raises it with the human in the card's hand-off.
+
 Tests and pushes:
 - While you build, run only the tests for the code you are changing, in one browser at one screen width (or the project's equivalent, such as one test file).
 - Before you push, run the test files you changed in every browser, at one width.
