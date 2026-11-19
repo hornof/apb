@@ -1,0 +1,376 @@
+[
+ {
+  "time": "2026-11-18T21:52:24.775Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "The builder opened [PR #57](https://github.com/hornof/apb/pull/57) after about 6 minutes. The reviewer started at 1:52 PM. It's a script with tests, so I'd guess about 10 minutes."
+ },
+ {
+  "time": "2026-11-18T22:32:42.585Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Good idea. From now on I'll give the clock time, like \"ETA 2:40 PM\". ETA is a fine word for it: short, and everyone knows it.\nFor the reviewer on PR #58: ETA 2:40 PM."
+ },
+ {
+  "time": "2026-11-18T23:02:01.472Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now. Waiting on the builder to fix 4 small things on PR #59 (Card #55), ETA 3:15 PM. The review has no decisions for you."
+ },
+ {
+  "time": "2026-11-19T02:28:32.226Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [
+   "github-fact"
+  ],
+  "message": "Nothing for you to do right now.\nThe builder opened [PR #63 (Card #3)](https://github.com/hornof/apb/pull/63). GitHub shows `hornof-claude` as both the PR author and the commit author, so the bot works for PRs and commits. Card #3 is now in In review, and the reviewer is checking the PR. ETA 6:50 PM."
+ },
+ {
+  "time": "2026-11-19T02:37:59.699Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Yes, that makes sense, and I'll do it.\n- **The watcher only covers what I point it at.** When decision 12 came up, no watcher was running on PR #63. I saw your resolved thread only because I checked when the builder finished.\n- Whenever something on GitHub waits on you, I keep a watcher running that covers it. One is running now on the apb PRs, so your merge of #63 reaches me on its own.\nStill 1 thing for you to do right now: merge [PR #63 (Card #3)](https://github.com/hornof/apb/pull/63)."
+ },
+ {
+  "time": "2026-11-19T02:39:17.569Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Will do. Whenever I notice something you did, such as a comment on a ticket, a resolved thread, a merge or a board move, I'll add a line here with a link and what I'm doing about it. I've saved it as a standing rule, and a watcher is running on the apb PRs and #64.\nNothing for you to do right now. The builder is still on card #64, ETA 7:05 PM."
+ },
+ {
+  "time": "2026-11-19T02:48:07.190Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now.\nThe [review of PR #65 (Card #64)](https://github.com/hornof/apb/pull/65#issuecomment-6998129220) has 2 to fix, both wording, 2 notes and no decisions. The builder is fixing the 2 items now, plus the advisor's docstring line. ETA 7:05 PM, then the PR goes to you to merge."
+ },
+ {
+  "time": "2026-11-19T02:55:24.369Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now. The builder opened [PR #66 (Card #14)](https://github.com/hornof/apb/pull/66), and the reviewer starts once the builder reports back."
+ },
+ {
+  "time": "2026-11-19T03:04:44.859Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Thanks. I've saved that message as the model to copy: the first line, one short sentence on what's being worked on, an ETA as a clock time, and what comes next.\nStill 1 thing for you to do right now: merge [PR #66 (Card #14)](https://github.com/hornof/apb/pull/66)."
+ },
+ {
+  "time": "2026-11-19T04:01:54.928Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now.\nThe builder opened [PR #69 (Card #60)](https://github.com/hornof/apb/pull/69), and all tests passed. The reviewer started at 8:01 PM; ETA 8:20 PM.\nThere will likely be one decision for you. Timing human time from the last hand-off means the time you spend answering a decision is no longer counted anywhere: card #17 would show 0 minutes for you. Separately, two hand-offs (decision, then merge) is the normal case, not a sign the PR came back. If the review raises a decision, it'll come with the options."
+ },
+ {
+  "time": "2026-11-19T04:05:34.930Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "1 thing for you to do right now: answer [decision 3 on PR #69 (Card #60)](https://github.com/hornof/apb/pull/69#discussion_r4624184802).\nThe question is how to count your time on a card. As built, it runs from the last hand-off to the merge. So the time you spend answering a decision counts nowhere, and card #17 would show 0 minutes for you instead of 8."
+ },
+ {
+  "time": "2026-11-19T04:19:18.367Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now.\nThe builder pushed (a) to PR #69, and all tests passed (scripts 376, hooks 133). The new numbers: card #17 shows 6 min for you, card #54 shows 4 min."
+ },
+ {
+  "time": "2026-11-19T04:41:22.642Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now.\nThe builder opened [PR #71 (Card #67)](https://github.com/hornof/apb/pull/71), and all tests passed. The reviewer started at 8:41 PM; ETA 9:00 PM.\nThe new hook can only be fully tested in a live session after the merge, because it needs the updated plugin running. Once you merge, I'll add the coordination-issue line to sketch-gallery's CLAUDE.md. Then the test is to post a comment on #25 and check that I wake up without anyone telling me."
+ },
+ {
+  "time": "2026-11-19T04:47:28.370Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now. The reviewer just posted its review of PR #71, which includes one thread, possibly a decision. I'll pass on anything that needs you as soon as it reports back, in a minute or two."
+ },
+ {
+  "time": "2026-11-19T04:48:02.074Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "1 thing for you to do right now: answer [decision 8 on PR #71 (Card #67)](https://github.com/hornof/apb/pull/71#discussion_r4624442203), on how to watch sketch-gallery's own PRs. The reviewer recommends (a), and resolving the thread with no reply counts as (a)."
+ },
+ {
+  "time": "2026-11-19T04:59:43.584Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now.\nThe builder pushed (a), and all tests passed (hooks 172, scripts 378). The change is code that starts and stops background processes, so I've asked the reviewer to check those two commits before you merge. ETA 9:15 PM, then PR #71 goes to you to merge."
+ },
+ {
+  "time": "2026-11-19T05:08:10.914Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now.\nThe [reviewer's re-check](https://github.com/hornof/apb/pull/71#issuecomment-7000318295) found one fix and no decisions. If the coordination line names the project's own repo, two watchers would watch the same repo, and one event could wake me twice. The builder is fixing that now. ETA 9:20 PM, then PR #71 goes to you to merge."
+ },
+ {
+  "time": "2026-11-19T05:24:08.770Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing new for you. The reviewer of sketch-gallery PR #42 is waiting on one of its own checks before it reports. Still 1 thing for you to do right now: tell me whether to give `hornof-claude` access to sketch-gallery."
+ },
+ {
+  "time": "2026-11-19T05:24:30.596Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Still 1 thing for you to do right now: tell me whether to give `hornof-claude` access to sketch-gallery.\nThe builder opened [PR #72 (Card #68)](https://github.com/hornof/apb/pull/72), and all tests passed. The reviewer started at 9:24 PM; ETA 9:40 PM. The reviewer on sketch-gallery PR #42 is still working."
+ },
+ {
+  "time": "2026-11-19T05:26:58.538Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now. The reviewer of sketch-gallery PR #42 is still waiting on one of its own checks. If it hasn't reported by 9:40 PM, I'll look at what it's stuck on."
+ },
+ {
+  "time": "2026-11-19T05:49:53.645Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now. The reviewer confirmed that the browser tests passed on the commit it reviewed. On the newer commit with my fixes, three of the four checks have passed and the browser tests are still running. ETA 10:05 PM, then sketch-gallery PR #42 goes to you to merge."
+ },
+ {
+  "time": "2026-11-19T05:52:42.185Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Yes, exactly.\n- **apb** is the instruction book. #22 changed the book: it now says \"skip the browser tests when only docs change.\"\nThe fix is a small change to that one file in sketch-gallery. Want me to do it right after you merge PR #42?"
+ },
+ {
+  "time": "2026-11-19T06:06:49.679Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now. I'll say \"merge now\" when PR #45's review is done, ETA about 10:15 PM."
+ },
+ {
+  "time": "2026-11-19T06:07:14.084Z",
+  "sent_back_for": [
+   "github-fact",
+   "decision-without-link"
+  ],
+  "still_caught": [
+   "decision-without-link"
+  ],
+  "message": "Still 1 thing for you to do right now: rule on the review of sketch-gallery PR #45, including decision 7. Resolve a thread to accept it, or reply to change it."
+ },
+ {
+  "time": "2026-11-19T06:12:15.577Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Still 1 thing for you to do right now: rule on the 7 review threads on [sketch-gallery PR #45](https://github.com/hornof/sketch-gallery/pull/45), including decision 7.\nMeanwhile the builder opened [PR #74 (Card #73)](https://github.com/hornof/apb/pull/74), and all tests passed. The reviewer started at 10:12 PM; ETA 10:30 PM."
+ },
+ {
+  "time": "2026-11-19T06:29:35.474Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "You did steps 1–3 exactly right. No mistake on your end.\nThe extra scopes come from a gap in my instructions. On apb#3, I told you to tick only **repo** and **project**. Later, while building the card, the builder found that board commands also need **read:org**, and the reviewer found that pushing a CI file also needs **workflow**. So you followed my list correctly, but my list was incomplete. Sorry for the extra trip back to that page.\nThe billing check isn't new: it was always the second half of apb#3's same-day test. I just never asked you to do it at the time."
+ },
+ {
+  "time": "2026-11-19T06:55:49.483Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Good to know, thanks. I haven't done anything in Chrome since the account was set up; all of tonight's GitHub work went through my shell, which also runs as `hornof-claude`.\nAnything I do on GitHub in Chrome now shows as `hornof-claude`. That's fine for my own work, like comments and board moves, but I won't use it for anything that has to be yours, like merging. I've saved that as a rule.\nMy last message just suggested what to do next; I haven't started anything. Say \"go\" if you want apb#75 and apb#70 on the board, or tell me if you'd rather stop here."
+ },
+ {
+  "time": "2026-11-19T07:28:46.309Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Where it's saved: in my memory for this project, in `status-format.md`. Those notes load at the start of every session in the sketch-gallery folder. They are not in apb, so a new project, or another person's, wouldn't get it. Since apb's playbook has a section on helping the human keep track, I'd also put the rule there, as a small apb card. Say if you want that.\n- 7:05 PM: \"More great messaging!\", about \"I saw your merge of PR #66\".\n3. **Hooks check me before a message reaches you.** The Stop hook sends a message back if it states a GitHub fact I didn't check in the same turn, or asks for a decision without a link. That's why you see me re-checking a PR before answering. The new watcher hook tells me within seconds when you or the advisor post.\n- I said \"card #3\" with no repo."
+ },
+ {
+  "time": "2026-11-19T08:07:02.024Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now.\nThe builder opened [PR #78 (apb#77)](https://github.com/hornof/apb/pull/78), and all tests passed (hooks 216, scripts 386). The reviewer started at 12:06 AM. ETA 12:25 AM for your merge."
+ },
+ {
+  "time": "2026-11-19T08:28:35.021Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "**What to decide on PR #78:** whether the \"Nothing for you to do right now\" line ends with a clock time (\"ETA 12:40 AM\") instead of \"about 8 minutes\", so every message uses one form for time.\nRecommended: (b). Resolving [the thread](https://github.com/hornof/apb/pull/78#discussion_r4625948654) with no reply counts as (b).\n**Was I consistent? No.** Sometimes my decision hand-offs list every option, like decision 3 on PR #69. Sometimes they only give the link and the recommendation, like decision 8 on PR #71 and decision 3 on PR #72. This one named only option (b). I also added a paragraph about skipping a fix item, which isn't part of a decision hand-off.\n**Why:** I wrote each one fresh instead of copying the last one that worked. From now on, every decision hand-off uses the shape above: the question in one line, every lettered option, the recommendation, what resolving with no reply means, and the link."
+ },
+ {
+  "time": "2026-11-19T08:29:06.114Z",
+  "sent_back_for": [
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "Understood. I won't change anything. No new formats, and no edits to rules or files. Decision hand-offs stay in the form you've been getting. Nothing is running."
+ },
+ {
+  "time": "2026-11-19T08:29:30.408Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Just now, I changed two things, both in my messages. No files changed:\n1. **The decision hand-off for PR #78.** It named only option (b) and added a paragraph about skipping fix item 5. Your earlier hand-offs didn't look like that.\n2. **I announced a \"new shape\" for all decision hand-offs.** That was another change, made without asking you. I haven't saved it anywhere, so nothing actually changed, and I'm dropping it."
+ },
+ {
+  "time": "2026-11-19T08:29:58.333Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Right now I'm doing nothing. No builder, reviewer or watcher is working on a task, and I haven't changed any file since you said stop.\nThe short extra messages, like \"I checked GitHub: PR #78 is still open\", aren't me changing anything. A check in apb runs automatically every time I finish a message. If my message names a PR or issue that I didn't look up in that same turn, the check sends it back. So I look it up and send a second message with the result. That's why they keep appearing after my replies."
+ },
+ {
+  "time": "2026-11-19T08:31:43.556Z",
+  "sent_back_for": [
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "Yes. On GitHub, decision 8 has the same shape as the others: the number, \"Decision\", the label, the context, the question, lettered options, \"Recommended\" and \"Resolve with no reply\"."
+ },
+ {
+  "time": "2026-11-19T08:34:13.037Z",
+  "sent_back_for": [
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "Got it. The decision itself was the same as always, but the advisor's \"Plain words\" reply sat in the same thread, which pushed the Resolve button down below it. So the button looked missing under the decision."
+ },
+ {
+  "time": "2026-11-19T08:35:28.344Z",
+  "sent_back_for": [
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "Partly correct. When you asked whether I was consistent, I said no and announced a new format for decision hand-offs. That was me starting to change things. I didn't save it anywhere or edit any file, and I've dropped it."
+ },
+ {
+  "time": "2026-11-19T08:35:47.958Z",
+  "sent_back_for": [
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "Sorry. Those link-only messages were the new check from apb#68. It reads the first line of each of my messages, and if that line contains a word like \"decide\", it makes me add a GitHub link. My lines were only talking about your question, not asking you anything, so it fired wrongly."
+ },
+ {
+  "time": "2026-11-19T08:36:28.484Z",
+  "sent_back_for": [
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "\"Dropped it\" means I gave up the idea. Earlier I said I'd start using a new format for presenting your decisions. I never saved that or used it, and I won't. Nothing changed."
+ },
+ {
+  "time": "2026-11-19T08:41:47.427Z",
+  "sent_back_for": [
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "1. **\"From now on\":** yes, when I wrote it, I meant I'd present decisions differently going forward. I've taken that back. Nothing will be different."
+ },
+ {
+  "time": "2026-11-19T08:44:11.661Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "- **The PR #78 hand-off:** about 12:12 AM, before your consistency question.\n- **The \"new shape\" announcement:** in my reply to your question \"what do I need to decide on for PR #78… Are we being consistent?\". That was after your consistency question. It was only words in chat; I never saved it or used it."
+ },
+ {
+  "time": "2026-11-19T08:47:11.792Z",
+  "sent_back_for": [
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "Only one: \"From now on, every decision hand-off uses the shape above.\" It changed nothing, and I've withdrawn it."
+ },
+ {
+  "time": "2026-11-19T08:49:33.574Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "My best guesses:\n5. **Updating a status, label or board column:** a change."
+ },
+ {
+  "time": "2026-11-19T08:51:55.327Z",
+  "sent_back_for": [
+   "github-fact",
+   "decision-without-link"
+  ],
+  "still_caught": [],
+  "message": "I'll leave PR #78 as it is. Nothing is running. When you want to pick it up again, say so."
+ },
+ {
+  "time": "2026-11-19T08:52:30.363Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Nothing for you to do right now. The builder is building (b) on PR #78. ETA 1:10 AM, then the PR goes to you to merge."
+ },
+ {
+  "time": "2026-11-19T08:52:48.596Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Continuing as usual. Nothing for you to do right now. The builder is on PR #78, ETA 1:10 AM."
+ },
+ {
+  "time": "2026-11-19T08:54:34.967Z",
+  "sent_back_for": [
+   "github-fact"
+  ],
+  "still_caught": [],
+  "message": "Thanks. Nothing for you to do right now. The builder is on PR #78, ETA 1:10 AM."
+ }
+]
