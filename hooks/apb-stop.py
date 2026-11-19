@@ -13,7 +13,8 @@ which hooks/apb-events.py writes.
   message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
   and Claude goes on to add the line. "All clear: ..." is logged as holder human, todo "all clear".
   One exception: a wake-up that changed nothing for the human. When no prompt and no agent's stop
-  started the turn (a watcher or a background command woke it), an earlier stop in this session
+  started the turn (a watcher or a background command woke it; the SubagentStop with agent_type ""
+  that Claude Code's own helper logs after each stop is not an agent's), an earlier stop in this session
   already said who holds the ball, and the message is empty or one word, the stop goes through and
   the ball stays where it was.
 - On any stop, if the message states a GitHub fact (a sentence that gives a PR, issue or card with a
@@ -423,8 +424,13 @@ def quiet_wake_up(events, session, message):
         return False
     if len((message or "").split()) > 1:
         return False
-    if any(e["event"] in ("UserPromptSubmit", "SubagentStop") for e in this_turn(events, session)):
-        return False
+    for e in this_turn(events, session):
+        if e["event"] == "UserPromptSubmit":
+            return False
+        # An agent's report. Claude Code's own helper also logs a SubagentStop, with agent_type ""
+        # and no SubagentStart, just after each stop; it is no report.
+        if e["event"] == "SubagentStop" and e.get("agent_type") != "":
+            return False
     return holder_now(events, session) != (None, None)
 
 
