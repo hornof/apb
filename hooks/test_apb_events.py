@@ -165,6 +165,25 @@ class Writes(unittest.TestCase):
         self.assertNotIn("routine", line)
         self.assertNotIn("agent done", json.dumps(line))
 
+    def test_an_agent_reporting_back_is_marked_automatic(self):
+        # The text Claude Code sends when a builder or reviewer hands back its report.
+        report = ('Another Claude session sent a message:\n<agent-message from="a064fa83cb35c40c6">\n'
+                  "[Subagent hand-back] The report follows:\n  I fixed review items 1-6.\n</agent-message>")
+        line = self.one(base("UserPromptSubmit", prompt=report))
+        self.assertTrue(line["automatic"])
+        self.assertNotIn("routine", line)
+        self.assertNotIn("review items", json.dumps(line))
+
+    def test_the_human_quoting_a_report_back_is_not_automatic(self):
+        for text in ["Another Claude session sent a message: did you see it?",
+                     'Why did it say "Another Claude session sent a message:\n<agent-message from=x>"?',
+                     "Another Claude session sent a message:\nthe reviewer is done"]:
+            run(base("UserPromptSubmit", prompt=text), self.project)
+        got = lines(self.project)
+        self.assertEqual(len(got), 3)
+        self.assertTrue(all("automatic" not in g for g in got))
+        self.assertTrue(all(g["routine"] is False for g in got))
+
     def test_a_prompt_with_no_text_has_neither_mark(self):
         line = self.one(base("UserPromptSubmit"))
         self.assertNotIn("routine", line)
