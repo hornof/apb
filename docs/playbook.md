@@ -187,15 +187,22 @@ For generated content, also:
 
 The orchestrator acts only when something wakes it: a message from the human, an agent's report, or a background command finishing. A merge on GitHub or a frozen test run wakes nothing. So the orchestrator never waits without the watcher, and never states anything it hasn't just checked.
 
-- **The watcher** is `scripts/apb-watch.py` in the apb plugin. Whenever the orchestrator waits (on a builder or reviewer, on the human, or on GitHub), it runs the watcher in the background in its own shell. The watcher checks every 20 seconds. It exits, saying what it found, when:
+- **The watcher** is `scripts/apb-watch.py` in the apb plugin. The watcher checks every 20 seconds. It exits, saying what it found, when:
   - a PR is opened, merged or closed, its checks finish, it gets new comments, or all its review comments are resolved
   - an issue named with `--issue N` gets a new comment
   - a command started from Claude's shells has used no CPU for 10 minutes
   - a running agent has written nothing to the events file for 15 minutes
   - 5 minutes have passed, with `--check-in 5`. Use it while agents run, to compare their progress with the time they should take.
   - an hour has passed with no change, so it never runs forever.
+- **The plugin starts it.** A hook, `hooks/apb-watch-start.py`, keeps the watcher running for the orchestrator's session. It starts the watcher at the session's start, and again on the next prompt, tool call or stop whenever it isn't running. Builders' and reviewers' tool calls don't start it.
+  - The coordination issue is the issue where the orchestrator and the advisor talk. It comes from a line in the project's `CLAUDE.md`: `coordination: #N` for an issue in the project's repo, or `coordination: owner/name#N` for an issue in another repo.
+  - With `#N`, or with no such line, the hook runs one watcher, on the project's repo and the issue, if there is one. A line that names the project's own repo as `owner/name#N` counts as `#N`.
+  - With `owner/name#N`, the hook runs two watchers: one on the project's repo (its PRs, stuck commands and quiet agents), and one on the other repo (its PRs and the issue). Only one copy of each runs.
+  - When a watcher reports something, the hook wakes the orchestrator with the report. When it reports no change, the hook starts it again at once. When it fails, the hook waits a minute before trying that watcher again.
+  - Each start writes a `watcher-start` line to the events file, and each exit a `watcher-exit` line with the reason. Both name the watcher: `project` or `coordination`.
+- **The orchestrator's own watcher.** While agents run, the orchestrator also runs the watcher itself, in the background in its own shell, with `--check-in 5` and `--issue N` for the card's issue, to compare the agents' progress with the time they should take.
 - **What the watcher doesn't do.** It only reads. Stopping a stuck process is the orchestrator's call. It saves what it saw in its `--state` file, so a change made while it was stopped is reported on the next start, and nothing is reported twice.
-- **After each exit,** the orchestrator acts on what the watcher printed, then starts it again.
+- **After each exit,** the orchestrator acts on what the watcher printed. It starts its own watcher again; the hook restarts its watchers by itself.
 - **Fix it, then tell the human.** If something is stuck, the orchestrator stops it, restarts the step, and then tells the human. It never waits for the human to ask.
 - **Check before stating.** Every status, time or "still waiting" comes from a check in the same turn: `gh pr view` for a PR, `date` for a clock time. If nothing was checked, say "I don't know yet".
 - **Say when each step should finish.** Each status line gives the time the step should finish, worked out from `date`. GitHub shows no progress while checks run, so without it the human can't tell whether to wait 2 minutes or 20.
@@ -229,7 +236,7 @@ Every project keeps a public record of how it was built:
 
 The apb plugin keeps a log of what every Claude session and agent does in the project: `.apb/events.jsonl`. It writes it only in an apb project, which is a project with `docs/MAP.md`. Git ignores the folder.
 
-- **What it holds:** one line each time a prompt starts a turn: a message from the human, or one Claude Code sends itself, such as a background agent reporting back; an agent starts or stops; a shell command finishes, a checklist item is created or done, a turn ends, or Claude Code shows a notification, such as a permission prompt.
+- **What it holds:** one line each time a prompt starts a turn: a message from the human, or one Claude Code sends itself, such as a background agent reporting back; an agent starts or stops; a shell command finishes, a checklist item is created or done, a turn ends, or Claude Code shows a notification, such as a permission prompt. The watcher hook adds a line each time a watcher starts or exits (`watcher-start`, `watcher-exit`).
 - **What each line holds:** the time, the event, the session, and the agent's id and type. For a shell command, also the command and its exit status, but not its output. For a prompt, not its text: only whether Claude Code sent it itself (`automatic`) or, for the human's, whether it is a routine reply (`routine`): "go", a decision letter, "resolved" or "merged". For a turn's end, who holds the ball, if the message said so, whether the Stop hook sent the message back, and, if it was for an unchecked GitHub fact, which facts (`unchecked`). Count those lines to see how often stale facts nearly reached the human.
 - **Who reads it:** the orchestrator, the watcher, the progress page and the card times (`scripts/card-times.py`). The orchestrator reads the file to see what the builder and reviewer are doing, to notice a step that has gone quiet, and to time each step. Agents' own time estimates are often wrong; the file's times are not.
 

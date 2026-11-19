@@ -329,7 +329,8 @@ class HooksFile(unittest.TestCase):
 
     # The only hooks Claude Code waits for, named one by one: (event, matcher, script). The Stop hook can
     # send a message back; the brief check refuses an agent launch (PreToolUse) and records a departure
-    # before the orchestrator reads the report (SubagentStop). Every other hook is the events logger.
+    # before the orchestrator reads the report (SubagentStop). The watcher starter runs in the background
+    # and wakes Claude when it has news. Every other hook is the events logger.
     WAITED_FOR = [("Stop", None, "apb-stop.py"), ("PreToolUse", "Agent|Task", "apb-brief.py"),
                   ("SubagentStop", None, "apb-brief.py")]
 
@@ -347,7 +348,7 @@ class HooksFile(unittest.TestCase):
     def test_every_event_is_registered_once(self):
         logged = [event for event, _, script, _ in self.entries() if script == "apb-events.py"]
         self.assertEqual(sorted(logged), sorted(e for e in EVENTS if e != "Stop"))
-        self.assertEqual(sorted(self.hooks), sorted(EVENTS + ["PreToolUse"]))
+        self.assertEqual(sorted(self.hooks), sorted(EVENTS + ["PreToolUse", "SessionStart"]))
 
     def test_bash_only_for_tool_events(self):
         for event in ["PostToolUse", "PostToolUseFailure"]:
@@ -360,6 +361,8 @@ class HooksFile(unittest.TestCase):
             self.assertEqual(hook["command"], "python3")
             if script == "apb-events.py":
                 self.assertTrue(hook.get("async"), event)
+            elif script == "apb-watch-start.py":  # its own tests check it: test_apb_watch_start.py
+                self.assertTrue(hook.get("asyncRewake"), event)
             else:
                 self.assertFalse(hook.get("async", False), event)
                 self.assertLessEqual(hook["timeout"], 30, event)
