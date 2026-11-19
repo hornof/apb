@@ -192,7 +192,8 @@ class FirstLine(unittest.TestCase):
 
 class StatedFacts(unittest.TestCase):
     """What counts as a GitHub fact in a message: a sentence that gives a PR, issue or card #N (or a
-    link to one) a state: open, merged, closed, in review, on the board or in a column."""
+    link to one, or a count of them) a state: open, merged, closed, done, in review, on the board or in
+    a column. Not in quotes, and not in a plan ("once PR #80 is merged")."""
 
     def test_facts(self):
         for message in ["PR #44 is merged.", "PRs #44 and #45 merged.", "pull request 12 is open.",
@@ -201,7 +202,14 @@ class StatedFacts(unittest.TestCase):
                         "Card #9 is on the board.", "Card #3 is now in In review, and the reviewer is on it.",
                         "[PR #66](https://github.com/hornof/apb/pull/66) is merged.", "You merged PR #66.",
                         "PR #78 is still open.", "The open PR #44 waits for review.",
-                        "Done. PR #44 merged at 7:05 PM.", "**PR #44:** merged."]:
+                        "Done. PR #44 merged at 7:05 PM.", "**PR #44:** merged.",
+                        # A state in bold or italics.
+                        "PR #44 is **open**.", "Card #3 is in **In review**.", "PR #44 is _merged_.",
+                        # A count of PRs, cards or issues with a state.
+                        "13 PRs merged Monday.", "5 cards are done.", "3 of 5 cards are done.",
+                        "4 open issues left.", "2 issues are closed.",
+                        # A plan clause doesn't hide a fact outside it.
+                        "When I checked, PR #44 was merged.", "PR #44 merged before the checks finished."]:
             self.assertTrue(stop.stated_facts(message), message)
 
     def test_not_facts(self):
@@ -212,7 +220,12 @@ class StatedFacts(unittest.TestCase):
                         "45 tests pass.", "Onboarding is next.",
                         # No #N, or no state: the word "board" or "column" alone, a version, a count.
                         "Moved it on the board.", "Updating a status, label or board column: a change.",
-                        "The plugin is at 0.3.18.", "3 of 5 cards are done.", "13 PRs merged today.",
+                        "The plugin is at 0.3.18.", "3 of 5 checks passed.", "13 PRs today.",
+                        "The builder opened 2 PRs.",
+                        # A state after "after", "once", "when", "if", "until" or "before" is a plan.
+                        "I'll check the live site after PR #44 is merged.", "Once PR #80 is merged, I'll rebase.",
+                        "If PR #81 is closed, I'll reopen it.", "Wait until PR #44 is merged.",
+                        "Nothing for you to do right now. I'll say so when PR #45's review is done.",
                         "Waiting on GitHub checks for PR #40, ETA 7:10 PM.", "The builder opened PR #57.",
                         "Merge PR #44.", "After you merge PR #42, I'll start.", "Closes #79.",
                         "The builder is still on card #64.",
@@ -226,6 +239,8 @@ class StatedFacts(unittest.TestCase):
         self.assertEqual(stop.stated_facts("PRs #44 and #45 merged."), ["PRs #44", "#45"])
         self.assertEqual(stop.stated_facts("[PR #66](https://github.com/hornof/apb/pull/66) is merged."),
                          ["PR #66", "/pull/66"])
+        self.assertEqual(stop.stated_facts("13 PRs merged Monday."), ["13 PRs"])
+        self.assertEqual(stop.stated_facts("When I checked, PR #44 was merged."), ["PR #44"])
 
     def test_each_fact_is_named_once(self):
         facts = stop.stated_facts("PR #44, PR #44 and PR #44 are merged.")
@@ -1246,10 +1261,14 @@ class Properties(unittest.TestCase):
               ("pick a host on https://github.com/o/r/issues/9", False, True, False, True),
               ("your call on https://github.com/o/r/pull/4", False, True, True, True),
               ("answer decision 3 on #9", False, True, True, False),
-              ("merge PR #4 once PR #3 is merged", True, False, False, False),
+              ("merge PR #4, now that PR #3 is merged", True, False, False, False),
+              ("merge PR #4 once PR #3 is merged", False, False, False, False),  # a plan, not a fact
               ("merge https://github.com/o/r/pull/4, which is open", True, False, False, True)]
     # (tail, states a GitHub fact, holds a GitHub link, asks a decision)
-    TAILS = [("", False, False, False), ("3 of 5 cards are done.", False, False, False),
+    TAILS = [("", False, False, False), ("3 of 5 cards are done.", True, False, False),
+             ("3 of 5 checks passed.", False, False, False),
+             ("Once PR #7 is merged, I'll rebase.", False, False, False),  # a plan, not a fact
+             ("PR #7 is **merged**.", True, False, False),
              ("The plugin is at 0.3.18.", False, False, False), ("It took 1.5 seconds.", False, False, False),
              ("Card #9 is on the board.", True, False, False), ("Moved it on the board.", False, False, False),
              ("45 tests pass.", False, False, False), ("See https://github.com/o/r/pull/7.", False, True, False),

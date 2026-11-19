@@ -13,8 +13,9 @@ which hooks/apb-events.py writes.
   message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
   and Claude goes on to add the line. "All clear: ..." is logged as holder human, todo "all clear".
 - On any stop, if the message states a GitHub fact (a sentence that gives a PR, issue or card with a
-  number, or a link to one, a state: open, merged, closed, in review, on the board or in a column),
-  outside quotes, and the orchestrator itself ran no lookup that
+  number, a link to one, or a count such as "13 PRs", a state: open, merged, closed, done, in review,
+  on the board or in a column), outside quotes and outside a plan ("once …", "after …"), and the
+  orchestrator itself ran no lookup that
   finished without error in this turn, the hook sends the message back once, with a note that starts
   "You stated a GitHub fact without checking it this turn." A lookup is a gh or git command, or a run
   of scripts/map-artifact.py or scripts/progress-page.py, which call gh themselves. It checks only
@@ -88,12 +89,18 @@ REF = re.compile("|".join([
     r"(?i:\b(?:pull requests?|issues?|cards?)\s*#?\d+)",  # pull request 12, issue #70, card #3
     r"[\w.-]*#\d+\b",  # #70, apb#75
     r"/(?:pull|issues)/\d+",  # a link to a PR or an issue
+    # A count: 13 PRs, 5 cards, 4 open issues
+    r"(?i:\b\d+\s+(?:(?:open|merged|closed)\s+)?(?:PRs?|pull requests?|issues?|cards?)\b)",
 ]))
 STATE = re.compile(r"(?i:\b(?:merged|closed|reopened)\b"  # PR #44 merged, you merged PR #44
                    r"|\b(?:is|are|was|were|now|still|stays|remains)\s+(?:(?:now|still|already)\s+)?"
-                   r"(?:open|in\s+(?:\w+\s+)?review|on\s+the\s+board|in\s+(?:the\s+)?[\w ]{1,30}?\s+column)\b"
+                   r"(?:open|done|in\s+(?:\w+\s+)?review|on\s+the\s+board"
+                   r"|in\s+(?:the\s+)?[\w ]{1,30}?\s+column)\b"
                    r"|\bopen\s+(?:PRs?|pull requests?|issues?|cards?)\b)")  # the open PR #44
 SENTENCE_END = re.compile(r"(?<=[.!?;])\s+")
+# A plan: from "after", "once", "when", "if", "until" or "before" to the next comma. A state in it
+# ("once PR #80 is merged, I'll rebase") says nothing about now.
+PLAN = re.compile(r"(?i:\b(?:after|once|when|if|until|before)\b[^,;]*)")
 MAX_FACTS = 5  # facts named in the note and the log
 # Quoted words: in quotation marks or backticks, or in single quotes that aren't an apostrophe.
 QUOTE = re.compile(r"\"[^\"\n]*\"|“[^”\n]*”|`[^`\n]*`|(?<!\w)'[^'\n]*'(?!\w)")
@@ -405,12 +412,14 @@ def work_ran_out(events, session, now, tasks=None):
 
 
 def stated_facts(message):
-    """The PRs, issues and cards the message gives a state, outside quotes, each once, in order: at
-    most MAX_FACTS. A number with no state ("the builder opened PR #57") states nothing to check, and
-    neither does the word "board" or "column" with no number."""
+    """The PRs, issues and cards (by number, or a count such as "13 PRs") the message gives a state,
+    outside quotes, each once, in order: at most MAX_FACTS. A number with no state ("the builder opened
+    PR #57") states nothing to check, nor does the word "board" or "column" with no number, nor a state
+    in a plan ("once PR #80 is merged, I'll rebase"). Bold or italics around a state don't hide it."""
     facts = []
     for line in unquoted(message):
-        for sentence in SENTENCE_END.split(line):
+        for sentence in SENTENCE_END.split(re.sub(r"[*_]", "", line)):  # bold or italics don't matter
+            sentence = PLAN.sub(" ", sentence)
             if not STATE.search(sentence):
                 continue
             for m in REF.finditer(sentence):
