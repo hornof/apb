@@ -12,6 +12,10 @@ which hooks/apb-events.py writes.
 - Then the message must start with one of the four first lines. If it doesn't, the hook sends the
   message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
   and Claude goes on to add the line. "All clear: ..." is logged as holder human, todo "all clear".
+  One exception: a wake-up that changed nothing for the human. When no prompt and no agent's stop
+  started the turn (a watcher or a background command woke it), an earlier stop in this session
+  already said who holds the ball, and the message is empty or one word, the stop goes through and
+  the ball stays where it was.
 - On any stop, if the message states a GitHub fact (a sentence that gives a PR, issue or card with a
   number, a link to one, or a count such as "13 PRs", a state: open, merged, closed, done, in review,
   on the board or in a column), outside quotes and outside a plan ("once …", "after …"), and the
@@ -411,6 +415,19 @@ def work_ran_out(events, session, now, tasks=None):
     return prompts_logged and not any(e["event"] == "UserPromptSubmit" for e in turn)
 
 
+def quiet_wake_up(events, session, message):
+    """True if a wake-up that changed nothing for the human ends quietly: no prompt and no agent's
+    stop in this turn (a watcher or a background command woke it), an earlier stop in this session
+    already said who holds the ball, and the message is at most one word. The ball stays where it was."""
+    if message is not None and not isinstance(message, str):
+        return False
+    if len((message or "").split()) > 1:
+        return False
+    if any(e["event"] in ("UserPromptSubmit", "SubagentStop") for e in this_turn(events, session)):
+        return False
+    return holder_now(events, session) != (None, None)
+
+
 def stated_facts(message):
     """The PRs, issues and cards (by number, or a count such as "13 PRs") the message gives a state,
     outside quotes, each once, in order: at most MAX_FACTS. A number with no state ("the builder opened
@@ -508,7 +525,8 @@ def handle(p, project, now, pr_lookup=None):
     said = first_line(message)
     retry = bool(p.get("stop_hook_active"))
     no_line = (said is None and not retry
-               and work_ran_out(events, session, now, p.get("background_tasks")))
+               and work_ran_out(events, session, now, p.get("background_tasks"))
+               and not quiet_wake_up(events, session, message))
     unchecked = [] if retry or checked_this_turn(events, session) else stated_facts(message)
     # A hand-off to the human waits while an agent's departure is unresolved, on a retry too.
     pending = departures(events) if said and said[0] == "human" else []
