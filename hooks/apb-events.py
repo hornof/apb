@@ -12,8 +12,9 @@ import time
 
 MAX = 300  # longest string kept in a line, in characters
 
-# A prompt Claude Code sends itself, such as a background agent reporting back, starts with a tag.
-AUTOMATIC = re.compile(r"\s*<[a-z][\w-]*>")
+# A prompt Claude Code sends itself starts with a tag, such as <task-notification>, or, when a
+# builder or reviewer hands back its report, with a header line and then an <agent-message> tag.
+AUTOMATIC = re.compile(r"\s*(?:<[a-z][\w-]*>|Another Claude session sent a message:\s*<agent-message[\s>])")
 # A routine reply from the human: "go", "resolved", "merged", or one or more decision letters
 # ("b", "(b)", "9a", "Decision 9: b", "1a, 2b"). scripts/card-times.py counts the other messages.
 _CHOICE = r"(?:(?:decision\s*)?\d+\s*[:.)-]?\s*)?\(?[a-z]\)?"
