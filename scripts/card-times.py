@@ -16,7 +16,7 @@ It works the times out from .apb/events.jsonl and GitHub, never by hand:
 - messages: the human's messages between the hand-off and that last action that aren't "go", a
   decision letter, "resolved" or "merged": prompts in the orchestrator's session (hooks/apb-events.py
   marks each one routine or not, without keeping its text) and the human's comments on the PR. A
-  comment signed "— Claude (<role>)" is Claude's, since Claude uses the human's login. Prompts logged
+  comment signed "— Claude (<role>)" is Claude's, since Claude may use the human's login (apb-setup step 5). Prompts logged
   before apb 0.3.21 have no mark, so the count is then not known.
 
 It prints the comment. With --post it posts it on the issue, once: only when the issue is closed, and

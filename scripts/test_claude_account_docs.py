@@ -47,9 +47,22 @@ class SetupStep(unittest.TestCase):
         for words in ("machine account", "two-factor", "classic", "fine-grained", "user-owned"):
             self.assertIn(words, self.text, words)
 
-    def test_names_the_three_scopes(self):
-        for scope in ("`repo`", "`project`", "`read:org`"):
+    def test_names_the_four_scopes(self):
+        for scope in ("`repo`", "`project`", "`read:org`", "`workflow`"):
             self.assertIn(scope, self.text, scope)
+
+    def test_says_why_workflow(self):
+        self.assertIn(".github/workflows/", self.text)
+
+    def test_admin_settings_run_as_the_human(self):
+        for words in ("admin rights", "branch protection", "Pages", "secrets"):
+            self.assertIn(words, self.text, words)
+
+    def test_renewal_reaches_every_copy(self):
+        self.assertIn("every project folder that uses the account", self.text)
+
+    def test_refuses_the_humans_own_token(self):
+        self.assertIn("own token", self.text)
 
     def test_says_why_read_org(self):
         for words in ("unknown owner type", "gh project"):
@@ -105,6 +118,17 @@ class OtherDocs(unittest.TestCase):
         text = flat(read("docs/playbook.md"))
         self.assertIn("Claude's own GitHub account", text)
         self.assertNotIn("GitHub doesn't let you approve your own PR, so", text)
+
+    def test_apb_tdd_points_to_the_human_for_admin_settings(self):
+        text = flat(read("skills/apb-tdd/SKILL.md"))
+        self.assertIn("env -u GH_TOKEN", text)
+        self.assertIn("apb-setup step 5", text)
+
+    def test_script_docstrings_no_longer_say_claude_always_uses_the_humans_login(self):
+        for rel in ("scripts/decision-check.py", "scripts/card-times.py"):
+            text = flat(read(rel))
+            self.assertNotIn("since Claude uses the human's login", text, rel)
+            self.assertIn("since Claude may use the human's login (apb-setup step 5)", text, rel)
 
     def test_map_template_has_a_row(self):
         self.assertIn("Claude's GitHub account", read("templates/MAP-template.md"))

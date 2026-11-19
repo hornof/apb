@@ -26,7 +26,7 @@ TOKEN = "ghp_" + "A1b2C3d4E5" * 3 + "f6G7h8"
 USER = {"login": "someone-claude", "id": 1234567, "node_id": "U_x", "name": "Claude"}
 
 
-def answer(scopes="project, read:org, repo", status="200 OK", user=USER):
+def answer(scopes="project, read:org, repo, workflow", status="200 OK", user=USER):
     head = ["HTTP/2.0 " + status, "Content-Type: application/json; charset=utf-8"]
     if scopes is not None:
         head.append("X-Oauth-Scopes: " + scopes)
@@ -34,20 +34,31 @@ def answer(scopes="project, read:org, repo", status="200 OK", user=USER):
 
 
 class Fake:
-    """Answers the two commands the script runs, and records every call."""
+    """Answers the three commands the script runs, and records every call: `gh api -i user` with the
+    token, `gh api user` with the human's own login, and `git check-ignore`. `human` is the human's
+    login, or None when their own `gh` isn't logged in. `raises` maps "gh" or "git" to an exception
+    the command raises instead of answering."""
 
-    def __init__(self, user_answer=None, ignored=True, gh_fails=None):
+    def __init__(self, user_answer=None, ignored=True, gh_fails=None, human="the-human", raises=None):
         self.user_answer = answer() if user_answer is None else user_answer
         self.ignored = ignored
         self.gh_fails = gh_fails
+        self.human = human
+        self.raises = raises or {}
         self.calls = []
 
-    def __call__(self, args, env=None):
-        self.calls.append((list(args), dict(env or {})))
-        if args[:2] == ["gh", "api"]:
+    def __call__(self, args, env=None, unset=()):
+        self.calls.append((list(args), dict(env or {}), tuple(unset)))
+        if args[0] in self.raises:
+            raise self.raises[args[0]]
+        if args[:3] == ["gh", "api", "-i"]:
             if self.gh_fails:
                 return subprocess.CompletedProcess(args, 1, "", self.gh_fails)
             return subprocess.CompletedProcess(args, 0, self.user_answer, "")
+        if args[:3] == ["gh", "api", "user"]:
+            if self.human is None:
+                return subprocess.CompletedProcess(args, 1, "", "not logged in")
+            return subprocess.CompletedProcess(args, 0, self.human + "\n", "")
         if args[0] == "git" and "check-ignore" in args:
             return subprocess.CompletedProcess(args, 0 if self.ignored else 1, "", "")
         raise AssertionError("unexpected command: %r" % (args,))
@@ -70,8 +81,12 @@ class Case(unittest.TestCase):
             code = ca.main([self.token_file, "--settings", self.settings] + list(extra), run=fake)
         self.out = out.getvalue() + err.getvalue()
         self.assertNotIn(token, self.out, "the token was printed")
-        for args, _ in fake.calls:
+        for args, env, unset in fake.calls:
             self.assertNotIn(token, " ".join(args), "the token was on a command line")
+            if args[:3] == ["gh", "api", "user"]:
+                self.assertNotIn(token, env.values(), "the human's check got the token")
+                self.assertIn("GH_TOKEN", unset)
+                self.assertIn("GITHUB_TOKEN", unset)
         return code
 
     def stored(self):
@@ -119,19 +134,25 @@ class Success(Case):
         self.write_token()
         fake = Fake()
         self.go(fake)
-        gh = [env for args, env in fake.calls if args[0] == "gh"]
+        gh = [env for args, env, _ in fake.calls if args[:3] == ["gh", "api", "-i"]]
         self.assertEqual(len(gh), 1)
         self.assertEqual(gh[0].get("GH_TOKEN"), TOKEN)
 
     def test_reports_the_login_and_scopes(self):
         self.write_token()
         self.go(Fake())
-        for words in ("someone-claude", "project", "read:org", "repo", "gh auth status"):
+        for words in ("someone-claude", "project", "read:org", "repo", "workflow", "gh auth status"):
             self.assertIn(words, self.out)
 
     def test_extra_scopes_are_allowed(self):
         self.write_token()
-        self.assertEqual(self.go(Fake(answer("gist, project, read:org, repo, workflow"))), 0)
+        self.assertEqual(self.go(Fake(answer("gist, project, read:org, repo, workflow, admin:org"))), 0)
+
+    def test_human_not_logged_in_still_stores_with_a_note(self):
+        self.write_token()
+        self.assertEqual(self.go(Fake(human=None)), 0)
+        self.assertEqual(self.stored()["env"]["GH_TOKEN"], TOKEN)
+        self.assertIn("couldn't compare", self.out)
 
     def test_surrounding_whitespace_is_ignored(self):
         self.write_token("\n  " + TOKEN + "  \n\n")
@@ -180,7 +201,44 @@ class Refusals(Case):
 
     def test_missing_project(self):
         self.write_token()
-        self.refused(Fake(answer("read:org, repo")), "project")
+        self.refused(Fake(answer("read:org, repo, workflow")), "project")
+
+    def test_missing_workflow(self):
+        self.write_token()
+        self.refused(Fake(answer("project, read:org, repo")), "workflow")
+
+    def test_the_humans_own_token(self):
+        self.write_token()
+        self.refused(Fake(human="someone-claude"), "your own account")
+
+    def test_gh_not_installed(self):
+        self.write_token()
+        self.refused(Fake(raises={"gh": FileNotFoundError(2, "No such file", "gh")}), "installed")
+
+    def test_git_not_installed(self):
+        self.write_token()
+        self.refused(Fake(raises={"git": FileNotFoundError(2, "No such file", "git")}), "installed")
+
+    def test_gh_too_slow(self):
+        self.write_token()
+        self.refused(Fake(raises={"gh": subprocess.TimeoutExpired(["gh", "api"], 30)}), "30 seconds")
+
+    def test_settings_file_not_json(self):
+        os.makedirs(os.path.dirname(self.settings))
+        with open(self.settings, "w") as f:
+            f.write("{not json")
+        self.write_token()
+        self.assertEqual(self.go(Fake()), 1)
+        self.assertIn("valid JSON", self.out)
+        with open(self.settings) as f:
+            self.assertEqual(f.read(), "{not json")
+        self.assertTrue(os.path.exists(self.token_file))
+
+    def test_earlier_settings_file_not_json(self):
+        self.token_file = os.path.join(self.dir, "earlier.json")
+        with open(self.token_file, "w") as f:
+            f.write("{not json")
+        self.refused(Fake(), "valid JSON")
 
     def test_fine_grained_token(self):
         self.write_token()
@@ -228,7 +286,7 @@ class Scopes(unittest.TestCase):
 
 class RandomRuns(Case):
     """Random tokens, scopes and settings files, against a direct statement of the rule: stored exactly
-    when the three needed scopes are there, never printed either way."""
+    when the four needed scopes are there, never printed either way."""
 
     def test_random(self):
         rng = random.Random(3)
@@ -245,8 +303,9 @@ class RandomRuns(Case):
                 with open(self.settings, "w") as f:
                     json.dump(existing, f)
             self.write_token(token + "\n")
-            code = self.go(Fake(answer(", ".join(chosen))), token=token)
-            ok = {"repo", "project", "read:org"} <= set(chosen)
+            human = rng.choice(["the-human", "someone-claude", None])
+            code = self.go(Fake(answer(", ".join(chosen)), human=human), token=token)
+            ok = {"repo", "project", "read:org", "workflow"} <= set(chosen) and human != "someone-claude"
             self.assertEqual(code, 0 if ok else 1, chosen)
             self.assertEqual(os.path.exists(self.token_file), not ok)
             if ok:
@@ -261,6 +320,13 @@ class RandomRuns(Case):
 
 
 class RealRun(unittest.TestCase):
+    def test_unset_removes_a_variable(self):
+        os.environ["APB_TEST_GONE"] = "here"
+        self.addCleanup(os.environ.pop, "APB_TEST_GONE", None)
+        done = ca.run(["python3", "-c", "import os; print(os.environ.get('APB_TEST_GONE'))"],
+                      unset=("APB_TEST_GONE",))
+        self.assertEqual(done.stdout.strip(), "None")
+
     def test_run_has_a_time_limit_and_passes_the_environment(self):
         done = ca.run(["python3", "-c", "import os; print(os.environ.get('APB_TEST_VAR'))"],
                       env={"APB_TEST_VAR": "seen"})
