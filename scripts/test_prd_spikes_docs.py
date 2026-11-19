@@ -15,7 +15,7 @@ TEMPLATE = "templates/PRD-template.md"
 PRD_SKILL = "skills/apb-prd/SKILL.md"
 REVIEW_SKILL = "skills/apb-review/SKILL.md"
 REVIEWER = "agents/reviewer.md"
-CHANGED = (TEMPLATE, PRD_SKILL, REVIEW_SKILL, REVIEWER)
+CHANGED = (TEMPLATE, PRD_SKILL, REVIEW_SKILL, REVIEWER, "agents/builder.md")
 
 
 def read(rel):
@@ -61,6 +61,14 @@ class Template(unittest.TestCase):
             self.assertIn(words, body, words)
         self.assertRegex(body, r"[Ww]rite .None.|.None. is (a )?valid")
 
+    def test_uncertainty_section_allows_the_accepted_risk_exception(self):
+        # The same exception apb-prd step 3 and the reviewer allow: the human accepts the risk instead.
+        body = flat(re.search(r"^## \d+\. Technical uncertainties\n(.*?)(?=^## )", read(TEMPLATE),
+                              re.S | re.M).group(1))
+        self.assertIn("accepts the risk", body)
+        self.assertIn("Open questions", body)
+        self.assertEqual(body.count('"None"'), 1)
+
 
 class PrdSkill(unittest.TestCase):
     def test_steps_are_numbered_straight_through(self):
@@ -96,6 +104,20 @@ class PrdSkill(unittest.TestCase):
         _, body = self.spike_step()
         self.assertIn("Spike code never merges", body)
         self.assertIn("findings file merges with the PRD", body)
+
+    def test_orchestrator_commits_the_findings_file(self):
+        _, body = self.spike_step()
+        self.assertIn("The orchestrator commits the findings file to the PRD branch.", body)
+
+    def test_builder_knows_a_spike_brief_is_not_a_departure(self):
+        # A spike brief sends the builder no tests, no PR and no LOG.md line: builder.md has to say so,
+        # or the brief clashes with "a brief never changes that".
+        text = flat(read("agents/builder.md"))
+        self.assertIn("On a spike (apb-prd step 3): no tests, no PR and no `LOG.md` line.", text)
+        self.assertIn("`docs/spikes/<name>.md`", text)
+        self.assertIn("name it in your report", text)
+        n, _ = self.spike_step()
+        self.assertEqual(n, 3, "builder.md names apb-prd step 3")
 
     def test_prd_cites_the_spike_in_decisions_so_far(self):
         _, body = self.spike_step()

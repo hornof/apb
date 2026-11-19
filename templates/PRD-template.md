@@ -43,7 +43,7 @@ Each requirement ends with the check that proves it.
 `<What could go wrong, and what we assume is true.>`
 
 ## 11. Technical uncertainties
-`<Numbered. Each is a technical question whose answer would change the design, the requirements, or how long the build takes, e.g. "Can the provider's video player be embedded on another site?". Each gets a spike before the review, with its findings in docs/spikes/<name>.md, linked here with the answer in one line. Write "None" if there are none: "None" is a valid entry, but it has to be written.>`
+`<Numbered. Each is a technical question whose answer would change the design, the requirements, or how long the build takes, for example "Can the provider's video player be embedded on another site?". Each gets a spike before the review: link its findings file in docs/spikes/<name>.md and give the answer in one line. If the human accepts the risk instead, move the question to Open questions. If there are none, write "None"; never leave the section empty.>`
 
 ## 12. Decisions so far
 | Question | Decision |

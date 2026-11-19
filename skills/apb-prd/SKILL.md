@@ -14,7 +14,7 @@ Before step 1: open an issue called "PRD" and add it to the project's board in I
 3. **Run a spike for each technical uncertainty.** A spike is a time-boxed investigation whose output is an answer, not product code. List the uncertainties in section 11 (Technical uncertainties): each is a question whose answer would change the design, the requirements, or how long the build takes. If there are none, write "None" there and go on to step 4.
    - Time-boxed: one builder agent, one session, with the question written in the hand-off.
    - The result is `docs/spikes/<name>.md`: the question; what was tried, with the facts observed (URLs, headers, errors); the options, each with how well it matches the request and roughly how much work it is; then a recommendation. Where one option is clearly the best value for the effort, say so.
-   - Spike code never merges: it stays in the agent's scratch folder. The findings file merges with the PRD, in the PRD PR.
+   - Spike code never merges: it stays in the agent's scratch folder. The findings file merges with the PRD, in the PRD PR. The orchestrator commits the findings file to the PRD branch.
    - The PRD cites the spike next to each decision it drove, in section 12 (Decisions so far).
    - The PRD PR is not ready for review until every uncertainty is answered, or the human has explicitly accepted the risk and the question is in section 13 (Open questions).
 4. **Make mockups before the review.** Draw the main screens on a Claude Design canvas, clickable where it matters, and link it from the PRD. Without pictures, a build can match the words but not what the human imagined.
