@@ -486,13 +486,15 @@ class ChangesProjects(unittest.TestCase):
 
     def test_paths_that_change_projects(self):
         for path in ["templates/ci.yml", "templates/CLAUDE-template.md", "hooks/apb-stop.py",
-                     "hooks/hooks.json", "skills/apb-build/SKILL.md", "docs/playbook.md"]:
+                     "hooks/hooks.json", "skills/apb-build/SKILL.md", "docs/playbook.md",
+                     "agents/builder.md", "agents/reviewer.md"]:
             self.assertTrue(stop.changes_projects(path), path)
 
     def test_paths_that_do_not(self):
         for path in ["README.md", "docs/MAP.md", "docs/playbook.md.bak", "scripts/apb-watch.py",
                      "skills/apb-build/notes.md", "skills/SKILL.md", "skills/a/b/SKILL.md",
-                     "agents/builder.md", "x/templates/a.md", "templates", "hooks", "", None, 7]:
+                     "x/templates/a.md", "x/agents/builder.md", "templates", "hooks", "agents", "agents/",
+                     "", None, 7]:
             self.assertFalse(stop.changes_projects(path), path)
 
 
@@ -506,14 +508,18 @@ class HasProjectsLine(unittest.TestCase):
                      "Projects: hornof/sketch-gallery#43",
                      "Projects: [sketch-gallery#43](https://github.com/hornof/sketch-gallery/pull/43), "
                      "https://github.com/o/r/pull/2",
-                     "Intro\r\nProjects: none\r\n"]:
+                     "Intro\r\nProjects: none\r\n",
+                     "`Projects: none`",  # as the playbook shows it
+                     "## Projects: none",
+                     "### Projects: `hornof/sketch-gallery#43`"]:
             self.assertTrue(stop.has_projects_line(body), body)
 
     def test_lines_that_do_not(self):
         for body in ["", None, 7, "Closes #73", "Projects:", "Projects: TBD", "Projects: sketch-gallery",
                      "Projects: nonexistent", "Projects: https://github.com/hornof/sketch-gallery/issues/43",
                      "> Projects: none", "Not in this PR: the sketch-gallery CLAUDE.md line",
-                     "The Projects: none line comes later", "Projects: #43"]:
+                     "The Projects: none line comes later", "Projects: #43", "> `Projects: none`",
+                     "## Projects", "`Projects:`"]:
             self.assertFalse(stop.has_projects_line(body), body)
 
 
@@ -568,6 +574,46 @@ class ProjectsLineMissing(unittest.TestCase):
         look, calls = self.lookup({})
         self.assertEqual(stop.projects_line_missing("merge %s" % (APB_PR % 74), look), [])
         self.assertEqual(len(calls), 1)
+
+    def test_a_lookup_past_its_time_limit_lets_the_stop_through(self):
+        def slow(repo, number):
+            raise subprocess.TimeoutExpired("gh", stop.PR_TIME_LIMIT)
+        self.assertEqual(stop.projects_line_missing("merge %s" % (APB_PR % 74), slow), [])
+
+    def test_a_used_up_time_budget_looks_up_no_more_prs(self):
+        # The first lookup takes the whole budget, so the second PR is never looked up.
+        clock = [1000.0]
+        prs = {1: pr(["hooks/a.py"], ""), 2: pr(["hooks/a.py"], "")}
+        look, calls = self.lookup(prs)
+
+        def slow_look(repo, number):
+            clock[0] += stop.PR_BUDGET
+            return look(repo, number)
+        real_time = stop.time.time
+        stop.time.time = lambda: clock[0]
+        try:
+            got = stop.projects_line_missing("%s %s" % (APB_PR % 1, APB_PR % 2), slow_look)
+        finally:
+            stop.time.time = real_time
+        self.assertEqual(got, [1])
+        self.assertEqual(calls, [(APB, 1)])
+
+    def test_the_gh_call_gets_what_is_left_of_the_budget(self):
+        clock = [1000.0]
+        limits = []
+
+        def fake_view(repo, number, time_limit=stop.PR_TIME_LIMIT):
+            limits.append(time_limit)
+            clock[0] += 3
+            return pr(["hooks/a.py"], "")
+        real_time, real_view = stop.time.time, stop.view_pr
+        stop.time.time, stop.view_pr = (lambda: clock[0]), fake_view
+        try:
+            got = stop.projects_line_missing(" ".join(APB_PR % n for n in (1, 2, 3)))
+        finally:
+            stop.time.time, stop.view_pr = real_time, real_view
+        self.assertEqual(got, [1, 2])
+        self.assertEqual(limits, [min(stop.PR_TIME_LIMIT, stop.PR_BUDGET), min(stop.PR_TIME_LIMIT, stop.PR_BUDGET - 3)])
 
     def test_no_apb_link_means_no_lookup(self):
         look, calls = self.lookup({})
@@ -667,7 +713,7 @@ class ProjectsLineProperties(unittest.TestCase):
     @staticmethod
     def oracle_changes(path):
         parts = path.split("/")
-        if parts[0] in ("templates", "hooks"):
+        if parts[0] in ("templates", "hooks", "agents"):
             return len(parts) > 1 and all(parts[1:])
         if parts == ["docs", "playbook.md"]:
             return True
@@ -677,7 +723,8 @@ class ProjectsLineProperties(unittest.TestCase):
     LINES = [("Closes #73", False), ("", False), ("Projects: none", True), ("**Projects:** none.", True),
              ("Projects: https://github.com/o/r/pull/3", True), ("Projects: o/r#3", True),
              ("Projects: later", False), ("> Projects: none", False), ("Projects:", False),
-             ("Not in this PR: the project's CLAUDE.md line.", False), ("Projects: o/r/issues/3", False)]
+             ("Not in this PR: the project's CLAUDE.md line.", False), ("Projects: o/r/issues/3", False),
+             ("`Projects: none`", True), ("## Projects: o/r#3", True), ("## Projects", False)]
 
     def test_paths(self):
         rng = random.Random(73)

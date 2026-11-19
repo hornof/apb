@@ -29,8 +29,8 @@ which hooks/apb-events.py writes.
   GitHub link." Under an "N things" first line, each numbered item that asks a decision needs the link
   on its own line. Every decision lives on GitHub; the hand-off only points at it.
 - On any stop whose first line hands something to the human, if the message links an open PR in the
-  apb repo (the repository in the plugin's manifest) that touches templates/, hooks/, a skill's
-  SKILL.md or docs/playbook.md, and that PR's description has no "Projects:" line ("Projects: none",
+  apb repo (the repository in the plugin's manifest) that touches templates/, hooks/, agents/, a
+  skill's SKILL.md or docs/playbook.md, and that PR's description has no "Projects:" line ("Projects: none",
   or "Projects:" with links to the projects' PRs that apply the change), the hook sends the message
   back once, with a note that starts "An apb PR in this hand-off changes how projects run." It looks
   each PR up with gh (at most MAX_PRS, within PR_BUDGET seconds); a PR it can't look up is let through.
@@ -102,14 +102,14 @@ NO_DECISION = re.compile(r"(?i:\b(?:no|0|zero)\s+decisions?\b)")
 LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/(?:pull|issues)/\d+")
 QUOTED = re.compile(r"\s*>")
 
-PROJECTS = ("An apb PR in this hand-off changes how projects run (it touches templates/, hooks/, a "
-            "skill's SKILL.md or docs/playbook.md), and its description has no \"Projects:\" line: %s. "
+PROJECTS = ("An apb PR in this hand-off changes how projects run (it touches templates/, hooks/, "
+            "agents/, a skill's SKILL.md or docs/playbook.md), and its description has no \"Projects:\" line: %s. "
             "Apply the change to every project in use, then add one line to the PR's description: "
             "\"Projects: <links to those projects' PRs>\", or \"Projects: none\" when no project needs a "
             "change. Then hand off.")
-# A path in the apb repo whose change reaches projects: a template, a hook, a skill's instructions or
-# the playbook.
-CHANGES_PROJECTS = re.compile(r"(?:templates|hooks)/(?:[^/]+/)*[^/]+|skills/[^/]+/SKILL\.md|docs/playbook\.md")
+# A path in the apb repo whose change reaches projects: a template, a hook, an agent's file, a skill's
+# instructions or the playbook.
+CHANGES_PROJECTS = re.compile(r"(?:templates|hooks|agents)/(?:[^/]+/)*[^/]+|skills/[^/]+/SKILL\.md|docs/playbook\.md")
 # "Projects: none" (a reason may follow), or "Projects:" with at least one link to a PR.
 PROJECTS_LINE = re.compile(r"Projects:\s*(.*)")
 PROJECTS_NONE = re.compile(r"(?i:none)\b")
@@ -251,8 +251,9 @@ def has_projects_line(body):
     if not isinstance(body, str):
         return False
     for line in body.splitlines():
-        # A quoted line starts with ">", so it never matches.
-        m = PROJECTS_LINE.fullmatch(line.replace("*", "").strip().lstrip("-+ ").strip())
+        # Markdown around the line doesn't matter: bold, code, a list item or a heading. A quoted line
+        # starts with ">", so it never matches.
+        m = PROJECTS_LINE.fullmatch(re.sub(r"[*`]", "", line).strip().lstrip("#-+ ").strip())
         if m and (PROJECTS_NONE.match(m.group(1)) or PR_LINK.search(m.group(1))):
             return True
     return False
