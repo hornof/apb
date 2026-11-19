@@ -801,7 +801,9 @@ class HooksFile(unittest.TestCase):
             self.hooks = json.load(f)["hooks"]
 
     def test_stop_runs_this_hook_and_waits_for_it(self):
-        groups = self.hooks["Stop"]
+        # The watcher starter also runs at a stop, in the background (test_apb_watch_start.py checks it).
+        groups = [g for g in self.hooks["Stop"]
+                  if not g["hooks"][0]["args"][0].endswith("/apb-watch-start.py")]
         self.assertEqual(len(groups), 1)
         hooks = groups[0]["hooks"]
         self.assertEqual(len(hooks), 1)
