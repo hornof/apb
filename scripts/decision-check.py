@@ -121,6 +121,12 @@ def is_claude(comment, claude_login=None):
     return authors.is_claude(body_of(comment), author, claude_login)
 
 
+# Words that, right after a letter at the start of a reply, make it a choice: "B sounds good.", "a works for
+# me". Any other word leaves it an article or a sentence: "A mockup first", "A question: ...", "B is risky".
+AGREE = r"sounds|works|looks|seems|please|thanks|thank you|is fine|is good|is better|is best|is the one|" \
+        r"for me|wins|makes sense|it is|then|definitely|for sure"
+
+
 def chosen(reply, letters):
     """The option letter a reply names, or None. Strict, so an "a" in a sentence is not a choice.
     Quoted lines (a GitHub "Quote reply" copies the Decision) and questions name no choice."""
@@ -131,7 +137,8 @@ def chosen(reply, letters):
         r"\b(?:option|choice)\s+\(?([a-z])\)?\b",  # "option b"
         r"\b(?:go with|pick|choose|take)\s+(?:\(([a-z])\)|([a-z])(?=[.,;:!]|\s*$))",  # "go with a, ..."
         r"\(([a-z])\)",  # "(b) please"
-        r"^([a-z])[).:,]\s",  # "b) but shorter"
+        r"^([a-z])[).:,]\s",  # "b) but shorter", "b, thanks"
+        r"^\W*([a-z])\s+(?:%s)\b" % AGREE,  # "B sounds good.", "a works for me"
     ]
     for pattern in patterns:
         for m in re.finditer(pattern, text, re.I):

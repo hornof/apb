@@ -79,7 +79,8 @@ def builder_54():
 
 
 class Example(unittest.TestCase):
-    """Card #54 as it happened: builder 22:23:07, PR 22:29:32, hand-off 22:34:09, merge 22:47:52."""
+    """Card #54 as it happened: builder 22:23:07, PR 22:29:32, hand-offs 22:34:09 (a decision),
+    22:40:05 and 22:44:02 (merge, before and after the red suite was fixed), merge 22:47:52."""
 
     def test_the_three_times(self):
         events = [
@@ -93,6 +94,10 @@ class Example(unittest.TestCase):
              "todo": "answer [decision 9 on PR #58 (Card #54)](https://github.com/hornof/apb/pull/58)"},
             {"time": "2026-11-18T22:40:05.152Z", "event": "Stop", "session": S, "holder": "human",
              "todo": "merge [PR #58 (Card #54)](https://github.com/hornof/apb/pull/58)"},
+            {"time": "2026-11-18T22:41:11.109Z", "event": "SubagentStart", "session": S,
+             "agent_id": "ab0", "agent_type": "apb:builder"},  # the suite was red: the builder again
+            {"time": "2026-11-18T22:44:02.493Z", "event": "Stop", "session": S, "holder": "human",
+             "todo": "merge [PR #58 (Card #54)](https://github.com/hornof/apb/pull/58)"},
         ]
         data = issue([{"number": 58, "createdAt": "2026-11-18T22:29:32Z", "mergedAt": "2026-11-18T22:47:52Z",
                        "closedAt": "2026-11-18T22:47:53Z", "headRefName": "issue-54-brief-check",
@@ -101,7 +106,8 @@ class Example(unittest.TestCase):
         self.assertEqual(r["pr"], 58)
         self.assertAlmostEqual(r["build_min"], 6.4, places=1)
         self.assertAlmostEqual(r["review_min"], 4.6, places=1)
-        self.assertAlmostEqual(r["human_min"], 13.7, places=1)
+        self.assertAlmostEqual(r["human_min"], 3.8, places=1)  # from the last hand-off, 22:44:02
+        self.assertEqual(r["hand_offs"], 3)
         self.assertEqual(r["last_action"], "merge")
 
 
@@ -159,7 +165,8 @@ class Review(unittest.TestCase):
                                  stop(12, "human", "answer decision 3 on PR #58"), stop(15, "human", "merge PR #58")]
         r = ct.card_times(events, issue([pr()]))
         self.assertEqual(r["review_min"], 2.0)
-        self.assertEqual(r["human_min"], 18.0)
+        self.assertEqual(r["human_min"], 15.0)  # from the last hand-off, minute 15
+        self.assertEqual(r["hand_offs"], 2)
 
     def test_a_stop_naming_the_pr_beats_an_earlier_one_that_does_not(self):
         events = builder_54() + [stop(12, "human", "merge PR #57"), stop(14, "human", "merge [PR #58](x)")]
@@ -189,6 +196,42 @@ class Review(unittest.TestCase):
         self.assertIsNone(r["review_min"])
         self.assertIsNone(r["human_min"])
         self.assertIsNone(r["messages"])
+        self.assertIsNone(r["hand_offs"])
+
+
+class HandOffs(unittest.TestCase):
+    """The PR came back after a hand-off: the builder's second pass is not the human's time."""
+
+    def test_two_hand_offs(self):
+        events = builder_54() + [stop(14, "human", "merge PR #58"), bash(16, "b1", "git push origin issue-54-brief-check"),
+                                 stop(18, "claude"), stop(25, "human", "merge PR #58")]
+        r = ct.card_times(events, issue([pr()]))
+        self.assertEqual(r["review_min"], 4.0)  # opened to the first hand-off
+        self.assertEqual(r["human_min"], 5.0)  # the last hand-off to the merge
+        self.assertEqual(r["hand_offs"], 2)
+        self.assertEqual((r["first_hand_off"], r["last_hand_off"]), (ct.seconds(at(14)), ct.seconds(at(25))))
+
+    def test_one_hand_off_is_both_first_and_last(self):
+        r = ct.card_times(builder_54() + [stop(14, "human", "merge PR #58")], issue([pr()]))
+        self.assertEqual((r["review_min"], r["human_min"], r["hand_offs"]), (4.0, 16.0, 1))
+        self.assertEqual(r["first_hand_off"], r["last_hand_off"])
+
+    def test_only_stops_naming_the_pr_count_when_some_do(self):
+        events = builder_54() + [stop(12, "human", "merge PR #57"), stop(14, "human", "merge PR #58"),
+                                 stop(20, "human", "say go for the next card"), stop(25, "human", "merge PR #58")]
+        r = ct.card_times(events, issue([pr()]))
+        self.assertEqual((r["review_min"], r["human_min"], r["hand_offs"]), (4.0, 5.0, 2))
+
+    def test_stops_outside_the_pr_do_not_count(self):
+        events = builder_54() + [stop(8, "human", "merge PR #58"), stop(14, "human", "merge PR #58"),
+                                 stop(31, "human", "merge PR #58")]
+        r = ct.card_times(events, issue([pr()]))
+        self.assertEqual((r["human_min"], r["hand_offs"]), (16.0, 1))
+
+    def test_messages_still_count_from_the_first_hand_off(self):
+        events = builder_54() + [stop(14, "human", "PR #58"), prompt(15, routine=False), stop(25, "human", "PR #58"),
+                                 prompt(26, routine=False)]
+        self.assertEqual(ct.card_times(events, issue([pr()]))["messages"], 2)
 
 
 class LastAction(unittest.TestCase):
@@ -323,12 +366,25 @@ class Comment(unittest.TestCase):
         text = ct.comment(r)
         data = ct.data_of(text)
         self.assertEqual(data, {"issue": 54, "pr": 58, "build_min": 8.0, "review_min": 2.0, "human_min": 18.0,
-                                "messages": 1, "chat": 1, "pr_messages": 0})
+                                "messages": 1, "chat": 1, "pr_messages": 0, "hand_offs": 1})
         self.assertIn("— Claude (orchestrator)", text)
         self.assertIn("Build: 8 min", text)
         self.assertIn("Review: 2 min", text)
         self.assertIn("Human: 18 min", text)
+        self.assertIn("Hand-offs: 1, at 12:12", text)
         self.assertIn("PR #58", text)
+
+    def test_two_hand_offs_are_named_in_the_comment(self):
+        events = builder_54() + [stop(12, "human", "PR #58"), stop(25, "human", "PR #58")]
+        text = ct.comment(ct.card_times(events, issue([pr()])))
+        self.assertIn("Review: 2 min, PR #58 opened 12:10 to the first hand-off to the human 12:12", text)
+        self.assertIn("Human: 5 min, the last hand-off to the human 12:25 to the merge 12:30", text)
+        self.assertIn("Hand-offs: 2, at 12:12 and 12:25", text)
+        self.assertEqual(ct.data_of(text)["hand_offs"], 2)
+
+    def test_no_hand_off_line_without_a_hand_off(self):
+        text = ct.comment(ct.card_times(builder_54(), issue([pr()])))
+        self.assertIn("Hand-offs: not known", text)
 
     def test_unknown_parts_say_why(self):
         text = ct.comment(self.result(build_min=None, messages=None, unclassified=2))
@@ -370,14 +426,15 @@ def oracle(events, data):
     stops = [e for e in ordered if e["event"] == "Stop" and e.get("holder") == "human"
              and opened <= ct.seconds(e["time"]) <= merged]
     named = [e for e in stops if "#%d" % p["number"] in e.get("todo", "")]
-    hand = (named or stops or [None])[0]
-    if hand is None:
-        return build, None, None, None
-    h = ct.seconds(hand["time"])
-    chat = [e for e in ordered if e["event"] == "UserPromptSubmit" and e["session"] == hand["session"]
+    hands = named or stops
+    if not hands:
+        return build, None, None, None, None
+    first, last = hands[0], hands[-1]
+    h = ct.seconds(first["time"])
+    chat = [e for e in ordered if e["event"] == "UserPromptSubmit" and e["session"] == first["session"]
             and h < ct.seconds(e["time"]) <= merged and not e.get("automatic")]
     count = None if any("routine" not in e for e in chat) else sum(1 for e in chat if not e["routine"])
-    return build, (h - opened) / 60, (merged - h) / 60, count
+    return build, (h - opened) / 60, (merged - ct.seconds(last["time"])) / 60, count, len(hands)
 
 
 class Properties(unittest.TestCase):
@@ -413,14 +470,18 @@ class Properties(unittest.TestCase):
             data = issue([pr(opened=opened, merged=merged)])
             r = ct.card_times(events, data)
             want = oracle(events, data)
-            got = (r["build_min"], r["review_min"], r["human_min"], r["messages"])
-            for g, w, name in zip(got, want, ["build", "review", "human", "messages"]):
+            got = (r["build_min"], r["review_min"], r["human_min"], r["messages"], r["hand_offs"])
+            for g, w, name in zip(got, want, ["build", "review", "human", "messages", "hand_offs"]):
                 if w is None or g is None:
                     self.assertEqual(g, w, "case %d, %s" % (case, name))
                 else:
                     self.assertAlmostEqual(g, w, delta=0.06, msg="case %d, %s" % (case, name))
             for g in got[:3]:
                 self.assertTrue(g is None or g >= 0)
+            if r["hand_offs"]:
+                self.assertLessEqual(r["first_hand_off"], r["last_hand_off"])
+                self.assertAlmostEqual(r["review_min"] + r["human_min"], (r["end"] - r["opened"]) / 60 -
+                                       (r["last_hand_off"] - r["first_hand_off"]) / 60, delta=0.11)
 
 
 GQL = {"data": {"repository": {"issue": {
