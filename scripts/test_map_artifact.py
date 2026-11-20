@@ -247,5 +247,74 @@ class TimeLimits(unittest.TestCase):
         self.assertGreater(self.calls[0].get("timeout") or 0, 0)
 
 
+# A gh that is out of GraphQL budget: every call fails the way gh does, except the rate_limit call,
+# which GitHub never counts.
+LIMITED_GH = '''import json, sys
+if sys.argv[1:3] == ["api", "rate_limit"]:
+    print(json.dumps({"resources": {"graphql": {"limit": 5000, "remaining": 0, "reset": 1800000000},
+                                    "core": {"limit": 5000, "remaining": 4990, "reset": 1800000100}}}))
+    sys.exit(0)
+if sys.argv[1:2] == ["fail"]:
+    print("HTTP 502: Bad Gateway", file=sys.stderr); sys.exit(1)
+print("GraphQL: API rate limit already exceeded for user ID 1.", file=sys.stderr)
+sys.exit(1)
+'''
+
+
+def limited_gh():
+    """A folder with the out-of-budget gh in it, and an env that puts it first on the PATH."""
+    import stat
+    import sys
+    import tempfile
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "bin"))
+    gh = os.path.join(d, "bin", "gh")
+    with open(gh, "w") as f:
+        f.write("#!" + sys.executable + "\n" + LIMITED_GH)
+    os.chmod(gh, os.stat(gh).st_mode | stat.S_IEXEC)
+    return d, dict(os.environ, PATH=os.path.join(d, "bin") + os.pathsep + os.environ["PATH"])
+
+
+class RateLimited(unittest.TestCase):
+    """Out of GitHub budget, the script says until when, in one plain line, not a traceback."""
+
+    def test_run_says_until_when(self):
+        _, env = limited_gh()
+        real = dict(os.environ)
+        os.environ.update(env)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(real)))
+        with self.assertRaises(SystemExit) as e:
+            mp.run(["gh", "repo", "view", "--json", "nameWithOwner"])
+        hhmm = mp.time.strftime("%H:%M", mp.time.localtime(1800000000))
+        self.assertEqual(str(e.exception.code),
+                         "GitHub: rate-limited until %s; the account has used up its API budget. Try again then." % hhmm)
+
+    def test_other_failures_still_raise(self):
+        _, env = limited_gh()
+        real = dict(os.environ)
+        os.environ.update(env)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(real)))
+        with self.assertRaises(mp.subprocess.CalledProcessError):
+            mp.run(["gh", "fail"])
+
+    def test_the_whole_script_prints_no_traceback(self):
+        import subprocess
+        import sys
+        d, env = limited_gh()
+        project = os.path.join(d, "project")
+        os.makedirs(os.path.join(project, "docs"))
+        with open(os.path.join(project, "docs", "MAP.md"), "w") as f:
+            f.write(MD)
+        for cmd in (["git", "init", "-q", "-b", "main"], ["git", "add", "."],
+                    ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "map"]):
+            subprocess.run(cmd, cwd=project, check=True, capture_output=True, timeout=30)
+        r = subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "map-artifact.py"),
+                            os.path.join(d, "out.html"), PAGE], cwd=project, env=env, capture_output=True, text=True,
+                           timeout=60)
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("rate-limited until", r.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

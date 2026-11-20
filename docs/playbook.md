@@ -210,18 +210,26 @@ For generated content, also:
 
 The orchestrator acts only when something wakes it: a message from the human, an agent's report, or a background command finishing. A merge on GitHub or a frozen test run wakes nothing. So the orchestrator never waits without the watcher, and never states anything it hasn't just checked.
 
-- **The watcher** is `scripts/apb-watch.py` in the apb plugin. The watcher checks every 20 seconds. It exits, saying what it found, when:
+- **The watcher** is `scripts/apb-watch.py` in the apb plugin. It checks for stuck commands and quiet agents every 20 seconds. It reads GitHub every 2 minutes while the repo has had activity in the last hour, and every 15 minutes once it has been quiet that long; any change brings it back to 2 minutes. `--poll N` sets a fixed number of seconds instead. It exits, saying what it found, when:
   - a PR is opened, merged or closed, its checks finish, it gets new comments, one of its review threads is resolved (it names the thread with a link), or all of them are. A merged or closed PR stays watched while it has an unresolved thread, since the human may resolve a Decision after the merge.
   - an issue named with `--issue N` gets a new comment
   - a command started from Claude's shells has used no CPU for 10 minutes
   - a running agent has written nothing to the events file for 15 minutes
   - 5 minutes have passed, with `--check-in 5`. Use it while agents run, to compare their progress with the time they should take.
   - an hour has passed with no change, so it never runs forever.
+  - the account's GitHub budget runs low or out (see the next item). It says so once an hour, for all the watchers on the machine.
+- **The watchers share one GitHub budget.** Every project on the machine uses the same Claude account, and GitHub gives an account 5,000 GraphQL points an hour. All the watchers on one machine together stay under 1,000 points an hour; the rest is for the orchestrator, builders and reviewers.
+  - Each read costs about 1 point: a cheap first query shows what changed, and only the PRs that changed are read in full. The old single query cost 91 points.
+  - Each running watcher keeps a file in `~/.apb/watchers/`. Each counts the live ones and slows down so that together they stay under the ceiling.
+  - With fewer than 1,000 points left in the hour, the watchers read GitHub every 15 minutes until the hour resets. Once the budget is used up, they wait for the reset.
+  - `python3 <apb plugin>/scripts/apb-watch.py --list` lists the watchers running on this machine (repo, how often each reads GitHub, how long it has run) and the account's budget: points left and when it resets. The budget is the newest one a running watcher read from GitHub, the figure the watchers pace themselves on; with no watcher running, it comes from `gh api rate_limit`. The line says which, and how old it is. The progress page may be shared, so it lists only that project's watchers in full, with a count of the others on the machine and the same budget line.
+  - When the budget is used up, the map and progress-page scripts stop with one line, "rate-limited until HH:MM", instead of a traceback.
 - **The plugin starts it.** A hook, `hooks/apb-watch-start.py`, keeps the watcher running for the orchestrator's session. It starts the watcher at the session's start, and again on the next prompt, tool call or stop whenever it isn't running. Builders' and reviewers' tool calls don't start it.
   - The coordination issue is the issue where the orchestrator and the advisor talk. It comes from a line in the project's `CLAUDE.md`: `coordination: #N` for an issue in the project's repo, or `coordination: owner/name#N` for an issue in another repo.
   - With `#N`, or with no such line, the hook runs one watcher, on the project's repo and the issue, if there is one. A line that names the project's own repo as `owner/name#N` counts as `#N`.
   - With `owner/name#N`, the hook runs two watchers: one on the project's repo (its PRs, stuck commands and quiet agents), and one on the other repo (its PRs and the issue). Only one copy of each runs.
   - When a watcher reports something, the hook wakes the orchestrator with the report. When it reports no change, the hook starts it again at once. When it fails, the hook waits a minute before trying that watcher again.
+  - The hook keeps an idle session's watchers going for 23 hours, on purpose: once the repo is quiet they read GitHub every 15 minutes, which costs a few points an hour, and an unattended run has no human messages for hours but still needs waking on a merge. `--list` shows each one's age, so a stray watcher is easy to spot.
   - Each start writes a `watcher-start` line to the events file, and each exit a `watcher-exit` line with the reason. Both name the watcher: `project` or `coordination`.
 - **The orchestrator's own watcher.** While agents run, the orchestrator also runs the watcher itself, in the background in its own shell, with `--check-in 5` and `--issue N` for the card's issue, to compare the agents' progress with the time they should take.
 - **What the watcher doesn't do.** It only reads. Stopping a stuck process is the orchestrator's call. It saves what it saw in its `--state` file, so a change made while it was stopped is reported on the next start, and nothing is reported twice.

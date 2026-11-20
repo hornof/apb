@@ -27,6 +27,11 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
   prints the report on stderr and exits 2, which wakes the model. The next tool call starts both again.
 - When a watcher reports no change, it is started again at once, until --budget runs out, so the
   watchers also run while the orchestrator waits with no tool calls.
+- The hook passes no --poll, so its watchers read GitHub at the watcher's own pace: every 2 minutes
+  while the repo is active, every 15 minutes once it has been quiet for an hour (scripts/apb-watch.py).
+- Lifetime: an idle session's watchers live for BUDGET, 23 hours, on purpose. Quiet, a watcher costs a
+  few points an hour, and an unattended run (apb-loop) has no human messages for hours but still needs
+  waking on a merge. `apb-watch.py --list` shows each running watcher and its age.
 - When a watcher fails, it is not started again for --backoff seconds, and the failure wakes no one.
   The other watcher goes on.
 - Every watcher run has a time limit: its --limit, plus --grace seconds. Stopping this hook (SIGTERM,

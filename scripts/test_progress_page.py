@@ -423,6 +423,52 @@ class TimeLimits(unittest.TestCase):
             self.assertGreater(kwargs.get("timeout") or 0, 0)
 
 
+class RateLimited(unittest.TestCase):
+    def test_out_of_budget_says_until_when_not_a_traceback(self):
+        import subprocess
+        import sys
+        spec = importlib.util.spec_from_file_location("test_map_artifact", os.path.join(HERE, "test_map_artifact.py"))
+        tm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tm)
+        d, env = tm.limited_gh()
+        r = subprocess.run([sys.executable, os.path.join(HERE, "progress-page.py"), os.path.join(d, "out.html"),
+                            "--repo", "o/r"], cwd=d, env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("rate-limited until", r.stderr)
+
+
+class Watchers(unittest.TestCase):
+    """The page lists the apb watchers running on this machine and the account's GraphQL budget."""
+
+    def test_the_section_shows_this_projects_watchers_a_count_of_the_others_and_the_budget(self):
+        project = "/work/sketch-gallery"
+        recs = [{"pid": 31, "repo": "hornof/sketch-gallery", "poll": 900, "started": NOW - 3900, "issues": [],
+                 "state": "/tmp/scratch/watch.json"},  # the orchestrator's own watcher: same repo
+                {"pid": 32, "repo": "hornof/apb", "poll": 120, "started": NOW - 60, "issues": [25],
+                 "state": project + "/.apb/watch-coordination.json"},  # this project's coordination watcher
+                {"pid": 33, "repo": "hornof/tahoe-tracker", "poll": 120, "started": NOW - 60, "issues": [7],
+                 "state": "/work/tahoe-tracker/.apb/watch.json"},
+                {"pid": 34, "repo": "hornof/apb", "poll": 120, "started": NOW - 60, "issues": [25],
+                 "state": "/work/sketch-gallery-old/.apb/watch.json"}]  # a folder whose name starts the same
+        budget = {"remaining": 4812, "limit": 5000, "reset": NOW + 600, "source": "watcher", "at": NOW - 60}
+        page = pp.render(data(repo="hornof/sketch-gallery",
+                              watchers=pp.watcher_lines(recs, budget, NOW, "hornof/sketch-gallery", project)))
+        self.assertIn("<h2>Watchers</h2>", page)
+        self.assertIn("2 watchers for this project:", page)
+        self.assertIn("hornof/sketch-gallery: every 15 min, running 1 h 5 min (pid 31)", page)
+        self.assertIn("hornof/apb #25: every 2 min, running 1 min (pid 32)", page)
+        self.assertIn("2 other watchers on this machine.", page)
+        self.assertNotIn("tahoe", page)
+        self.assertNotIn("pid 33", page)
+        self.assertNotIn("pid 34", page)
+        self.assertIn("4812 of 5000 points left", page)
+        self.assertIn("read by a watcher 1 min ago", page)
+
+    def test_no_section_when_not_given(self):
+        self.assertNotIn("<h2>Watchers</h2>", pp.render(data()))
+
+
 class NoCopiedCode(unittest.TestCase):
     def test_reuses_the_map_script(self):
         # The page's look and the build count come from map-artifact.py, so the two pages can't drift.
