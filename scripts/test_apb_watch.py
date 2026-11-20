@@ -869,6 +869,23 @@ class Pace(Loop):
         self.assertEqual((mine["repo"], mine["pid"], mine["poll"], mine["issues"]), ("o/n", 999, w.QUIET, [25]))
         self.assertEqual(os.listdir(folder), [])
 
+    def test_its_entry_is_written_again_at_every_read(self):
+        folder = os.path.join(self.dir, "watchers")
+        seen = []
+
+        def snapshot(repo, issues, prs=(), **kw):
+            seen.append(sorted(os.listdir(folder)))
+            for name in os.listdir(folder):  # lost, say removed by another watcher
+                os.remove(os.path.join(folder, name))
+            return empty(newest=self.clock.t - 60)
+
+        opts = w.parse_args(["--repo", "o/n", "--state", self.state, "--events", os.path.join(self.dir, "none.jsonl"),
+                             "--limit", "6"])
+        w.watch(opts, snapshot=snapshot, ps_text=lambda: "", now=self.clock.now, sleep=self.clock.sleep, me=999,
+                registry=folder)
+        self.assertEqual(len(seen), 4)
+        self.assertEqual(seen, [["o_n-999.json"]] * 4)
+
     def test_a_low_budget_is_said_once_and_slows_the_reads(self):
         folder = os.path.join(self.dir, "watchers")
         reset = self.clock.t + 1800
@@ -1175,6 +1192,7 @@ class Registry(unittest.TestCase):
             w.register(self.folder, pid, {"repo": "o/r", "poll": 120, "started": 1000.0, "issues": []})
         with open(os.path.join(self.folder, "garbled-14.json"), "w") as f:
             f.write("not json")
+        self.age(*os.listdir(self.folder))
         procs = {11: {"command": "python3 /x/apb-watch.py --state s"},
                  12: {"command": "vim notes.txt"}}  # 12 is a reused pid; 13 is gone
         self.assertEqual([r["pid"] for r in w.live_watchers(self.folder, procs)], [11])
@@ -1182,6 +1200,46 @@ class Registry(unittest.TestCase):
         # ps could not be read: count nothing, delete nothing
         self.assertEqual(w.live_watchers(self.folder, {}), [])
         self.assertEqual(len(os.listdir(self.folder)), 2)
+
+    def age(self, *names):
+        """Make these files older than the grace period, as if written long ago."""
+        old = time.time() - w.FRESH - 5
+        for name in names:
+            os.utime(os.path.join(self.folder, name), (old, old))
+
+    def test_a_watcher_that_started_after_the_ps_snapshot_is_kept_and_counted(self):
+        # The reviewer's repro: A takes its ps snapshot, then B starts and registers, then A counts.
+        a_snapshot = {100: {"command": "python3 apb-watch.py --state a"}}
+        w.register(self.folder, 100, {"repo": "o/a", "issues": [], "poll": 120, "started": 0})
+        w.register(self.folder, 200, {"repo": "o/b", "issues": [], "poll": 120, "started": 1})
+        self.assertEqual(sorted(r["pid"] for r in w.live_watchers(self.folder, a_snapshot)), [100, 200])
+        now = {**a_snapshot, 200: {"command": "python3 apb-watch.py --state b"}}
+        self.assertEqual(sorted(r["repo"] for r in w.live_watchers(self.folder, now)), ["o/a", "o/b"])
+
+    def test_random_orders_never_lose_a_live_watcher(self):
+        # Oracle: a watcher is lost only if its file is gone while its process still runs.
+        rng = random.Random(100)
+        for _ in range(300):
+            folder = os.path.join(tempfile.mkdtemp(), "watchers")
+            running, procs_seen = set(), {}
+            for _ in range(rng.randint(1, 12)):
+                step = rng.choice(["start", "start", "snapshot", "count", "stop"])
+                if step == "start":
+                    pid = rng.randint(1000, 1010)
+                    if pid not in running:
+                        running.add(pid)
+                        w.register(folder, pid, {"repo": "o/r", "issues": [], "poll": 120, "started": 0})
+                elif step == "snapshot":
+                    procs_seen = {p: {"command": "python3 apb-watch.py"} for p in running}
+                elif step == "count":
+                    w.live_watchers(folder, procs_seen)
+                elif step == "stop" and running:
+                    pid = rng.choice(sorted(running))
+                    running.discard(pid)
+                    w.unregister(folder, pid)
+            on_file = {int(n.rsplit("-", 1)[1][:-5]) for n in os.listdir(folder) if n.endswith(".json")} \
+                if os.path.isdir(folder) else set()
+            self.assertLessEqual(running, on_file)
 
     def test_unregister_removes_only_its_own(self):
         w.register(self.folder, 21, {"repo": "o/r", "poll": 120, "started": 1.0, "issues": []})

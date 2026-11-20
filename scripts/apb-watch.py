@@ -544,26 +544,37 @@ def unregister(folder, pid):
         pass
 
 
+FRESH = 60  # seconds: a watcher file this new may belong to a watcher that started after the ps snapshot
+
+
 def live_watchers(folder, procs):
-    """The records of the watchers running now: their pid is in procs, running apb-watch. A file
-    whose process is gone, or that can't be read, is removed. With no procs (ps failed), nothing
-    counts and nothing is removed."""
+    """The records of the watchers running now: their pid is in procs, running apb-watch, or their
+    file is under FRESH seconds old (the watcher may have started after procs was read). A file whose
+    process is gone, or that can't be read, is removed once it is older than that. With no procs
+    (ps failed), nothing counts and nothing is removed."""
     found = []
+    if not procs:
+        return found
     try:
         names = sorted(n for n in os.listdir(folder) if n.endswith(".json"))
     except OSError:
         return found
     for name in names:
         path = os.path.join(folder, name)
+        fresh = True  # a file that vanishes while being read is left alone
         try:
+            fresh = time.time() - os.path.getmtime(path) < FRESH
             with open(path) as f:
                 record = json.load(f)
             pid = record["pid"]
         except (OSError, ValueError, TypeError, KeyError):
             record, pid = None, None
-        if pid in procs and "apb-watch" in procs[pid].get("command", ""):
+        if pid in procs:
+            if "apb-watch" in procs[pid].get("command", ""):
+                found.append(record)
+        elif record is not None and fresh:
             found.append(record)
-        elif procs and (record is None or pid not in procs):
+        elif not fresh:
             try:
                 os.remove(path)
             except OSError:
@@ -690,8 +701,8 @@ def watch(opts, snapshot, ps_text, now, sleep, me, registry=None):
                 pace = github_interval(t, state.get("active_at") or start, count, state.get("cost") or FIRST_COST,
                                        budget.get("remaining"), budget.get("reset"), fixed=opts.poll)
                 next_read = max(t + pace, state.get("blocked_until") or 0)
-                if registry and pace != record["poll"]:
-                    record["poll"] = pace
+                if registry:  # at every read, so a file lost or removed by mistake comes back
+                    record.update(poll=pace, checked=t)
                     register(registry, me, record)
             root = opts.root_pid or find_root(procs, me)
             pids = watched(procs, root, me)
