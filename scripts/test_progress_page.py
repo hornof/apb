@@ -441,16 +441,32 @@ class RateLimited(unittest.TestCase):
 class Watchers(unittest.TestCase):
     """The page lists the apb watchers running on this machine and the account's GraphQL budget."""
 
-    def test_the_section_shows_each_watcher_and_the_budget(self):
-        recs = [{"pid": 31, "repo": "hornof/apb", "poll": 900, "started": NOW - 3900, "issues": [25]}]
-        page = pp.render(data(watchers=pp.watch.listing(recs, {"remaining": 4812, "limit": 5000, "reset": NOW + 600},
-                                                        NOW)))
-        self.assertIn("<h2>Watchers on this machine</h2>", page)
-        self.assertIn("hornof/apb #25: every 15 min, running 1 h 5 min (pid 31)", page)
+    def test_the_section_shows_this_projects_watchers_a_count_of_the_others_and_the_budget(self):
+        project = "/work/sketch-gallery"
+        recs = [{"pid": 31, "repo": "hornof/sketch-gallery", "poll": 900, "started": NOW - 3900, "issues": [],
+                 "state": "/tmp/scratch/watch.json"},  # the orchestrator's own watcher: same repo
+                {"pid": 32, "repo": "hornof/apb", "poll": 120, "started": NOW - 60, "issues": [25],
+                 "state": project + "/.apb/watch-coordination.json"},  # this project's coordination watcher
+                {"pid": 33, "repo": "hornof/tahoe-tracker", "poll": 120, "started": NOW - 60, "issues": [7],
+                 "state": "/work/tahoe-tracker/.apb/watch.json"},
+                {"pid": 34, "repo": "hornof/apb", "poll": 120, "started": NOW - 60, "issues": [25],
+                 "state": "/work/sketch-gallery-old/.apb/watch.json"}]  # a folder whose name starts the same
+        budget = {"remaining": 4812, "limit": 5000, "reset": NOW + 600, "source": "watcher", "at": NOW - 60}
+        page = pp.render(data(repo="hornof/sketch-gallery",
+                              watchers=pp.watcher_lines(recs, budget, NOW, "hornof/sketch-gallery", project)))
+        self.assertIn("<h2>Watchers</h2>", page)
+        self.assertIn("2 watchers for this project:", page)
+        self.assertIn("hornof/sketch-gallery: every 15 min, running 1 h 5 min (pid 31)", page)
+        self.assertIn("hornof/apb #25: every 2 min, running 1 min (pid 32)", page)
+        self.assertIn("2 other watchers on this machine.", page)
+        self.assertNotIn("tahoe", page)
+        self.assertNotIn("pid 33", page)
+        self.assertNotIn("pid 34", page)
         self.assertIn("4812 of 5000 points left", page)
+        self.assertIn("read by a watcher 1 min ago", page)
 
     def test_no_section_when_not_given(self):
-        self.assertNotIn("Watchers on this machine", pp.render(data()))
+        self.assertNotIn("<h2>Watchers</h2>", pp.render(data()))
 
 
 class NoCopiedCode(unittest.TestCase):

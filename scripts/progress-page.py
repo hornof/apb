@@ -331,14 +331,28 @@ def finished_html(finished, now, limit=10):
             "<tbody>%s</tbody></table>" % rows)
 
 
+def watcher_lines(records, budget, now, repo, project):
+    """The watcher listing for this page. The page may be shared, so only this project's watchers are
+    listed: the ones on its repo, and the ones whose state file is in the project folder (its
+    coordination watcher). The others on the machine are only counted."""
+    root = os.path.realpath(project)
+
+    def mine(r):
+        state = os.path.realpath(r.get("state") or "/")
+        return r.get("repo") == repo or os.path.commonpath([root, state]) == root
+
+    return watch.listing(records, budget, now, mine=mine)
+
+
 def watchers_html(lines):
-    """The watcher listing (apb-watch.py's listing(): a heading line, one line per watcher, then the
-    account's GraphQL budget), or nothing when it wasn't read."""
+    """The watcher listing (apb-watch.py's listing(): a heading line, one indented line per watcher,
+    the count of the others, then the account's GraphQL budget), or nothing when it wasn't read."""
     if not lines:
         return ""
-    items = "".join("<li>%s</li>" % esc(l.strip()) for l in lines[1:-1])
-    return '<h2>Watchers on this machine</h2>\n<p class="muted">%s</p>%s<p>%s</p>' % (
-        esc(lines[0]), "<ul>%s</ul>" % items if items else "", esc(lines[-1]))
+    items = "".join("<li>%s</li>" % esc(l.strip()) for l in lines[1:-1] if l.startswith("  "))
+    notes = "".join("<p>%s</p>" % esc(l) for l in lines[1:-1] if not l.startswith("  "))
+    return '<h2>Watchers</h2>\n<p class="muted">%s</p>%s%s<p>%s</p>' % (
+        esc(lines[0]), "<ul>%s</ul>" % items if items else "", notes, esc(lines[-1]))
 
 
 STYLE = re.search(r"<link[^>]*>\s*<style>.*?</style>", mp.PAGE, re.S).group(0).replace("{{", "{").replace("}}", "}")
@@ -428,7 +442,8 @@ def main(argv):
     running, finished = agent_runs(events, now)
     try:  # the apb watchers running on this machine, and the account's GraphQL budget
         records = watch.live_watchers(watch.registry_dir(), watch.parse_ps(watch.read_ps()))
-        watchers = watch.listing(records, watch.account_budget(records, now, watch.rate_budget), now)
+        watchers = watcher_lines(records, watch.account_budget(records, now, watch.rate_budget), now, repo,
+                                 os.getcwd())
     except Exception:
         watchers = None
     page = render({"repo": repo, "now": now, "ball": ball(events, running),"stages": names, "build_count": count,
