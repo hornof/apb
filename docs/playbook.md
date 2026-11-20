@@ -218,7 +218,7 @@ The orchestrator acts only when something wakes it: a message from the human, an
   - 5 minutes have passed, with `--check-in 5`. Use it while agents run, to compare their progress with the time they should take.
   - an hour has passed with no change, so it never runs forever.
   - the account's GitHub budget runs low or out (see the next item). It says so once an hour, for all the watchers on the machine.
-- **The watchers share one GitHub budget.** Every project on the laptop uses the same Claude account, and GitHub gives an account 5,000 GraphQL points an hour. All the watchers on one machine together stay under 1,000 points an hour; the rest is for the orchestrator, builders and reviewers.
+- **The watchers share one GitHub budget.** Every project on the machine uses the same Claude account, and GitHub gives an account 5,000 GraphQL points an hour. All the watchers on one machine together stay under 1,000 points an hour; the rest is for the orchestrator, builders and reviewers.
   - Each read costs about 1 point: a cheap first query shows what changed, and only the PRs that changed are read in full. The old single query cost 91 points.
   - Each running watcher keeps a file in `~/.apb/watchers/`. Each counts the live ones and slows down so that together they stay under the ceiling.
   - With fewer than 1,000 points left in the hour, the watchers read GitHub every 15 minutes until the hour resets. Once the budget is used up, they wait for the reset.
