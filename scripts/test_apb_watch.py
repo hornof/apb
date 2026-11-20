@@ -886,6 +886,23 @@ class Pace(Loop):
         self.assertEqual(len(seen), 4)
         self.assertEqual(seen, [["o_n-999.json"]] * 4)
 
+    def test_its_entry_records_the_budget_of_its_last_read(self):
+        folder = os.path.join(self.dir, "watchers")
+        seen = []
+        reset = self.clock.t + 1800
+
+        def snapshot(repo, issues, prs=(), **kw):
+            seen.append(w.live_watchers(folder, {999: {"command": "python3 apb-watch.py"}}))
+            return empty(newest=self.clock.t - 60, remaining=4100 - len(seen), limit=5000, reset=reset)
+
+        opts = w.parse_args(["--repo", "o/n", "--state", self.state, "--events", os.path.join(self.dir, "none.jsonl"),
+                             "--limit", "2"])
+        w.watch(opts, snapshot=snapshot, ps_text=lambda: "", now=self.clock.now, sleep=self.clock.sleep, me=999,
+                registry=folder)
+        [mine] = seen[-1]  # seen during the second read: the first read's budget
+        self.assertEqual(mine["budget"], {"remaining": 4099, "limit": 5000, "reset": reset,
+                                          "at": 1_000_000.0})
+
     def test_a_low_budget_is_said_once_and_slows_the_reads(self):
         folder = os.path.join(self.dir, "watchers")
         reset = self.clock.t + 1800
@@ -1008,7 +1025,7 @@ def respond(query, model):
                                          "opening": {"nodes": [{"databaseId": t[0]}]}} for t in p.get("threads", [])[:50]]},
             "comments": {"totalCount": p.get("comments", 0)}, "reviews": {"totalCount": p.get("reviews", 0)}}
     cost = max(1, round(len(asked) * 0.51)) if asked else 1
-    return {"rateLimit": {"cost": cost, "remaining": model.get("remaining", 4990),
+    return {"rateLimit": {"cost": cost, "remaining": model.get("remaining", 4990), "limit": 5000,
                           "resetAt": iso(model.get("reset", 2000000000))}, "repository": repo}, asked
 '''
 fake_github = {}
@@ -1252,6 +1269,65 @@ class Registry(unittest.TestCase):
         self.assertFalse(w.claim_notice(self.folder, 1_800_000_000))
         self.assertTrue(w.claim_notice(self.folder, 1_800_003_600))
 
+    def test_the_budget_comes_from_the_newest_watcher_read(self):
+        now = 1_000_000.0
+        gh = lambda: {"remaining": 4770, "limit": 5000, "reset": now + 900}
+        records = [{"pid": 1, "budget": {"remaining": 4300, "limit": 5000, "reset": now + 600, "at": now - 300}},
+                   {"pid": 2, "budget": {"remaining": 4167, "limit": 5000, "reset": now + 600, "at": now - 60}},
+                   {"pid": 3}]
+        b = w.account_budget(records, now, gh)
+        self.assertEqual((b["remaining"], b["source"], b["at"]), (4167, "watcher", now - 60))
+        # No live watcher has one, or the newest is from an hour that has reset: gh api rate_limit.
+        for recs in ([], [{"pid": 3}], [{"pid": 1, "budget": {"remaining": 10, "reset": now - 5, "at": now - 900}}]):
+            b = w.account_budget(recs, now, gh)
+            self.assertEqual((b["remaining"], b["source"], b["at"]), (4770, "gh", now), recs)
+        self.assertIsNone(w.account_budget([], now, lambda: None))
+
+    def test_random_budgets_match_a_second_way(self):
+        rng = random.Random(9)
+        now = 1_000_000.0
+        for _ in range(2000):
+            recs = []
+            for pid in range(rng.randint(0, 5)):
+                r = {"pid": pid}
+                if rng.random() < 0.7:
+                    r["budget"] = {"remaining": rng.randint(0, 5000), "reset": now + rng.choice([-60, 60, 3000]),
+                                   "at": now - rng.randint(0, 3600)}
+                recs.append(r)
+            usable = [r["budget"] for r in recs if "budget" in r and r["budget"]["reset"] > now]
+            got = w.account_budget(recs, now, lambda: {"remaining": -1, "limit": 5000, "reset": now})
+            if usable:
+                newest = max(b["at"] for b in usable)
+                self.assertEqual(got["source"], "watcher")
+                self.assertEqual(got["at"], newest)
+                self.assertIn(got["remaining"], [b["remaining"] for b in usable if b["at"] == newest])
+            else:
+                self.assertEqual((got["source"], got["remaining"]), ("gh", -1))
+
+    def test_the_budget_line_says_where_it_came_from_and_how_old_it_is(self):
+        now = 1_000_000.0
+        line = w.listing([], {"remaining": 4167, "limit": 5000, "reset": now + 600, "source": "watcher",
+                              "at": now - 130}, now)[-1]
+        self.assertIn("4167 of 5000 points left, resets at %s" % w.clock(now + 600), line)
+        self.assertIn("read by a watcher 2 min ago", line)
+        line = w.listing([], {"remaining": 4770, "limit": 5000, "reset": now + 600, "source": "gh", "at": now}, now)[-1]
+        self.assertIn("read from gh api rate_limit under 1 min ago", line)
+
+    def test_a_listing_for_one_project_counts_the_others_without_naming_them(self):
+        now = 1_000_000.0
+        recs = [{"pid": 31, "repo": "hornof/apb", "poll": 900, "started": now - 60, "issues": [25]},
+                {"pid": 32, "repo": "hornof/tahoe", "poll": 120, "started": now - 60, "issues": [3]},
+                {"pid": 33, "repo": "hornof/sketch", "poll": 120, "started": now - 60, "issues": []}]
+        text = "\n".join(w.listing(recs, None, now, mine=lambda r: r["repo"] == "hornof/apb"))
+        self.assertIn("1 watcher for this project:", text)
+        self.assertIn("hornof/apb #25", text)
+        self.assertIn("2 other watchers on this machine.", text)
+        for other in ("tahoe", "sketch", "pid 32", "pid 33", "#3"):
+            self.assertNotIn(other, text)
+        text = "\n".join(w.listing(recs[1:2], None, now, mine=lambda r: False))
+        self.assertIn("No watchers for this project.", text)
+        self.assertIn("1 other watcher on this machine.", text)
+
     def test_the_listing(self):
         now = 1_000_000.0
         records = [{"pid": 31, "repo": "hornof/apb", "poll": 900, "started": now - 3900, "issues": [25]},
@@ -1383,7 +1459,7 @@ class RealScript(unittest.TestCase):
             for _ in range(100):
                 r = subprocess.run([sys.executable, SCRIPT, "--list"], capture_output=True, text=True, env=self.env,
                                    timeout=30)
-                if "o/n" in r.stdout:
+                if "o/n" in r.stdout and "read by a watcher" in r.stdout:
                     listed = r.stdout
                     break
                 time.sleep(0.1)
@@ -1391,13 +1467,16 @@ class RealScript(unittest.TestCase):
             self.assertIn("1 watcher", listed)
             self.assertIn("o/n: every 2 min", listed)
             self.assertIn("pid %d" % proc.pid, listed)
-            self.assertIn("4321 of 5000 points left", listed)
+            # The budget the watcher's own GraphQL answer gave, not gh api rate_limit's (4321).
+            self.assertIn("4990 of 5000 points left", listed)
         finally:
             proc.terminate()
             proc.communicate(timeout=10)
         r = subprocess.run([sys.executable, SCRIPT, "--list"], capture_output=True, text=True, env=self.env, timeout=30)
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("No apb watchers", r.stdout)
+        self.assertIn("4321 of 5000 points left", r.stdout)  # no watcher running: gh api rate_limit
+        self.assertIn("from gh api rate_limit", r.stdout)
 
     def test_a_real_idle_process_is_reported(self):
         self.answers([{"prs": []}])

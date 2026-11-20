@@ -427,8 +427,8 @@ def main(argv):
     events = watch.read_events(opts.events)
     running, finished = agent_runs(events, now)
     try:  # the apb watchers running on this machine, and the account's GraphQL budget
-        watchers = watch.listing(watch.live_watchers(watch.registry_dir(), watch.parse_ps(watch.read_ps())),
-                                 watch.rate_budget(), now)
+        records = watch.live_watchers(watch.registry_dir(), watch.parse_ps(watch.read_ps()))
+        watchers = watch.listing(records, watch.account_budget(records, now, watch.rate_budget), now)
     except Exception:
         watchers = None
     page = render({"repo": repo, "now": now, "ball": ball(events, running),"stages": names, "build_count": count,

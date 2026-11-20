@@ -178,7 +178,7 @@ OPEN_PAGE = 10  # open PRs, most recently updated first
 RECENT_PAGE = 5  # merged or closed PRs, most recently updated first
 THREADS_CHECKED = 20  # review threads per PR in stage 1, for their resolved state
 THREADS_READ = 50  # review threads per PR in stage 2
-BUDGET = "rateLimit { cost remaining resetAt }"
+BUDGET = "rateLimit { cost remaining limit resetAt }"
 ROLLUP = "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }"
 RESOLVED = "reviewThreads(first: %d) { nodes { isResolved } }" % THREADS_CHECKED
 # Each review thread with its state and its first comment, whose id names the thread in a link.
@@ -325,7 +325,8 @@ def gh_snapshot(repo, issues, watch=(), cache=None, graphql=gh_graphql):
     carried = [n for n, c in cache.items() if c.get("open") and n not in marks]
     stale = [int(n) for n, m in marks.items() if (cache.get(n) or {}).get("mark") != m]
     budget = first["rateLimit"]
-    meta = {"cost": budget["cost"], "remaining": budget["remaining"], "reset": parse_time(budget["resetAt"])}
+    meta = {"cost": budget["cost"], "remaining": budget["remaining"], "limit": budget.get("limit"),
+            "reset": parse_time(budget["resetAt"])}
     if stale:
         second = graphql(owner, name, detail_query(stale))
         meta["cost"] += second["rateLimit"]["cost"]
@@ -598,20 +599,46 @@ def claim_notice(folder, reset):
         return True
 
 
-def listing(records, budget, now):
-    """Lines that list the running watchers, then the account's GraphQL budget."""
-    n = len(records)
-    lines = ["%d watcher%s on this machine:" % (n, "" if n == 1 else "s") if n else
-             "No apb watchers running on this machine."]
-    for r in records:
+def account_budget(records, now, fallback):
+    """The account's GraphQL budget: the newest rateLimit a live watcher recorded from its own reads
+    (the figure the watchers pace themselves on), with "source": "watcher" and "at": when it was read.
+    When no live watcher has one for the current hour, fallback() (gh api rate_limit), with
+    "source": "gh" and "at": now. None if neither has one."""
+    seen = [r["budget"] for r in records if isinstance(r.get("budget"), dict)
+            and r["budget"].get("at") is not None and (r["budget"].get("reset") or 0) > now]
+    if seen:
+        return dict(max(seen, key=lambda b: b["at"]), source="watcher")
+    b = fallback()
+    return dict(b, source="gh", at=now) if b else None
+
+
+def budget_line(budget, now):
+    if not budget:
+        return "GitHub GraphQL budget: could not be read (gh api rate_limit)."
+    left = "%d of %d" % (budget["remaining"], budget["limit"]) if budget.get("limit") else "%d" % budget["remaining"]
+    line = "GitHub GraphQL budget: %s points left, resets at %s" % (left, clock(budget["reset"]))
+    if budget.get("source"):
+        line += " (%s %s ago)" % ("read by a watcher" if budget["source"] == "watcher" else "read from gh api rate_limit",
+                                   span(now - budget["at"]))
+    return line + "."
+
+
+def listing(records, budget, now, mine=None):
+    """Lines that list the running watchers, then the account's GraphQL budget. With mine (a test on a
+    record), only the watchers it accepts are listed, and the others are only counted."""
+    shown = [r for r in records if mine(r)] if mine else records
+    n = len(shown)
+    where = "for this project" if mine else "on this machine"
+    lines = ["%d watcher%s %s:" % (n, "" if n == 1 else "s", where) if n else
+             ("No watchers for this project." if mine else "No apb watchers running on this machine.")]
+    for r in shown:
         issues = "".join(" #%d" % i for i in r.get("issues") or [])
         lines.append("  %s%s: %s, running %s (pid %d)" % (r["repo"], issues, every(r["poll"]),
                                                           span(now - r["started"]), r["pid"]))
-    if budget:
-        lines.append("GitHub GraphQL budget: %d of %d points left, resets at %s." % (
-            budget["remaining"], budget["limit"], clock(budget["reset"])))
-    else:
-        lines.append("GitHub GraphQL budget: could not be read (gh api rate_limit).")
+    if mine:
+        others = len(records) - n
+        lines.append("%d other watcher%s on this machine." % (others, "" if others == 1 else "s"))
+    lines.append(budget_line(budget, now))
     return lines
 
 
@@ -703,6 +730,8 @@ def watch(opts, snapshot, ps_text, now, sleep, me, registry=None):
                 next_read = max(t + pace, state.get("blocked_until") or 0)
                 if registry:  # at every read, so a file lost or removed by mistake comes back
                     record.update(poll=pace, checked=t)
+                    if state.get("budget"):  # what --list and the progress page show as the budget
+                        record["budget"] = state["budget"]
                     register(registry, me, record)
             root = opts.root_pid or find_root(procs, me)
             pids = watched(procs, root, me)
@@ -748,7 +777,7 @@ def read_github(opts, state, snapshot, t, registry):
     except RateLimited as e:
         reset = e.reset or t + QUIET
         state["blocked_until"] = reset
-        state["budget"] = {"remaining": 0, "reset": reset}
+        state["budget"] = {"remaining": 0, "reset": reset, "at": t}
         if notice(state, registry, reset):
             found.append(low_line(0, e.reset))
         return found, None
@@ -770,7 +799,8 @@ def read_github(opts, state, snapshot, t, registry):
     if meta.get("cost") is not None:
         state["cost"] = meta["cost"] if state.get("cost") is None else (state["cost"] + meta["cost"]) / 2.0
     if meta.get("remaining") is not None:
-        state["budget"] = {"remaining": meta["remaining"], "reset": meta.get("reset")}
+        state["budget"] = {"remaining": meta["remaining"], "limit": meta.get("limit"), "reset": meta.get("reset"),
+                           "at": t}
         if meta["remaining"] < LOW and notice(state, registry, meta.get("reset")):
             found.append(low_line(meta["remaining"], meta.get("reset")))
     return found, None
@@ -790,7 +820,8 @@ def main(argv):
     opts = parse_args(argv)
     if opts.list:
         records = live_watchers(registry_dir(), parse_ps(read_ps()))
-        print("\n".join(listing(records, rate_budget(), time.time())), flush=True)
+        now = time.time()
+        print("\n".join(listing(records, account_budget(records, now, rate_budget), now)), flush=True)
         return
     if not opts.repo:
         opts.repo = gh_repo()
