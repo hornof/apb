@@ -563,6 +563,37 @@ class Arguments(unittest.TestCase):
         argv, _ = self.argv()
         self.assertGreater(float(argv[argv.index("--limit") + 1]), 0)
 
+    def test_hook_started_watchers_read_github_at_the_new_pace(self):
+        # The hook passes no --poll, so its watchers get the watcher's own pace: every 2 min while the
+        # repo is active, every 15 min once it has been quiet for an hour. Checked with the real watcher.
+        watch = load_watch()
+        for claude_md in (None, COORD):
+            project, fake = apb_project(claude_md), fake_watcher("hang" if claude_md else "found",
+                                                                 coordination="sleep 0.5")
+            run(project, fake)
+            for s in starts_of(fake):
+                self.assertNotIn("--poll", s["argv"])
+                opts = watch.parse_args(s["argv"])
+                t = 10 ** 6
+                self.assertEqual(watch.github_interval(t, t - 60, 1, 2, fixed=opts.poll), 120)
+                self.assertEqual(watch.github_interval(t, t - 2 * 3600, 1, 2, fixed=opts.poll), 900)
+
+    def test_an_idle_sessions_watchers_live_23_hours_as_the_playbook_says(self):
+        hook = load_hook()
+        self.assertEqual(hook.BUDGET, 23 * 3600)
+        with open(os.path.join(os.path.dirname(HERE), "docs", "playbook.md"), encoding="utf-8") as f:
+            playbook = f.read()
+        self.assertIn("23 hours", playbook)
+        self.assertIn("every 15 minutes", playbook)
+
+
+def load_watch():
+    spec = importlib.util.spec_from_file_location(
+        "apb_watch", os.path.join(os.path.dirname(HERE), "scripts", "apb-watch.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 
 def load_hook():
     spec = importlib.util.spec_from_file_location("apb_watch_start", SCRIPT)

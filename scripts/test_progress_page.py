@@ -423,6 +423,36 @@ class TimeLimits(unittest.TestCase):
             self.assertGreater(kwargs.get("timeout") or 0, 0)
 
 
+class RateLimited(unittest.TestCase):
+    def test_out_of_budget_says_until_when_not_a_traceback(self):
+        import subprocess
+        import sys
+        spec = importlib.util.spec_from_file_location("test_map_artifact", os.path.join(HERE, "test_map_artifact.py"))
+        tm = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tm)
+        d, env = tm.limited_gh()
+        r = subprocess.run([sys.executable, os.path.join(HERE, "progress-page.py"), os.path.join(d, "out.html"),
+                            "--repo", "o/r"], cwd=d, env=env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 1)
+        self.assertNotIn("Traceback", r.stderr)
+        self.assertIn("rate-limited until", r.stderr)
+
+
+class Watchers(unittest.TestCase):
+    """The page lists the apb watchers running on this machine and the account's GraphQL budget."""
+
+    def test_the_section_shows_each_watcher_and_the_budget(self):
+        recs = [{"pid": 31, "repo": "hornof/apb", "poll": 900, "started": NOW - 3900, "issues": [25]}]
+        page = pp.render(data(watchers=pp.watch.listing(recs, {"remaining": 4812, "limit": 5000, "reset": NOW + 600},
+                                                        NOW)))
+        self.assertIn("<h2>Watchers on this machine</h2>", page)
+        self.assertIn("hornof/apb #25: every 15 min, running 1 h 5 min (pid 31)", page)
+        self.assertIn("4812 of 5000 points left", page)
+
+    def test_no_section_when_not_given(self):
+        self.assertNotIn("Watchers on this machine", pp.render(data()))
+
+
 class NoCopiedCode(unittest.TestCase):
     def test_reuses_the_map_script(self):
         # The page's look and the build count come from map-artifact.py, so the two pages can't drift.

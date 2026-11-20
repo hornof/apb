@@ -449,7 +449,7 @@ class GitHubChanges(unittest.TestCase):
         self.assertEqual(snap["max"], 7)
 
     def test_the_query_asks_for_each_issue(self):
-        q = w.build_query([25, 7])
+        q = w.check_query([25, 7], [])
         self.assertIn("i25: issue(number: 25)", q)
         self.assertIn("i7: issue(number: 7)", q)
 
@@ -492,11 +492,15 @@ class DecisionThreads(unittest.TestCase):
         self.assertEqual(snap["max"], 5)
 
     def test_the_query_asks_for_each_watched_pr_and_each_threads_first_comment(self):
-        q = w.build_query([25], [82, 7])
+        q = w.check_query([25], [82, 7])
         self.assertIn("w82: pullRequest(number: 82)", q)
         self.assertIn("w7: pullRequest(number: 7)", q)
-        self.assertEqual(q.count("opening: comments(first: 1) { nodes { databaseId } }"), 5)  # open, merged, closed, 2 watched
-        self.assertNotIn("pullRequest(number", w.build_query([25]))
+        self.assertNotIn("pullRequest(number", w.check_query([25], []))
+        # The first comment's id, which names a thread in a link, is read only in the second stage.
+        self.assertNotIn("databaseId", q)
+        d = w.detail_query([82, 7])
+        self.assertIn("p82: pullRequest(number: 82)", d)
+        self.assertEqual(d.count("opening: comments(first: 1) { nodes { databaseId } }"), 2)
 
     def test_a_resolved_thread_on_an_open_pr(self):
         old = snap_with({5: {101: False, 102: False}}, open_prs=[5])
@@ -655,9 +659,11 @@ class Loop(unittest.TestCase):
         self.snaps = []
         self.ps = ""
         self.watched = []  # the merged or closed PRs each snapshot was asked to keep watching
+        self.asked = []  # when GitHub was read
 
-    def snapshot(self, repo, issues, prs=()):
+    def snapshot(self, repo, issues, prs=(), **kw):
         self.watched.append(list(prs))
+        self.asked.append(self.clock.t)
         s = self.snaps.pop(0) if len(self.snaps) > 1 else self.snaps[0]
         if isinstance(s, Exception):
             raise s
@@ -677,7 +683,7 @@ class Loop(unittest.TestCase):
         out = self.run_watch()
         self.assertIn("apb-watch", out[0])
         self.assertEqual(out[1:], ["GitHub: PR #5 merged: A"])
-        self.assertEqual(self.clock.t, 1_000_000.0 + 3 * 20)
+        self.assertEqual(self.clock.t, 1_000_000.0 + 3 * w.ACTIVE)  # GitHub is read every 2 min
 
     def test_a_change_while_stopped_is_reported_on_the_next_start(self):
         base = {"open": {"5": {"title": "A", "checks": "PENDING", "threads": 0, "open_threads": 0, "comments": 0}},
@@ -766,22 +772,466 @@ class Loop(unittest.TestCase):
         self.assertGreaterEqual(self.clock.t, 1_000_000.0 + 300)
 
 
+def empty(**meta):
+    """A snapshot with nothing in it; meta is what the two-stage read says about cost and activity."""
+    s = {"open": {}, "merged": {}, "closed": {}, "issues": {}, "max": 0}
+    if meta:
+        s["meta"] = meta
+    return s
+
+
+class Pace(Loop):
+    """How often GitHub is read: every 2 min while the repo is active, every 15 min once it has been
+    quiet for an hour, back to 2 min on any change; never more than the account-wide ceiling allows.
+    Stuck commands and quiet agents are still checked every TICK seconds."""
+
+    def gaps(self):
+        return [b - a for a, b in zip(self.asked, self.asked[1:])]
+
+    def test_an_active_repo_is_read_every_two_minutes(self):
+        self.snaps = [empty(newest=self.clock.t - 60)]
+        self.run_watch("--limit", "10")
+        self.assertEqual(self.gaps(), [w.ACTIVE] * 5)
+
+    def test_a_repo_quiet_for_an_hour_is_read_every_15_minutes(self):
+        self.snaps = [empty(newest=self.clock.t - 2 * 3600)]
+        out = self.run_watch("--limit", "60")
+        self.assertTrue(out[1].startswith("No change in 60 min"), out)
+        self.assertEqual(self.gaps(), [w.QUIET] * 4)
+
+    def test_a_change_brings_it_back_to_two_minutes(self):
+        quiet = empty(newest=self.clock.t - 2 * 3600)
+        self.snaps = [quiet]
+        self.run_watch("--limit", "30")
+        self.assertEqual(self.gaps(), [w.QUIET] * 2)
+        busy = empty(newest=self.clock.t - 2 * 3600)
+        busy["open"]["9"] = {"title": "new", "checks": "PENDING", "threads": 0, "open_threads": 0, "comments": 0}
+        busy["max"] = 9
+        self.snaps = [busy]
+        self.asked = []
+        self.assertEqual(self.run_watch("--limit", "10")[1:], ["GitHub: PR #9 opened: new (checks PENDING)"])
+        self.asked = []
+        self.run_watch("--limit", "10")
+        self.assertEqual(self.gaps(), [w.ACTIVE] * 5)
+
+    def test_the_quiet_pace_carries_over_a_restart(self):
+        self.snaps = [empty(newest=self.clock.t - 2 * 3600)]
+        self.run_watch("--limit", "30")
+        self.asked = []
+        self.run_watch("--limit", "60")
+        self.assertEqual(self.gaps(), [w.QUIET] * 4)
+
+    def test_stuck_commands_are_still_checked_between_reads(self):
+        self.snaps = [empty(newest=self.clock.t - 2 * 3600)]
+        self.ps = ("  50     1   9:00.00   2:00:00 /x/claude\n"
+                   "  60    50   0:00.00     30:00 /bin/zsh -c npm test\n"
+                   "  61    60   0:00.00      9:30 git hash-object --stdin\n")
+        out = self.run_watch("--stuck-minutes", "10", "--root-pid", "50")
+        self.assertTrue(out[1].startswith("Stuck: process 61"), out)
+        self.assertLessEqual(self.clock.t - 1_000_000.0, 30 + w.TICK)
+        self.assertEqual(len(self.asked), 1)
+
+    def test_poll_still_sets_a_fixed_pace(self):
+        self.snaps = [empty(newest=self.clock.t - 2 * 3600)]
+        self.run_watch("--limit", "2", "--poll", "30")
+        self.assertEqual(self.gaps(), [30] * 4)
+
+    def test_the_watchers_on_this_machine_share_the_ceiling(self):
+        folder = os.path.join(self.dir, "watchers")
+        others = list(range(7001, 7010))  # nine other live watchers
+        for pid in others:
+            w.register(folder, pid, {"repo": "o/x%d" % pid, "poll": 120, "started": self.clock.t, "issues": []})
+        self.ps = "".join("%d 1 0:01.00 10:00 python3 /p/scripts/apb-watch.py --state s\n" % p for p in others)
+        self.ps += "999 1 0:01.00 00:01 python3 /p/scripts/apb-watch.py --state me\n"
+        cost = 20
+        self.snaps = [empty(newest=self.clock.t - 60, cost=cost)]
+        opts = w.parse_args(["--repo", "o/n", "--state", self.state, "--events", os.path.join(self.dir, "none.jsonl"),
+                             "--limit", "30"])
+        w.watch(opts, snapshot=self.snapshot, ps_text=lambda: self.ps, now=self.clock.now, sleep=self.clock.sleep,
+                me=999, registry=folder)
+        want = 10 * cost * 3600 / w.CEILING  # ten watchers, 20 points a read: 720 s apart
+        self.assertTrue(all(abs(g - want) < 1e-6 for g in self.gaps()), self.gaps())
+        self.assertEqual(len(self.gaps()), 2)
+
+    def test_its_own_entry_shows_the_pace_while_it_runs_and_goes_at_exit(self):
+        folder = os.path.join(self.dir, "watchers")
+        seen = []
+
+        def snapshot(repo, issues, prs=(), **kw):
+            seen.append(w.live_watchers(folder, {999: {"command": "python3 apb-watch.py"}}))
+            return empty(newest=self.clock.t - 2 * 3600)
+
+        opts = w.parse_args(["--repo", "o/n", "--state", self.state, "--events", os.path.join(self.dir, "none.jsonl"),
+                             "--limit", "20", "--issue", "25"])
+        w.watch(opts, snapshot=snapshot, ps_text=lambda: "", now=self.clock.now, sleep=self.clock.sleep, me=999,
+                registry=folder)
+        [mine] = seen[-1]
+        self.assertEqual((mine["repo"], mine["pid"], mine["poll"], mine["issues"]), ("o/n", 999, w.QUIET, [25]))
+        self.assertEqual(os.listdir(folder), [])
+
+    def test_a_low_budget_is_said_once_and_slows_the_reads(self):
+        folder = os.path.join(self.dir, "watchers")
+        reset = self.clock.t + 1800
+        self.snaps = [empty(newest=self.clock.t - 60, remaining=400, reset=reset)]
+        opts = w.parse_args(["--repo", "o/n", "--state", self.state, "--events", os.path.join(self.dir, "none.jsonl"),
+                             "--limit", "20"])
+        run = lambda: w.watch(opts, snapshot=self.snapshot, ps_text=lambda: "", now=self.clock.now,
+                              sleep=self.clock.sleep, me=999, registry=folder)
+        out = run()
+        self.assertEqual(len(out), 2, out)
+        self.assertIn("400 points left", out[1])
+        self.assertIn(w.clock(reset), out[1])
+        self.asked = []
+        out = run()  # the same reset: not said again, by this watcher or another one
+        self.assertTrue(out[1].startswith("No change"), out)
+        self.assertEqual(self.gaps(), [w.QUIET])
+
+    def test_rate_limited_waits_for_the_reset_and_says_so_once(self):
+        folder = os.path.join(self.dir, "watchers")
+        reset = self.clock.t + 1500
+        self.snaps = [w.RateLimited(reset)]
+        opts = w.parse_args(["--repo", "o/n", "--state", self.state, "--events", os.path.join(self.dir, "none.jsonl"),
+                             "--limit", "60"])
+        run = lambda: w.watch(opts, snapshot=self.snapshot, ps_text=lambda: "", now=self.clock.now,
+                              sleep=self.clock.sleep, me=999, registry=folder)
+        out = run()
+        self.assertIn("rate-limited until %s" % w.clock(reset), out[1])
+        self.asked = []
+        self.snaps = [empty(newest=self.clock.t)]
+        run()
+        self.assertGreaterEqual(self.asked[0], reset)  # nothing asked before the reset
+
+
+class Ceiling(unittest.TestCase):
+    """github_interval against a second way of working out the same rule."""
+
+    def test_examples(self):
+        t = 10 ** 6
+        self.assertEqual(w.github_interval(t, t - 100, 1, 2), w.ACTIVE)
+        self.assertEqual(w.github_interval(t, t - 3601, 1, 2), w.QUIET)
+        self.assertEqual(w.github_interval(t, t - 3601, 1, 2, fixed=20), 20)
+        self.assertEqual(w.github_interval(t, t, 1, 2, remaining=100, reset=t + 3000), w.QUIET)
+        self.assertEqual(w.github_interval(t, t, 1, 2, remaining=100, reset=t + 60), w.ACTIVE)
+        self.assertEqual(w.github_interval(t, t, 1, 2, remaining=100, reset=t - 60), w.ACTIVE)
+
+    def test_random_paces_stay_under_the_ceiling(self):
+        rng = random.Random(94)
+        for _ in range(5000):
+            t = 10 ** 6
+            active_at = t - rng.choice([0, 100, 3599, 3600, 3601, 10 ** 5])
+            live = rng.randint(1, 60)
+            cost = rng.choice([1, 1, 2, 3, 8, 25, 90])
+            fixed = rng.choice([None, None, 0.05, 20, 300])
+            remaining = rng.choice([None, 0, 999, 1000, 4000])
+            reset = t + rng.choice([-10, 30, 2000])
+            got = w.github_interval(t, active_at, live, cost, remaining=remaining, reset=reset, fixed=fixed)
+            pace = fixed if fixed else (w.ACTIVE if t - active_at < 3600 else w.QUIET)
+            if not fixed:
+                pace = max(pace, live * cost * 3600 / w.CEILING)
+            if remaining is not None and remaining < w.LOW and reset > t:
+                pace = max(pace, min(w.QUIET, reset - t))
+            self.assertAlmostEqual(got, pace, msg=(active_at, live, cost, fixed, remaining, reset))
+            if not fixed:
+                self.assertLessEqual(live * cost * 3600 / got, w.CEILING + 1e-6)
+
+
+# ---------------------------------------------------------------- the two-stage read, against a fake GitHub
+
+# A fake GitHub, shared with the fake gh below: it answers the watcher's queries from a model.
+# model: {"prs": [{"number", "title", "state", "updated", "checks", "threads": [[id, resolved, comments]],
+#                  "comments", "reviews"}], "issues": {"25": {"title", "state", "comments", "updated"}}}
+# Posting a comment, a review or a thread moves a PR's updatedAt; resolving a thread and checks finishing don't.
+FAKE_GITHUB = r'''
+import re, time
+
+def iso(t):
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t))
+
+def checks_node(p):
+    return {"nodes": [{"commit": {"statusCheckRollup": {"state": p["checks"]} if p.get("checks") else None}}]}
+
+def resolved(p, n):
+    return {"nodes": [{"isResolved": t[1]} for t in p.get("threads", [])[:n]]}
+
+def respond(query, model):
+    prs = {p["number"]: p for p in model.get("prs", [])}
+    issues = model.get("issues", {})
+    repo, asked = {}, []
+    if "open: pullRequests(" in query:
+        # Only the fields the open section asks for, so a check that leaves one out is caught.
+        section = query.split("open: pullRequests(")[1].split("recent:")[0]
+        opened = sorted((p for p in prs.values() if p["state"] == "OPEN"), key=lambda p: -p["updated"])[:10]
+        repo["open"] = {"nodes": []}
+        for p in opened:
+            node = {"number": p["number"], "updatedAt": iso(p["updated"])}
+            if "statusCheckRollup { state }" in section:
+                node["commits"] = checks_node(p)
+            if "reviewThreads(first: 20) { nodes { isResolved }" in section:
+                node["reviewThreads"] = resolved(p, 20)
+            repo["open"]["nodes"].append(node)
+        done = sorted((p for p in prs.values() if p["state"] != "OPEN"), key=lambda p: -p["updated"])[:5]
+        repo["recent"] = {"nodes": [{"number": p["number"], "title": p["title"], "state": p["state"],
+                                     "updatedAt": iso(p["updated"])} for p in done]}
+        latest = sorted(issues.values(), key=lambda i: -i["updated"])[:1]
+        repo["latest"] = {"nodes": [{"updatedAt": iso(i["updated"])} for i in latest]}
+    for n in re.findall(r"\bi(\d+): issue\(", query):
+        i = issues.get(n)
+        repo["i" + n] = None if i is None else {"title": i["title"], "state": i["state"], "updatedAt": iso(i["updated"]),
+                                                "comments": {"totalCount": i["comments"]}}
+    for n in re.findall(r"\bw(\d+): pullRequest\(", query):
+        p = prs.get(int(n))
+        repo["w" + n] = None if p is None else {"number": p["number"], "updatedAt": iso(p["updated"]),
+                                                "reviewThreads": resolved(p, 20)}
+    for n in re.findall(r"\bp(\d+): pullRequest\(", query):
+        asked.append(int(n))
+        p = prs.get(int(n))
+        repo["p" + n] = None if p is None else {
+            "number": p["number"], "title": p["title"], "commits": checks_node(p),
+            "reviewThreads": {"nodes": [{"isResolved": t[1], "comments": {"totalCount": t[2]},
+                                         "opening": {"nodes": [{"databaseId": t[0]}]}} for t in p.get("threads", [])[:50]]},
+            "comments": {"totalCount": p.get("comments", 0)}, "reviews": {"totalCount": p.get("reviews", 0)}}
+    cost = max(1, round(len(asked) * 0.51)) if asked else 1
+    return {"rateLimit": {"cost": cost, "remaining": model.get("remaining", 4990),
+                          "resetAt": iso(model.get("reset", 2000000000))}, "repository": repo}, asked
+'''
+fake_github = {}
+exec(FAKE_GITHUB, fake_github)
+
+
+def pr(n, state="OPEN", updated=1000, **more):
+    p = {"number": n, "title": "pr %d" % n, "state": state, "updated": updated, "checks": None, "threads": [],
+         "comments": 0, "reviews": 0}
+    p.update(more)
+    return p
+
+
+def oracle_snapshot(model, issues, watch):
+    """The snapshot worked out straight from the whole model, the way one big query would see it."""
+    prs = {p["number"]: p for p in model["prs"]}
+    snap = {"open": {}, "merged": {}, "closed": {}, "issues": {}, "threads": {}}
+    opened = [p for p in prs.values() if p["state"] == "OPEN"]
+    done = sorted((p for p in prs.values() if p["state"] != "OPEN"), key=lambda p: -p["updated"])[:5]
+    for p in opened:
+        t = p["threads"]
+        snap["open"][str(p["number"])] = {
+            "title": p["title"], "checks": p["checks"] or "NONE", "threads": len(t),
+            "open_threads": sum(1 for x in t if not x[1]), "comments": p["comments"],
+            "replies": sum(x[2] - 1 for x in t), "reviews": p["reviews"]}
+    for p in done:
+        snap["merged" if p["state"] == "MERGED" else "closed"][str(p["number"])] = p["title"]
+    for n in {p["number"] for p in opened + done} | {n for n in watch if n in prs}:
+        if prs[n]["threads"]:
+            snap["threads"][str(n)] = {str(x[0]): x[1] for x in prs[n]["threads"]}
+    for n in issues:
+        i = model.get("issues", {}).get(str(n))
+        if i:
+            snap["issues"][str(n)] = {"title": i["title"], "state": i["state"], "comments": i["comments"]}
+    snap["max"] = max([0] + [p["number"] for p in opened + done])
+    return snap
+
+
+class FakeGraphQL:
+    def __init__(self, model):
+        self.model = model
+        self.queries = []  # (stage, PR numbers read in full)
+
+    def __call__(self, owner, name, query):
+        data, asked = fake_github["respond"](query, self.model)
+        self.queries.append(("check" if "open: pullRequests(" in query else "detail", asked))
+        return data
+
+
+def two_stage(gql, issues=(), watch=(), cache=None):
+    return w.gh_snapshot("o/n", list(issues), list(watch), cache=cache if cache is not None else {}, graphql=gql)
+
+
+class TwoStage(unittest.TestCase):
+    """Stage 1, every read: one cheap query for what changed. Stage 2: the full read, only for the PRs
+    that changed."""
+
+    def test_the_first_read_fetches_every_pr_then_nothing_while_nothing_changes(self):
+        model = {"prs": [pr(5, updated=1000), pr(6, updated=900), pr(4, "MERGED", updated=800)], "issues": {}}
+        gql, cache = FakeGraphQL(model), {}
+        two_stage(gql, cache=cache)
+        self.assertEqual(gql.queries, [("check", []), ("detail", [5, 6, 4])])
+        gql.queries = []
+        snap = two_stage(gql, cache=cache)
+        self.assertEqual(gql.queries, [("check", [])])
+        self.assertEqual(sorted(snap["open"]), ["5", "6"])
+
+    def test_only_what_changed_is_read_in_full(self):
+        model = {"prs": [pr(5, updated=1000), pr(6, updated=900)], "issues": {}}
+        gql, cache = FakeGraphQL(model), {}
+        two_stage(gql, cache=cache)
+        model["prs"][0].update(updated=1100, comments=1)
+        gql.queries = []
+        snap = two_stage(gql, cache=cache)
+        self.assertEqual(gql.queries, [("check", []), ("detail", [5])])
+        self.assertEqual(snap["open"]["5"]["comments"], 1)
+
+    def test_checks_finishing_and_a_resolved_thread_are_seen_without_an_update(self):
+        model = {"prs": [pr(5, checks="PENDING", threads=[[11, False, 1]])], "issues": {}}
+        gql, cache = FakeGraphQL(model), {}
+        two_stage(gql, cache=cache)
+        model["prs"][0]["checks"] = "SUCCESS"
+        self.assertEqual(two_stage(gql, cache=cache)["open"]["5"]["checks"], "SUCCESS")
+        model["prs"][0]["threads"][0][1] = True
+        self.assertEqual(two_stage(gql, cache=cache)["threads"], {"5": {"11": True}})
+
+    def test_cost_budget_and_newest_activity_are_read(self):
+        model = {"prs": [pr(n, updated=1000 + n) for n in range(1, 9)], "remaining": 3210, "reset": 1_800_000_000,
+                 "issues": {"25": {"title": "C", "state": "OPEN", "comments": 2, "updated": 5000}}}
+        gql = FakeGraphQL(model)
+        meta = two_stage(gql, issues=[25])["meta"]
+        self.assertEqual(meta["cost"], 1 + 4)  # the check, plus 8 PRs read in full
+        self.assertEqual((meta["remaining"], meta["reset"], meta["newest"]), (3210, 1_800_000_000, 5000))
+
+    def test_more_open_prs_than_one_page_keeps_the_older_ones(self):
+        model = {"prs": [pr(n, updated=1000 + n) for n in range(1, 13)], "issues": {}}
+        gql, cache = FakeGraphQL(model), {}
+        old = two_stage(gql, cache=cache)
+        for p in model["prs"][2:]:
+            p["updated"] += 100
+        new = two_stage(gql, cache=cache)
+        self.assertEqual(w.gh_changes({k: v for k, v in old.items() if k != "meta"}, new), [])
+
+    def test_random_histories_match_one_big_read(self):
+        rng = random.Random(9494)
+        for _ in range(150):
+            clock = [1000]
+
+            def tick():
+                clock[0] += rng.randint(1, 50)
+                return clock[0]
+
+            model = {"prs": [], "issues": {"25": {"title": "C", "state": "OPEN", "comments": 0, "updated": 900}}}
+            next_n, thread_id = [1], [100]
+            gql, cache, prev, oracle_prev = FakeGraphQL(model), {}, None, None
+            for step in range(rng.randint(1, 25)):
+                opened = [p for p in model["prs"] if p["state"] == "OPEN"]
+                kind = rng.choice(["open", "comment", "review", "thread", "reply", "resolve", "checks", "merge",
+                                   "close", "issue", "resolve-merged", "nothing"])
+                if kind == "open" and len(opened) < 10 or not model["prs"]:
+                    model["prs"].append(pr(next_n[0], updated=tick()))
+                    next_n[0] += 1
+                elif kind in ("comment", "review", "thread", "reply", "resolve", "checks", "merge", "close") and opened:
+                    p = rng.choice(opened)
+                    if kind == "comment":
+                        p["comments"] += 1
+                    elif kind == "review":
+                        p["reviews"] += 1
+                    elif kind == "thread" and len(p["threads"]) < 5:
+                        thread_id[0] += 1
+                        p["threads"].append([thread_id[0], False, 1])
+                    elif kind == "reply" and p["threads"]:
+                        rng.choice(p["threads"])[2] += 1
+                    elif kind == "resolve" and p["threads"]:
+                        rng.choice(p["threads"])[1] = True
+                    elif kind == "checks":
+                        p["checks"] = rng.choice(["PENDING", "SUCCESS", "FAILURE"])
+                    elif kind in ("merge", "close"):
+                        p["state"] = "MERGED" if kind == "merge" else "CLOSED"
+                    if kind not in ("resolve", "checks"):  # these two don't move updatedAt on GitHub
+                        p["updated"] = tick()
+                elif kind == "resolve-merged":
+                    done = [p for p in model["prs"] if p["state"] != "OPEN" and any(not t[1] for t in p["threads"])]
+                    if done:
+                        next(t for t in rng.choice(done)["threads"] if not t[1])[1] = True
+                elif kind == "issue":
+                    model["issues"]["25"]["comments"] += 1
+                    model["issues"]["25"]["updated"] = tick()
+                watch = w.still_watched(prev)
+                got = two_stage(gql, issues=[25], watch=watch, cache=cache)
+                got = json.loads(json.dumps(got))
+                got.pop("meta")
+                want = oracle_snapshot(model, [25], w.still_watched(oracle_prev))
+                self.assertEqual(got, want, (step, kind, model))
+                if prev is not None:
+                    self.assertEqual(w.gh_changes(prev, got), w.gh_changes(oracle_prev, want))
+                prev, oracle_prev = got, want
+
+    def test_rate_limited_is_its_own_error(self):
+        def limited(owner, name, query):
+            raise w.RateLimited(1_800_000_000)
+
+        with self.assertRaises(w.RateLimited) as e:
+            two_stage(limited)
+        self.assertEqual(e.exception.reset, 1_800_000_000)
+
+    def test_gh_failures_say_whether_it_is_the_rate_limit(self):
+        self.assertTrue(w.is_rate_limit("GraphQL: API rate limit already exceeded for user ID 1."))
+        self.assertTrue(w.is_rate_limit("gh: API rate limit exceeded for user ID 1 (HTTP 403)"))
+        self.assertFalse(w.is_rate_limit("HTTP 502: Bad Gateway"))
+
+
+# ---------------------------------------------------------------- the watchers on this machine
+
+class Registry(unittest.TestCase):
+    def setUp(self):
+        self.folder = os.path.join(tempfile.mkdtemp(), "watchers")
+
+    def test_only_live_watchers_count_and_dead_ones_are_cleared(self):
+        for pid in (11, 12, 13):
+            w.register(self.folder, pid, {"repo": "o/r", "poll": 120, "started": 1000.0, "issues": []})
+        with open(os.path.join(self.folder, "garbled-14.json"), "w") as f:
+            f.write("not json")
+        procs = {11: {"command": "python3 /x/apb-watch.py --state s"},
+                 12: {"command": "vim notes.txt"}}  # 12 is a reused pid; 13 is gone
+        self.assertEqual([r["pid"] for r in w.live_watchers(self.folder, procs)], [11])
+        self.assertEqual(sorted(os.listdir(self.folder)), ["o_r-11.json", "o_r-12.json"])
+        # ps could not be read: count nothing, delete nothing
+        self.assertEqual(w.live_watchers(self.folder, {}), [])
+        self.assertEqual(len(os.listdir(self.folder)), 2)
+
+    def test_unregister_removes_only_its_own(self):
+        w.register(self.folder, 21, {"repo": "o/r", "poll": 120, "started": 1.0, "issues": []})
+        w.register(self.folder, 22, {"repo": "o/r", "poll": 120, "started": 1.0, "issues": []})
+        w.unregister(self.folder, 21)
+        self.assertEqual(os.listdir(self.folder), ["o_r-22.json"])
+
+    def test_a_notice_is_claimed_once_per_reset(self):
+        self.assertTrue(w.claim_notice(self.folder, 1_800_000_000))
+        self.assertFalse(w.claim_notice(self.folder, 1_800_000_000))
+        self.assertTrue(w.claim_notice(self.folder, 1_800_003_600))
+
+    def test_the_listing(self):
+        now = 1_000_000.0
+        records = [{"pid": 31, "repo": "hornof/apb", "poll": 900, "started": now - 3900, "issues": [25]},
+                   {"pid": 32, "repo": "hornof/tahoe", "poll": 120, "started": now - 30, "issues": []}]
+        lines = w.listing(records, {"remaining": 4812, "limit": 5000, "reset": now + 600}, now)
+        text = "\n".join(lines)
+        self.assertIn("2 watchers", lines[0])
+        self.assertIn("hornof/apb #25: every 15 min, running 1 h 5 min (pid 31)", text)
+        self.assertIn("hornof/tahoe: every 2 min, running under 1 min (pid 32)", text)
+        self.assertIn("4812 of 5000 points left, resets at %s" % w.clock(now + 600), lines[-1])
+        self.assertIn("No apb watchers", w.listing([], None, now)[0])
+        self.assertIn("could not be read", w.listing([], None, now)[-1])
+
+
 # ---------------------------------------------------------------- the real script
 
-FAKE_GH = '''import json, os, sys
+FAKE_GH = FAKE_GITHUB + '''
+import json, os, sys
 d = os.environ["FAKE_GH_DIR"]
 if sys.argv[1:3] == ["repo", "view"]:
     print("o/n"); sys.exit(0)
 with open(os.path.join(d, "args"), "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\\n")
-answers = json.load(open(os.path.join(d, "answers.json")))
+if sys.argv[1:3] == ["api", "rate_limit"]:
+    print(json.dumps({"resources": {"graphql": {"limit": 5000, "remaining": 4321, "reset": 1800000000}}})); sys.exit(0)
+query = [a for a in sys.argv if a.startswith("query=")][0]
+models = json.load(open(os.path.join(d, "answers.json")))
 count = os.path.join(d, "count")
 i = int(open(count).read()) if os.path.exists(count) else 0
-open(count, "w").write(str(i + 1))
-a = answers[min(i, len(answers) - 1)]
-if a == "fail":
+if "open: pullRequests(" in query:  # each read starts with the check: the next model
+    i += 1
+    open(count, "w").write(str(i))
+m = models[min(max(i, 1), len(models)) - 1]
+if m == "fail":
     print("HTTP 502", file=sys.stderr); sys.exit(1)
-print(json.dumps({"data": {"repository": a}}))
+if m == "limited":
+    print("GraphQL: API rate limit already exceeded for user ID 1.", file=sys.stderr); sys.exit(1)
+print(json.dumps({"data": respond(query, m)[0]}))
 '''
 
 
@@ -802,12 +1252,19 @@ class RealScript(unittest.TestCase):
         with open(gh, "w") as f:
             f.write("#!" + sys.executable + "\n" + FAKE_GH)
         os.chmod(gh, os.stat(gh).st_mode | stat.S_IEXEC)
-        self.env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"], FAKE_GH_DIR=self.dir)
+        self.watchers = os.path.join(self.dir, "watchers")
+        self.env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"], FAKE_GH_DIR=self.dir,
+                        APB_WATCHERS_DIR=self.watchers)
         self.state = os.path.join(self.dir, "state.json")
 
     def answers(self, items):
+        """One fake-GitHub model per read; the last one stays."""
         with open(os.path.join(self.dir, "answers.json"), "w") as f:
             json.dump(items, f)
+
+    def calls(self):
+        with open(os.path.join(self.dir, "args")) as f:
+            return [json.loads(line) for line in f.read().splitlines()]
 
     def run_script(self, *extra, timeout=30):
         args = [sys.executable, SCRIPT, "--state", self.state, "--poll", "0.05",
@@ -818,30 +1275,31 @@ class RealScript(unittest.TestCase):
         return r.stdout.splitlines()
 
     def test_a_merge_ends_the_watch(self):
-        self.answers([gh_answer(open_prs=[7]), gh_answer(open_prs=[7]), gh_answer(merged=[7])])
+        opened = {"prs": [pr(7)]}
+        self.answers([opened, opened, {"prs": [pr(7, "MERGED", updated=1100)]}])
         out = self.run_script("--repo", "o/n", "--limit", "1")
         self.assertIn("o/n", out[0])
         self.assertEqual(out[1:], ["GitHub: PR #7 merged: pr 7"])
+        stages = ["check" if any("open: pullRequests(" in a for a in c) else "detail" for c in self.calls()]
+        self.assertEqual(stages, ["check", "detail", "check", "check", "detail"])
 
     def test_a_thread_resolved_after_the_merge_is_reported(self):
-        opened, merged, later = gh_answer(open_prs=[7]), gh_answer(merged=[7]), gh_answer()
-        opened["open"]["nodes"][0]["reviewThreads"] = thread_nodes({41: False})
-        merged["merged"]["nodes"][0]["reviewThreads"] = thread_nodes({41: False})
-        later["w7"] = {"number": 7, "reviewThreads": thread_nodes({41: True})}
+        opened = {"prs": [pr(7, threads=[[41, False, 1]])]}
+        merged = {"prs": [pr(7, "MERGED", updated=1100, threads=[[41, False, 1]])]}
+        later = {"prs": [pr(7, "MERGED", updated=1100, threads=[[41, True, 1]])] +
+                 [pr(n, "CLOSED", updated=2000 + n) for n in range(1, 7)]}  # 7 is no longer a recent one
         self.answers([opened, merged, later])
         self.assertEqual(self.run_script("--repo", "o/n", "--limit", "0.02")[1:], ["GitHub: PR #7 merged: pr 7"])
         out = self.run_script("--repo", "o/n", "--limit", "0.02")
         self.assertEqual(out[1:], ["GitHub: PR #7: decision thread resolved: https://github.com/o/n/pull/7#discussion_r41"])
-        with open(os.path.join(self.dir, "args")) as f:
-            third = json.loads(f.read().splitlines()[2])
-        self.assertTrue(any("w7: pullRequest(number: 7)" in a for a in third), third)
+        checks = [c for c in self.calls() if any("open: pullRequests(" in a for a in c)]
+        self.assertTrue(any("w7: pullRequest(number: 7)" in a for a in checks[2]), checks[2])
 
     def test_the_repo_comes_from_gh_when_not_given_and_issues_are_asked_for(self):
-        self.answers([gh_answer()])
+        self.answers([{"prs": [], "issues": {"25": {"title": "C", "state": "OPEN", "comments": 1, "updated": 1}}}])
         out = self.run_script("--limit", "0.005", "--issue", "25")
         self.assertIn("o/n", out[0])
-        with open(os.path.join(self.dir, "args")) as f:
-            first = json.loads(f.readline())
+        first = self.calls()[0]
         self.assertIn("owner=o", first)
         self.assertIn("name=n", first)
         self.assertTrue(any("i25: issue(number: 25)" in a for a in first))
@@ -852,8 +1310,39 @@ class RealScript(unittest.TestCase):
         self.assertTrue(out[1].startswith("No change in"), out)
         self.assertIn("HTTP 502", "\n".join(out))
 
+    def test_rate_limited_says_until_when_without_a_traceback(self):
+        self.answers(["limited"])
+        out = self.run_script("--repo", "o/n", "--limit", "0.005")
+        self.assertIn("rate-limited until %s" % w.clock(1800000000), "\n".join(out))
+
+    def test_it_lists_itself_while_it_runs_and_not_after(self):
+        self.answers([{"prs": []}])
+        proc = subprocess.Popen([sys.executable, SCRIPT, "--state", self.state, "--repo", "o/n", "--limit", "1",
+                                 "--events", os.path.join(self.dir, "none.jsonl")], env=self.env, cwd=self.dir,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            listed = None
+            for _ in range(100):
+                r = subprocess.run([sys.executable, SCRIPT, "--list"], capture_output=True, text=True, env=self.env,
+                                   timeout=30)
+                if "o/n" in r.stdout:
+                    listed = r.stdout
+                    break
+                time.sleep(0.1)
+            self.assertIsNotNone(listed)
+            self.assertIn("1 watcher", listed)
+            self.assertIn("o/n: every 2 min", listed)
+            self.assertIn("pid %d" % proc.pid, listed)
+            self.assertIn("4321 of 5000 points left", listed)
+        finally:
+            proc.terminate()
+            proc.communicate(timeout=10)
+        r = subprocess.run([sys.executable, SCRIPT, "--list"], capture_output=True, text=True, env=self.env, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("No apb watchers", r.stdout)
+
     def test_a_real_idle_process_is_reported(self):
-        self.answers([gh_answer()])
+        self.answers([{"prs": []}])
         # This test process plays Claude Code: it starts a shell, which starts a process that does nothing.
         # Its own process group, so the cleanup stops the sleeper too, not just the shell.
         idle = subprocess.Popen(["sh", "-c", sys.executable + " -c 'import time; time.sleep(60)'; true"],

@@ -18,6 +18,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import time
 from datetime import date
 
 MAP = "docs/MAP.md"
@@ -26,7 +27,31 @@ BUILD_LABEL = "build"
 
 
 def run(args):
-    return subprocess.run(args, check=True, capture_output=True, text=True, timeout=TIME_LIMIT).stdout
+    """A command's output. When GitHub has rate-limited the account, it exits with one plain line
+    saying until when, not a traceback; other failures raise CalledProcessError as before."""
+    done = subprocess.run(args, capture_output=True, text=True, timeout=TIME_LIMIT)
+    if done.returncode != 0:
+        err = getattr(done, "stderr", "") or ""
+        if args[:1] == ["gh"] and re.search(r"rate limit", err + (done.stdout or ""), re.I):
+            sys.exit(rate_limited_message())
+        raise subprocess.CalledProcessError(done.returncode, args, done.stdout, err)
+    return done.stdout
+
+
+def rate_limited_message():
+    """'GitHub: rate-limited until HH:MM; ...', from the budget that is used up. GitHub
+    doesn't count the rate_limit call itself against any budget."""
+    try:
+        out = subprocess.run(["gh", "api", "rate_limit"], capture_output=True, text=True, timeout=TIME_LIMIT)
+        res = json.loads(out.stdout)["resources"]
+        used_up = [r["reset"] for r in res.values() if isinstance(r, dict) and r.get("remaining") == 0]
+        reset = max(used_up) if used_up else None
+    except Exception:
+        reset = None
+    if reset is None:
+        return "GitHub: rate-limited; the account has used up its API budget. Try again in a few minutes."
+    return "GitHub: rate-limited until %s; the account has used up its API budget. Try again then." % (
+        time.strftime("%H:%M", time.localtime(reset)))
 
 
 def absolute(href, repo, branch):

@@ -331,6 +331,16 @@ def finished_html(finished, now, limit=10):
             "<tbody>%s</tbody></table>" % rows)
 
 
+def watchers_html(lines):
+    """The watcher listing (apb-watch.py's listing(): a heading line, one line per watcher, then the
+    account's GraphQL budget), or nothing when it wasn't read."""
+    if not lines:
+        return ""
+    items = "".join("<li>%s</li>" % esc(l.strip()) for l in lines[1:-1])
+    return '<h2>Watchers on this machine</h2>\n<p class="muted">%s</p>%s<p>%s</p>' % (
+        esc(lines[0]), "<ul>%s</ul>" % items if items else "", esc(lines[-1]))
+
+
 STYLE = re.search(r"<link[^>]*>\s*<style>.*?</style>", mp.PAGE, re.S).group(0).replace("{{", "{").replace("}}", "}")
 EXTRA = """<style>
 td:first-child { min-width: 0; }
@@ -381,6 +391,7 @@ def render(d):
 %(board)s
 <h2>Agents that finished</h2>
 %(finished)s
+%(watchers)s
 <p class="note">Built at %(built)s<span id="age"></span> from %(events)s and GitHub (%(repo)s).
 This page is a snapshot; it is built again when something changes. Merge, comment and approve on GitHub.</p>
 </main>
@@ -394,7 +405,7 @@ This page is a snapshot; it is built again when something changes. Merge, commen
        "stages": stages_html(d["stages"], d["build_count"], d.get("map", mp.MAP), d.get("map_found", True)),
        "board_line": board_line,
        "agents": agents_html(d["running"], now), "prs": prs_html(d["prs"]), "board": board_html(d["board"]),
-       "finished": finished_html(d["finished"], now), "built": built, "events": esc(d["events"]),
+       "finished": finished_html(d["finished"], now), "watchers": watchers_html(d.get("watchers")), "built": built, "events": esc(d["events"]),
        "repo": esc(d["repo"]), "now": int(now)}
 
 
@@ -415,9 +426,14 @@ def main(argv):
     now = time.time()
     events = watch.read_events(opts.events)
     running, finished = agent_runs(events, now)
+    try:  # the apb watchers running on this machine, and the account's GraphQL budget
+        watchers = watch.listing(watch.live_watchers(watch.registry_dir(), watch.parse_ps(watch.read_ps())),
+                                 watch.rate_budget(), now)
+    except Exception:
+        watchers = None
     page = render({"repo": repo, "now": now, "ball": ball(events, running),"stages": names, "build_count": count,
                    "board": b, "prs": prs, "running": running, "finished": finished, "events": opts.events,
-                   "map": opts.map, "map_found": found})
+                   "map": opts.map, "map_found": found, "watchers": watchers})
     with open(opts.output, "w", encoding="utf-8") as f:
         f.write(page)
     print("wrote", opts.output)
