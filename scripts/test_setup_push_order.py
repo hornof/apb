@@ -114,7 +114,9 @@ class SetupLandsThroughAPr(unittest.TestCase):
     def test_last_step_checks_a_direct_push_is_refused(self):
         body = self.last_step()
         self.assertIn("`%s`" % CHECK_PUSH, body)
-        self.assertIn("must be refused", body)
+        self.assertIn("Claude Code must refuse it", body)
+        # main only takes PRs by now, so a broken deny list is fixed through one.
+        self.assertIn("fix `.claude/settings.json` in a new PR", body)
         # The check runs only after main is pulled, so if the deny list fails the push is a no-op.
         self.assertLess(body.index("git pull"), body.index("`%s`" % CHECK_PUSH))
         self.assertIn("Everything up-to-date", body)
