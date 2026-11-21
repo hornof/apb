@@ -1,8 +1,9 @@
 """Stop hook: when the orchestrator's work runs out, its message must say who holds the ball.
 
 Claude Code runs this from hooks/hooks.json when a turn of the main session ends, with the event's
-JSON on stdin. It acts only in an apb project (one with docs/MAP.md), and reads .apb/events.jsonl,
-which hooks/apb-events.py writes.
+JSON on stdin. It acts only in an apb project (one with docs/MAP.md) or in the apb repo itself (see
+hooks/apb_folder.py), and reads .apb/events.jsonl, which hooks/apb-events.py writes. With no events
+file yet (a fresh clone of the apb repo) it reads no events and lets the stop through.
 
 - The work ran out in this turn when nothing is running, and either an agent stopped since the last
   stop or the turn was not started by a prompt (a background command finishing woke it). See the
@@ -70,6 +71,9 @@ import signal
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from apb_folder import project_dir  # noqa: E402
 
 ABANDONED = 3 * 3600  # an agent silent this long is taken to be gone; same as scripts/apb-watch.py
 REMIND_AFTER = 30 * 60  # seconds the human holds the ball, with no action, before one reminder
@@ -792,8 +796,8 @@ def main():
     p = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     if not isinstance(p, dict):
         return
-    project = os.environ.get("CLAUDE_PROJECT_DIR") or p.get("cwd")
-    if not isinstance(project, str) or not os.path.isfile(os.path.join(project, "docs", "MAP.md")):
+    project = project_dir(p)
+    if project is None:
         return
     result = handle(p, project, time.time())
     if result["send_back"]:

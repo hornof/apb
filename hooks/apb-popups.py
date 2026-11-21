@@ -1,7 +1,7 @@
 """Pop-up check: in an apb project Claude asks the human in chat, not with pop-up buttons, except during setup.
 
 Claude Code runs this from hooks/hooks.json as a PreToolUse hook, with the event's JSON on stdin. In an
-apb project (one with docs/MAP.md, or the apb plugin's own repo) it refuses:
+apb project (one with docs/MAP.md) or in the apb repo itself (see hooks/apb_folder.py) it refuses:
 - AskUserQuestion, the multiple-choice card;
 - mcp__ccd_turn__wrap_up, the desktop app's end-of-turn box, when it has a question (`ask`) or buttons
   (`actions`). A recap-only wrap_up goes through.
@@ -25,6 +25,9 @@ import json
 import os
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from apb_folder import project_dir  # noqa: E402
 
 ASK = "AskUserQuestion"
 WRAP = "mcp__ccd_turn__wrap_up"
@@ -59,22 +62,11 @@ def popup(tool, tool_input):
 
 
 def apb_project(p):
-    """The apb project's folder, or None: CLAUDE_PROJECT_DIR, else the event's cwd.
+    """The apb project's folder, or the apb repo's, or None: CLAUDE_PROJECT_DIR, else the event's cwd.
 
     An apb project has docs/MAP.md. The apb plugin's own repo has none, but it follows the playbook too,
-    so a folder whose .claude-plugin/plugin.json names the plugin "apb" counts."""
-    project = os.environ.get("CLAUDE_PROJECT_DIR") or p.get("cwd")
-    if not isinstance(project, str):
-        return None
-    if os.path.isfile(os.path.join(project, "docs", "MAP.md")):
-        return project
-    try:
-        with open(os.path.join(project, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
-            if json.load(f).get("name") == "apb":
-                return project
-    except (OSError, ValueError, AttributeError):
-        pass
-    return None
+    so it counts; hooks/apb_folder.py says how it is known."""
+    return project_dir(p)
 
 
 def write_marker(project, data):

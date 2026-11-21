@@ -1,7 +1,8 @@
 """Append one JSON line per Claude Code event to .apb/events.jsonl in an apb project.
 
 Claude Code runs this from hooks/hooks.json with the event's JSON on stdin. It writes only in an apb
-project (one with docs/MAP.md). It never blocks Claude: it prints nothing, catches every error and
+project (one with docs/MAP.md) or in the apb repo itself (see hooks/apb_folder.py). It creates .apb/
+and the events file on its first write. It never blocks Claude: it prints nothing, catches every error and
 always exits 0.
 """
 import json
@@ -9,6 +10,9 @@ import os
 import re
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from apb_folder import project_dir  # noqa: E402
 
 MAX = 300  # longest string kept in a line, in characters
 
@@ -81,8 +85,8 @@ def main():
     p = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     if not isinstance(p, dict):
         return
-    project = os.environ.get("CLAUDE_PROJECT_DIR") or p.get("cwd")
-    if not isinstance(project, str) or not os.path.isfile(os.path.join(project, "docs", "MAP.md")):
+    project = project_dir(p)
+    if project is None:
         return
     line = record(p)
     if line is None:

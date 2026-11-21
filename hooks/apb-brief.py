@@ -8,8 +8,8 @@ Claude Code runs this from hooks/hooks.json, with the event's JSON on stdin:
   found and says to send the task only. Only the brief's own words count: words inside a path, URL,
   branch or file name (/w/review-format, review-format, format.md) are left out. The format lives in agents/builder.md and agents/reviewer.md.
 - SubagentStop: when an agent's report says it "departed from" its file, or did something "as you
-  asked, instead of" what its file says, a Departure line goes into .apb/events.jsonl (apb projects
-  only, the ones with docs/MAP.md). hooks/apb-stop.py then sends back any hand-off to the human until
+  asked, instead of" what its file says, a Departure line goes into .apb/events.jsonl (in apb projects,
+  the ones with docs/MAP.md, and in the apb repo itself; see hooks/apb_folder.py). hooks/apb-stop.py then sends back any hand-off to the human until
   the orchestrator has put it right and run:
 
     python3 <apb plugin folder>/hooks/apb-brief.py resolve "<what you did>"
@@ -23,6 +23,9 @@ import os
 import re
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from apb_folder import is_apb_folder  # noqa: E402
 
 MAX = 300  # longest quote kept, in characters
 
@@ -147,11 +150,10 @@ def on_dispatch(p):
 
 
 def apb_project(p=None):
-    """The apb project's folder, or None: CLAUDE_PROJECT_DIR, else the event's cwd, else this folder."""
+    """The apb project's folder, or the apb repo's, or None: CLAUDE_PROJECT_DIR, else the event's cwd,
+    else this folder."""
     project = os.environ.get("CLAUDE_PROJECT_DIR") or (p or {}).get("cwd") or (None if p else os.getcwd())
-    if isinstance(project, str) and os.path.isfile(os.path.join(project, "docs", "MAP.md")):
-        return project
-    return None
+    return project if is_apb_folder(project) else None
 
 
 def append(project, line):
@@ -188,7 +190,7 @@ def resolve(args):
         return 2
     project = apb_project()
     if not project:
-        print("Not an apb project (no docs/MAP.md here). Run it from the project's root.", file=sys.stderr)
+        print("Not an apb project (no docs/MAP.md here) nor the apb repo. Run it from the project's root.", file=sys.stderr)
         return 2
     path = os.path.join(project, ".apb", "events.jsonl")
     pending = 0
