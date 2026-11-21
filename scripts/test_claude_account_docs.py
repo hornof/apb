@@ -83,7 +83,7 @@ class SetupStep(unittest.TestCase):
 
     def test_access_to_every_repo_and_the_board(self):
         for words in ("every repo", "env -u GH_TOKEN", "collaborators", "repository_invitations",
-                      "updateProjectV2Collaborators", "WRITER"):
+                      "updateProjectV2Collaborators", "ADMIN"):
             self.assertIn(words, self.text, words)
 
     def test_how_to_check(self):
