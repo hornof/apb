@@ -82,6 +82,30 @@ class WrongFolderStops(unittest.TestCase):
             self.assertIn(words, body)
 
 
+class OneLineFolderQuestion(unittest.TestCase):
+    """Issue #114 (comment): the folder check is asked in one line, with the folder in bold; the
+    rest is explained only if the answer is no."""
+
+    QUESTION = "Setting up in **<project folder>** — is that right?"
+
+    def test_question_is_one_line_with_the_folder_in_bold(self):
+        line = next((l for l in read(SETUP).splitlines() if "is that right?" in l), "")
+        self.assertIn(self.QUESTION, line)
+
+    def test_rest_comes_only_after_a_no(self):
+        body = steps()["0"]
+        q = body.index("is that right?")
+        self.assertRegex(body[q:], r"Only if the answer is no")
+        self.assertLess(q, body.index("open a new Code session"))
+
+    def test_folders_are_compared_whatever_the_answer(self):
+        # A yes must not skip the comparison: a human who named another folder and says yes
+        # would otherwise get setup in the wrong session.
+        body = steps()["0"]
+        self.assertRegex(body[body.index("is that right?"):],
+                         r"whatever the answer, compare the project folder with this session's working folder")
+
+
 def substep(step, letter):
     body = steps()[step]
     m = re.search(r"(?:^| )%s\. (.*?)(?= [a-z]\. |$)" % letter, body)
