@@ -83,7 +83,7 @@ class Playbook(unittest.TestCase):
             self.assertIn(words, self.text, words)
 
     def test_never_say_its_late(self):
-        self.assertIn("Never say it's late or suggest stopping. The human decides when to stop.", self.text)
+        self.assertIn("Never say it's late or that the human seems tired, and never suggest stopping. The human decides when to stop.", self.text)
         self.assertNotIn("time of day", self.text)
 
     def test_what_counts_as_a_change(self):
@@ -101,7 +101,8 @@ class Playbook(unittest.TestCase):
     def test_copy_a_go_ahead_onto_the_card(self):
         for words in ("Copy a go-ahead from chat onto the card.",
                       "post it on the card or the coordination issue in the same turn",
-                      "quoting their words and the time"):
+                      "quoting their words and the time",
+                      "Then the advisor sees it, and it stays on GitHub."):
             self.assertIn(words, self.text, words)
 
     def test_each_rule_once(self):
@@ -132,7 +133,7 @@ class Template(unittest.TestCase):
 
     def test_same_words_as_the_playbook_on_stopping(self):
         text = flat(read("templates/CLAUDE-template.md"))
-        self.assertIn("Never say it's late or suggest stopping.", text)
+        self.assertIn("Never say it's late or that the human seems tired, and never suggest stopping.", text)
         self.assertNotIn("time of day", text)
 
 
