@@ -31,15 +31,16 @@ def steps():
 
 def quoted_question():
     """The question the skill tells Claude to ask, written out in quotes in step 1."""
-    m = re.search(r"plain sentence in chat[^\"]*\"([^\"]+)\"", steps()["1"])
+    m = re.search(r"plain text in chat[^\"]*\"([^\"]+)\"", steps()["1"])
     return m and m.group(1)
 
 
 class NameIsAPlainQuestion(unittest.TestCase):
-    def test_step_1_asks_the_name_in_one_plain_sentence_in_chat(self):
-        body = steps()["1"]
-        self.assertRegex(body, r"name and (its )?one-sentence description")
-        self.assertIn("one plain sentence in chat", body)
+    def test_step_1_asks_name_and_description_as_plain_text_in_chat(self):
+        self.assertIn("as plain text in chat", steps()["1"])
+        q = quoted_question() or ""
+        self.assertIn("called", q)
+        self.assertIn("one sentence", q)
 
     def test_the_question_is_written_out_and_is_one_sentence(self):
         q = quoted_question()
@@ -56,18 +57,23 @@ class NameIsAPlainQuestion(unittest.TestCase):
 
     def test_the_typed_answer_is_used(self):
         body = steps()["1"]
-        self.assertRegex(body, r"[Tt]ake (whatever|what) the human types")
+        m = re.search(r"Use the name for the repo \(as a short slug such as `([^`]+)`\)", body)
+        self.assertIsNotNone(m, body[:400])
+        # Independent check: the example really is a valid repo slug.
+        self.assertRegex(m.group(1), r"^[a-z0-9]+(-[a-z0-9]+)*$")
+        self.assertIn("the sentence for the README's description", body)
+        self.assertNotRegex(body, r"[Tt]ake (whatever|what) the human types as the repo name")
 
     def test_name_is_asked_before_the_repo_is_created(self):
         body = steps()["1"]
-        self.assertLess(body.index("one plain sentence in chat"), body.index("gh repo create"))
+        self.assertLess(body.index("as plain text in chat"), body.index("gh repo create"))
 
 
 class RealChoicesStayMultipleChoice(unittest.TestCase):
     def test_public_or_private_is_still_a_choice(self):
         body = steps()["1"]
         self.assertIn("public or private", body)
-        self.assertRegex(body, r"[Mm]ultiple choice (stays|is) for")
+        self.assertRegex(body, r"as a multiple-choice question, whether it should be public or private")
 
     def test_no_option_anywhere_tells_the_human_to_pick_other(self):
         # The rehearsal's broken card: an option whose text says to pick a different option.
