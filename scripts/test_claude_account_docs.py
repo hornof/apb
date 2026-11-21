@@ -107,6 +107,42 @@ class SetupStep(unittest.TestCase):
         self.assertIn("Claude's GitHub account", front)
 
 
+class ReuseAnEarlierAccount(unittest.TestCase):
+    """Issue #114: before asking about the account, setup looks for earlier apb projects that hold its
+    token, and asks one question that recommends reusing it and names the oldest such project. The
+    copy runs only after that answer."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.skill = read("skills/apb-setup/SKILL.md")
+        cls.text = flat(setup_step(cls.skill)[1])
+
+    def test_looks_before_asking(self):
+        self.assertIn("claude-account-sources.py", self.text)
+        self.assertLess(self.text.index("claude-account-sources.py"), self.text.index("Use <account>"))
+
+    def test_one_question_naming_the_account_and_the_oldest_project(self):
+        self.assertIn("Use <account>, copying its token from <project>?", self.text)
+        self.assertIn("oldest", self.text)
+        self.assertRegex(self.text, r"name a different one|names? another")
+
+    def test_no_earlier_project_asks_as_before(self):
+        self.assertRegex(self.text, r"If it finds none[^.]*new account")
+
+    def test_copy_runs_only_after_the_answer(self):
+        self.assertIn("only after the human answers", self.text)
+        self.assertIn("answer is the permission", self.text)
+        # The copy is step c's command with the earlier project's settings file.
+        self.assertIn("settings.local.json` to `claude-account.py`", self.text)
+
+    def test_old_second_question_is_gone(self):
+        self.assertNotIn("Ask the human for that project's folder", self.text)
+
+    def test_no_project_or_account_names(self):
+        for name in ("sketch-gallery", "tahoe-tracker", "hornof-claude", "apb-setup-test"):
+            self.assertNotIn(name, self.skill, name)
+
+
 class OtherDocs(unittest.TestCase):
     def test_claude_template_signature_rule(self):
         text = flat(read("templates/CLAUDE-template.md"))
