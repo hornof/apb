@@ -5,8 +5,11 @@ Claude Code runs this from hooks/hooks.json at the start of a session, on each p
 tool call and at each stop, with the event's JSON on stdin. It is an asyncRewake hook: it runs in the
 background, and when it exits with code 2, what it printed on stderr wakes the model.
 
-- It acts only in an apb project (one with docs/MAP.md), and only for the main session: a tool call
-  from a builder or reviewer (its payload has an agent_id) starts nothing.
+- It acts only in an apb project (one with docs/MAP.md) or in the apb repo itself, and only for the
+  main session: a tool call from a builder or reviewer (its payload has an agent_id) starts nothing.
+  The apb repo has no docs/MAP.md; it is the folder whose .claude-plugin/plugin.json names the plugin
+  "apb" and that holds this hook at hooks/apb-watch-start.py (see is_apb_repo). There the hook runs
+  the project watcher on the folder's own repo, as in a project.
 - The coordination issue comes from --coordination, or from a "coordination:" line in the project's
   CLAUDE.md: "coordination: #25" (this repo) or "coordination: owner/name#25" (another repo).
 - One or two watchers:
@@ -98,6 +101,21 @@ def own_repo(project):
     except (OSError, subprocess.SubprocessError):
         return None
     return repo_of(out.stdout) if out.returncode == 0 else None
+
+
+def is_apb_repo(project):
+    """True if project is the apb repo itself (or a fork or worktree of it): its plugin manifest,
+    .claude-plugin/plugin.json, gives the name "apb", and it holds this hook. Claude Code's plugin
+    names are the plugin's identity, so another plugin's repo has another name; and a repo that only
+    borrowed the name has no hooks/apb-watch-start.py. Both must hold."""
+    if not os.path.isfile(os.path.join(project, "hooks", NAME)):
+        return False
+    try:
+        with open(os.path.join(project, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return isinstance(manifest, dict) and manifest.get("name") == "apb"
 
 
 def watchers(folder, repo, issue):
@@ -308,7 +326,8 @@ def main(argv):
     if not isinstance(p, dict) or p.get("agent_id"):
         return 0
     project = os.environ.get("CLAUDE_PROJECT_DIR") or p.get("cwd")
-    if not isinstance(project, str) or not os.path.isfile(os.path.join(project, "docs", "MAP.md")):
+    if not isinstance(project, str) or not (os.path.isfile(os.path.join(project, "docs", "MAP.md"))
+                                            or is_apb_repo(project)):
         return 0
     folder = os.path.join(project, ".apb")
     os.makedirs(folder, exist_ok=True)

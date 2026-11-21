@@ -60,6 +60,24 @@ def apb_project(claude_md=None):
     return d
 
 
+def apb_repo(manifest=None, hook=True):
+    """A temporary folder that looks like the apb repo itself: the plugin's manifest naming "apb"
+    (or the given manifest text) and this hook at hooks/apb-watch-start.py."""
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, ".claude-plugin"))
+    if manifest is None:
+        with open(os.path.join(os.path.dirname(HERE), ".claude-plugin", "plugin.json")) as f:
+            manifest = f.read()  # the real one
+    if manifest is not False:
+        with open(os.path.join(d, ".claude-plugin", "plugin.json"), "w") as f:
+            f.write(manifest)
+    if hook:
+        os.makedirs(os.path.join(d, "hooks"))
+        with open(os.path.join(d, "hooks", "apb-watch-start.py"), "w") as f:
+            f.write("# the hook\n")
+    return d
+
+
 def fake_watcher(mode, coordination=None):
     d = tempfile.mkdtemp()
     path = os.path.join(d, "fake-watch.py")
@@ -646,6 +664,82 @@ class RandomFiles(unittest.TestCase):
                                  * rng.randint(0, 2) + rng.choice(repos) + "#" + num + rng.choice(tails))
             text = "\n".join(lines)
             self.assertEqual(hook.coordination(text), oracle(text), repr(text))
+
+
+class TheApbRepo(unittest.TestCase):
+    """The apb repo has no docs/MAP.md, but its sessions need waking on a merge too (#118)."""
+
+    def test_the_apb_repo_gets_a_watcher_on_its_own_repo(self):
+        project, fake = apb_repo(), fake_watcher("found")
+        r = run(project, fake)
+        self.assertEqual(r.returncode, 2, r.stderr)
+        starts = starts_of(fake)
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["cwd"], os.path.realpath(project))
+        self.assertNotIn("--repo", starts[0]["argv"])  # the folder's own repo, as in a project
+        self.assertEqual([e["watcher"] for e in events(project, "watcher-start")], ["project"])
+
+    def test_it_starts_once_and_again_after_a_wake(self):
+        project, fake = apb_repo(), fake_watcher("sleep 3")
+        first = start(project, fake)
+        try:
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 1))
+            self.assertEqual(run(project, fake).returncode, 0)  # already running
+            self.assertEqual(first.wait(timeout=15), 2)
+        finally:
+            finish(first)
+        self.assertEqual(len(starts_of(fake)), 1)
+        set_mode(fake, "found")
+        self.assertEqual(run(project, fake).returncode, 2)
+        self.assertEqual(len(starts_of(fake)), 2)
+
+    def test_a_repo_that_is_neither_gets_nothing(self):
+        cases = {
+            "another plugin, with this hook copied in": (json.dumps({"name": "sketch-gallery"}), True),
+            "another plugin, no hook": (json.dumps({"name": "other", "version": "1.0.0"}), False),
+            "a manifest naming apb, without the hook": (json.dumps({"name": "apb"}), False),
+            "the hook, without a manifest": (False, True),
+            "a name that only starts with apb": (json.dumps({"name": "apb-tools"}), True),
+            "a name in another case": (json.dumps({"name": "APB"}), True),
+            "a garbled manifest": ('{"name": "apb"', True),
+            "a manifest that is a list": ('["apb"]', True),
+            "a name that is not a string": ('{"name": ["apb"]}', True),
+        }
+        for why, (manifest, hook) in cases.items():
+            project, fake = apb_repo(manifest, hook), fake_watcher("found")
+            r = run(project, fake)
+            self.assertEqual(r.returncode, 0, why)
+            self.assertEqual(starts_of(fake), [], why)
+            self.assertFalse(os.path.exists(os.path.join(project, ".apb")), why)
+
+    def test_random_manifests_agree_with_a_second_reading(self):
+        spec = importlib.util.spec_from_file_location("apb_watch_start", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+
+        def oracle(text, has_hook):  # written apart from the hook: exactly the name "apb", and the hook
+            try:
+                data = json.loads(text)
+            except ValueError:
+                return False
+            return has_hook and type(data) is dict and data.get("name") == "apb"
+
+        rng = random.Random(118)
+        names = ["apb", "APB", "apb ", " apb", "apb2", "", "sketch-gallery", "apb-tools", None, 1, ["apb"]]
+        for _ in range(300):
+            body = {}
+            if rng.random() < 0.9:
+                body["name"] = rng.choice(names)
+            if rng.random() < 0.5:
+                body["version"] = "0.%d" % rng.randint(0, 99)
+            text = json.dumps(body)
+            if rng.random() < 0.1:
+                text = text[:rng.randint(0, len(text))]
+            if rng.random() < 0.05:
+                text = json.dumps([body])
+            has_hook = rng.random() < 0.8
+            project = apb_repo(text, has_hook)
+            self.assertEqual(hook.is_apb_repo(project), oracle(text, has_hook), (text, has_hook))
 
 
 class StaysOut(unittest.TestCase):
