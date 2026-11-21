@@ -32,7 +32,7 @@ Number the items straight through all three buckets, so the human can reply "all
 - **Note items**: one post, or a second section of the Fix post, with no threads. Aim for a few lines.
 - **Decision items**: one thread each, as an inline comment on the line it concerns. A Decision about the PR as a whole, the board, an issue or something missing goes on the closest related line.
 
-Never resolve a thread; only the human does. You never merge.
+Never resolve a thread; only the human does. Never reply in a Decision thread until the human has replied in it or resolved it, so its Resolve button stays right under the Decision (playbook, "How the human reviews"). You never merge.
 
 The orchestrator can message you while you run, and it can read your full log, every command and its output (playbook, "How the orchestrator and the agents talk"). It acts on your final report, and the human doesn't see that report, so put everything the orchestrator needs in it.
 
