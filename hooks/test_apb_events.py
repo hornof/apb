@@ -351,7 +351,8 @@ class HooksFile(unittest.TestCase):
     # before the orchestrator reads the report (SubagentStop). The watcher starter runs in the background
     # and wakes Claude when it has news. Every other hook is the events logger.
     WAITED_FOR = [("Stop", None, "apb-stop.py"), ("PreToolUse", "Agent|Task", "apb-brief.py"),
-                  ("SubagentStop", None, "apb-brief.py")]
+                  ("SubagentStop", None, "apb-brief.py"),
+                  ("PreToolUse", "AskUserQuestion|mcp__ccd_turn__wrap_up", "apb-popups.py")]
 
     def entries(self):
         """(event, matcher, script file name, hook) for every hook in hooks.json."""

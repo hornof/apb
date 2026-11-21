@@ -16,6 +16,7 @@
       { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-brief.py"], "timeout": 10 } ] }
     ],
     "PreToolUse": [
+      { "matcher": "AskUserQuestion|mcp__ccd_turn__wrap_up", "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-popups.py"], "timeout": 10 } ] },
       { "matcher": "Agent|Task", "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-brief.py"], "timeout": 10 } ] },
       { "hooks": [ { "type": "command", "command": "python3", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/apb-watch-start.py"], "asyncRewake": true, "timeout": 86400 } ] }
     ],
