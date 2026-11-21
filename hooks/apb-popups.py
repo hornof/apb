@@ -118,8 +118,12 @@ def on_tool(p):
     tool = p.get("tool_name")
     if not popup(tool, p.get("tool_input")):
         return None
-    project = apb_project(p)
-    if project is None or setup_running(project, p.get("session_id")):
+    folder = os.environ.get("CLAUDE_PROJECT_DIR") or p.get("cwd")
+    # Check the marker first, even before docs/MAP.md exists: step 1's card then claims it within minutes
+    # of step 0, so the 2-hour limit for an unclaimed marker never cuts into a long setup.
+    if isinstance(folder, str) and setup_running(folder, p.get("session_id")):
+        return None
+    if apb_project(p) is None:
         return None
     return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
                                    "permissionDecisionReason": refusal(tool)}}

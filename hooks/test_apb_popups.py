@@ -161,6 +161,21 @@ class DuringSetup(Project):
         with open(os.path.join(self.dir, ".apb", ".gitignore")) as f:
             self.assertEqual(f.read(), "*\n")
 
+    def test_setup_in_its_real_order(self):
+        # Step 0 in an empty folder, step 1's card before docs/MAP.md exists, then the initial commit,
+        # then cards from step 5 more than 2 hours after step 0.
+        shutil.rmtree(os.path.join(self.dir, "docs"))
+        cli(self.dir, "setup-start")
+        self.assertIsNone(run_hook(self.dir, ASK, question(), session="setup"))
+        with open(self.marker) as f:
+            data = json.load(f)
+        self.assertEqual(data["session"], "setup")
+        os.makedirs(os.path.join(self.dir, "docs"))
+        open(os.path.join(self.dir, "docs", "MAP.md"), "w").close()
+        self.write_marker(time.time() - UNCLAIMED_MAX - 3600, session="setup")
+        self.assertIsNone(run_hook(self.dir, ASK, question(), session="setup"))
+        self.assertTrue(refused(run_hook(self.dir, ASK, question(), session="other")))
+
     def test_setup_done_without_a_marker_is_fine(self):
         self.assertEqual(cli(self.dir, "setup-done").returncode, 0)
 
