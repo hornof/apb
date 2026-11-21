@@ -277,6 +277,35 @@ class AMergeRaisesTheVersionByOne(Base):
         self.assertIn("0.3.55", r.stdout)
         self.assertEqual(self.repo.main_version(), "0.3.55")
 
+    def test_a_refused_push_stops_at_once_with_gits_reason(self):
+        """A branch rule or a read-only token isn't a race: no retries, and the reason is kept."""
+        self.repo.merge("feature")
+        hook = os.path.join(self.repo.origin, "hooks", "pre-receive")
+        write(self.repo.origin, "hooks/pre-receive", "#!/bin/sh\necho 'protected branch: no bots' >&2\nexit 1\n")
+        os.chmod(hook, 0o755)
+        attempts = []
+        vb.BEFORE_PUSH = attempts.append
+        with self.assertRaises(vb.BumpError) as caught:
+            vb.bump(cwd=self.repo.clone("run"), remote="origin", branch="main")
+        self.assertEqual(attempts, [1])
+        self.assertIn("protected branch: no bots", str(caught.exception))
+        self.assertNotIn("kept moving", str(caught.exception))
+        self.assertEqual(self.repo.main_version(), SEED)
+
+    def test_bump_without_push_refuses_an_edited_manifest(self):
+        mine = self.repo.clone("mine")
+        git(mine, "fetch", "-q", "origin")
+        self.repo.merge("feature")
+        git(mine, "pull", "-q", "origin", "main")
+        head = git(mine, "rev-parse", "HEAD")
+        text = open(os.path.join(mine, MANIFEST), encoding="utf-8").read()
+        write(mine, MANIFEST, text.replace("Agentic", "Edited"))
+        with self.assertRaises(vb.BumpError):
+            vb.bump(cwd=mine)
+        self.assertEqual(git(mine, "rev-parse", "HEAD"), head)
+        git(mine, "checkout", "--", MANIFEST)
+        self.assertEqual(vb.bump(cwd=mine), ["0.3.55"])
+
     def test_a_bad_version_stops_with_an_error_and_pushes_nothing(self):
         git(self.repo.web, "fetch", "-q", "origin")
         git(self.repo.web, "checkout", "-q", "--detach", "origin/main")

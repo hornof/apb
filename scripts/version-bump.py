@@ -133,14 +133,19 @@ def bump(cwd=".", remote=None, branch="main", retries=5):
     git(cwd, "worktree", "add", "-q", "--detach", work, tracking)
     try:
         for attempt in range(1, retries + 1):
+            start = git(work, "rev-parse", tracking).stdout.strip()
             versions = commit_bumps(work)
             if not versions:
                 return []
             if BEFORE_PUSH:
                 BEFORE_PUSH(attempt)
-            if git(work, "push", "-q", remote, "HEAD:refs/heads/%s" % branch, check=False).returncode == 0:
+            pushed = git(work, "push", "-q", remote, "HEAD:refs/heads/%s" % branch, check=False)
+            if pushed.returncode == 0:
                 return versions
             git(work, "fetch", "-q", remote, "+refs/heads/%s:%s" % (branch, tracking))
+            if git(work, "rev-parse", tracking).stdout.strip() == start:
+                # Nothing landed meanwhile, so this was no race: a branch rule, a token, the network.
+                raise BumpError("the push to %s/%s was refused: %s" % (remote, branch, pushed.stderr.strip()))
             git(work, "reset", "-q", "--hard", tracking)
         raise BumpError("%s/%s kept moving: gave up after %d tries; run it again" % (remote, branch, retries))
     finally:
