@@ -1,0 +1,14 @@
+# Local to one machine; never commit (#122).
+
+# Claude Code: per-person settings (holds Claude's GitHub token) and session worktrees.
+# .claude/settings.json stays committable.
+.claude/settings.local.json
+.claude/worktrees/
+
+# State the apb hooks write while sessions run.
+.apb/
+
+# Python and macOS clutter.
+__pycache__/
+*.pyc
+.DS_Store
