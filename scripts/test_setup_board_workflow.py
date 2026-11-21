@@ -104,6 +104,19 @@ class ClaudeSwitchesTheWorkflowOn(unittest.TestCase):
     def test_signed_in_as_claudes_account(self):
         self.assertIn("signed in as Claude's GitHub account", self.body())
 
+    def test_accepts_either_login_in_chrome(self):
+        # Decision 6 (a): Chrome signed in as Claude's GitHub account or the human is fine;
+        # a sign-in is asked for only if it's neither.
+        body = self.body()
+        self.assertRegex(body, r"[Ee]ither Claude's GitHub account or the human")
+        self.assertRegex(body, r"[Oo]nly if it's neither[^.]*sign in")
+
+    def test_no_account_path_is_covered_in_5g_itself(self):
+        body = self.body()
+        self.assertRegex(body, r"said no to the account[^.]*login must be the human's[^.]*owns the board")
+        # 5g never asks a human with no account to sign in as one.
+        self.assertNotRegex(body, r"sign in to github\.com in Chrome as the account")
+
     def test_confirms_it_is_on(self):
         self.assertRegex(self.body(), r"(reload|look again)[^.]*\bon\b")
 
