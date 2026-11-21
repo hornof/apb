@@ -14,6 +14,7 @@ description: Build the next unblocked issues from the project board, tests-first
    - The apb plugin folder is two folders above this skill's base directory.
    - When it exits, act on what it printed, then start it again. If something is stuck, stop it, restart the step, then tell the human.
    - Check before stating: every status, time or "still waiting" comes from a check in the same turn (`gh pr view`, `date`). Each status line says when the step should finish.
+   - Before you ask a decision again, or say it is still open, read its thread in the same turn: for a Decision on a PR, `python3 <apb plugin folder>/scripts/decision-check.py N` (it says whether the thread is resolved or answered); for one asked on the card, `gh issue view N --comments`. A watcher line about a merge says nothing about a reply on the card.
 5. Once per project, on the first build PR with real logic, tell its builder to run the deliberate-bug check (see the playbook's "Testing and models"). Builders don't run it otherwise.
 6. For an issue marked "Early look", the builder posts the preview link on the issue as soon as a first version is up. Don't stop the build to wait for the human. If they comment, the builder takes it into account.
 7. Before the builder opens the PR, check that it finishes the whole card. A PR closes exactly the cards it finishes, with "Closes #N". If it will do only part of a card, split that part into its own card first, and have the PR close the new card.

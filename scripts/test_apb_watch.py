@@ -936,6 +936,86 @@ class Pace(Loop):
         self.assertGreaterEqual(self.asked[0], reset)  # nothing asked before the reset
 
 
+def card(comments, state="OPEN"):
+    return {"title": "Card", "state": state, "comments": comments}
+
+
+class IssueComments(Loop):
+    """Issue #96: a new comment on a watched issue always gets its own line, whatever else changed
+    in the same read, and even when the issue was not watched at the last read."""
+
+    def test_a_comment_and_a_merge_in_one_read_each_get_their_own_line(self):
+        # tahoe-tracker: the human answered a Decision on the card's issue (#1) in the same read in
+        # which PR #2 merged and closed #1.
+        before = {"open": {"2": {"title": "Setup", "checks": "SUCCESS", "threads": 0, "open_threads": 0,
+                                 "comments": 0, "replies": 0, "reviews": 0}},
+                  "merged": {}, "closed": {}, "issues": {"1": card(3)}, "max": 2}
+        after = {"open": {}, "merged": {"2": "Setup"}, "closed": {}, "issues": {"1": card(4, "CLOSED")}, "max": 2}
+        self.snaps = [before, after]
+        self.assertEqual(self.run_watch("--issue", "1")[1:], ["GitHub: PR #2 merged: Setup",
+                                                             "GitHub: Issue #1: 1 new comment (Card)",
+                                                             "GitHub: Issue #1 is now closed (Card)"])
+
+    def test_random_changes_never_hide_an_issue_comment(self):
+        rng = random.Random(96)
+        for _ in range(2000):
+            old = random_snapshot(rng)
+            for n in rng.sample(range(1, 4), rng.randint(1, 3)):
+                old["issues"].setdefault(str(n), card(rng.randint(0, 5)))
+            new = json.loads(json.dumps(old))
+            for _ in range(rng.randint(0, 6)):  # any mix of PR and issue changes in one read
+                new = mutate(rng, new)[0]
+                for p in new["open"].values():  # a PR mutate opened has no replies or reviews yet
+                    p.setdefault("replies", 0)
+                    p.setdefault("reviews", 0)
+            for n in rng.sample(sorted(new["issues"]), rng.randint(0, len(new["issues"]))):
+                new["issues"][n]["comments"] += rng.randint(1, 3)
+            got = w.gh_changes(old, new)
+            for n, i in new["issues"].items():
+                added = i["comments"] - old["issues"][n]["comments"]
+                mine = [g for g in got if g.startswith("Issue #%s: " % n)]
+                want = ["Issue #%s: %s (%s)" % (n, w.count(added, "new comment"), i["title"])] if added else []
+                self.assertEqual(mine, want, (old, new, got))
+            for g in got:  # one event a line: no line names a second PR or issue
+                self.assertEqual(g.count("#"), 1, g)
+
+    def test_a_comment_while_the_watcher_was_stopped_is_reported_on_the_next_start(self):
+        base = {"open": {}, "merged": {}, "closed": {}, "issues": {"1": card(3)}, "max": 0}
+        self.snaps = [base]
+        self.run_watch("--issue", "1", "--limit", "1")
+        later = json.loads(json.dumps(base))
+        later["issues"]["1"]["comments"] = 4
+        self.snaps = [later]
+        self.assertEqual(self.run_watch("--issue", "1")[1:], ["GitHub: Issue #1: 1 new comment (Card)"])
+
+    def test_a_comment_posted_before_the_issue_was_watched_is_reported(self):
+        # The watcher read GitHub at the start without --issue 1; the human answered on #1 30 s later;
+        # the watcher was then started again with --issue 1.
+        t0 = self.clock.t
+        self.snaps = [empty()]
+        self.run_watch("--limit", "1")
+        answered = empty(issue_times={"1": [t0 - 5000, t0 + 30]})
+        answered["issues"]["1"] = card(2)
+        self.snaps = [answered]
+        self.assertEqual(self.run_watch("--issue", "1")[1:], ["GitHub: Issue #1: 1 new comment (Card)"])
+        self.assertTrue(self.run_watch("--issue", "1", "--limit", "1")[1].startswith("No change"))  # once only
+
+    def test_comments_older_than_the_last_read_are_not_news(self):
+        t0 = self.clock.t
+        self.snaps = [empty()]
+        self.run_watch("--limit", "1")
+        old = empty(issue_times={"1": [t0 - 5000, t0 - 10]})
+        old["issues"]["1"] = card(2)
+        self.snaps = [old]
+        self.assertTrue(self.run_watch("--issue", "1", "--limit", "1")[1].startswith("No change"))
+
+    def test_a_first_run_takes_its_baseline_without_reporting(self):
+        first = empty(issue_times={"1": [self.clock.t - 10]})
+        first["issues"]["1"] = card(1)
+        self.snaps = [first]
+        self.assertTrue(self.run_watch("--issue", "1", "--limit", "1")[1].startswith("No change"))
+
+
 class Ceiling(unittest.TestCase):
     """github_interval against a second way of working out the same rule."""
 
@@ -973,7 +1053,8 @@ class Ceiling(unittest.TestCase):
 
 # A fake GitHub, shared with the fake gh below: it answers the watcher's queries from a model.
 # model: {"prs": [{"number", "title", "state", "updated", "checks", "threads": [[id, resolved, comments]],
-#                  "comments", "reviews"}], "issues": {"25": {"title", "state", "comments", "updated"}}}
+#                  "comments", "reviews"}], "issues": {"25": {"title", "state", "comments", "updated", "times"}}}
+# An issue's "times" (optional) are when its comments were posted, oldest first.
 # Posting a comment, a review or a thread moves a PR's updatedAt; resolving a thread and checks finishing don't.
 FAKE_GITHUB = r'''
 import re, time
@@ -1011,7 +1092,8 @@ def respond(query, model):
     for n in re.findall(r"\bi(\d+): issue\(", query):
         i = issues.get(n)
         repo["i" + n] = None if i is None else {"title": i["title"], "state": i["state"], "updatedAt": iso(i["updated"]),
-                                                "comments": {"totalCount": i["comments"]}}
+                                                "comments": {"totalCount": i["comments"], "nodes": [
+                                                    {"createdAt": iso(t)} for t in i.get("times", [])[-20:]]}}
     for n in re.findall(r"\bw(\d+): pullRequest\(", query):
         p = prs.get(int(n))
         repo["w" + n] = None if p is None else {"number": p["number"], "updatedAt": iso(p["updated"]),
@@ -1119,6 +1201,16 @@ class TwoStage(unittest.TestCase):
         meta = two_stage(gql, issues=[25])["meta"]
         self.assertEqual(meta["cost"], 1 + 4)  # the check, plus 8 PRs read in full
         self.assertEqual((meta["remaining"], meta["reset"], meta["newest"]), (3210, 1_800_000_000, 5000))
+
+    def test_each_issues_latest_comment_times_are_read(self):
+        model = {"prs": [], "issues": {"1": {"title": "Card", "state": "OPEN", "comments": 25, "updated": 5000,
+                                             "times": list(range(1000, 1025))}}}
+        gql = FakeGraphQL(model)
+        snap = two_stage(gql, issues=[1])
+        self.assertIn("i1: issue(number: 1) { title state updatedAt comments(last: 20) { totalCount nodes { createdAt } } }",
+                      w.check_query([1], []))
+        self.assertEqual(snap["meta"]["issue_times"], {"1": list(range(1005, 1025))})
+        self.assertEqual(snap["issues"]["1"]["comments"], 25)
 
     def test_more_open_prs_than_one_page_keeps_the_older_ones(self):
         model = {"prs": [pr(n, updated=1000 + n) for n in range(1, 13)], "issues": {}}
@@ -1428,6 +1520,18 @@ class RealScript(unittest.TestCase):
         self.assertEqual(out[1:], ["GitHub: PR #7: decision thread resolved: https://github.com/o/n/pull/7#discussion_r41"])
         checks = [c for c in self.calls() if any("open: pullRequests(" in a for a in c)]
         self.assertTrue(any("w7: pullRequest(number: 7)" in a for a in checks[2]), checks[2])
+
+    def test_a_comment_and_a_merge_in_one_read_each_get_their_own_line(self):
+        # Issue #96, end to end: the human answers on the card's issue as its PR merges and closes it.
+        asked = {"prs": [pr(2)], "issues": {"1": {"title": "Card", "state": "OPEN", "comments": 1, "updated": 900,
+                                                  "times": [900]}}}
+        answered = {"prs": [pr(2, "MERGED", updated=1100)],
+                    "issues": {"1": {"title": "Card", "state": "CLOSED", "comments": 2, "updated": 1100,
+                                     "times": [900, 1050]}}}
+        self.answers([asked, answered])
+        out = self.run_script("--repo", "o/n", "--issue", "1", "--limit", "1")
+        self.assertEqual(out[1:], ["GitHub: PR #2 merged: pr 2", "GitHub: Issue #1: 1 new comment (Card)",
+                                   "GitHub: Issue #1 is now closed (Card)"])
 
     def test_the_repo_comes_from_gh_when_not_given_and_issues_are_asked_for(self):
         self.answers([{"prs": [], "issues": {"25": {"title": "C", "state": "OPEN", "comments": 1, "updated": 1}}}])

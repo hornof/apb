@@ -23,4 +23,5 @@ Every PR gets one review before the human sees it: code PRs, docs-only PRs, setu
 6. Send the builder to implement a Decision only once it is answered. Run `python3 <apb plugin folder>/scripts/decision-check.py N` first. A Decision is answered when its thread is resolved, or when the human's last reply on it names an option letter.
    - Three or more replies from the human with no letter make a design discussion, not a decision. Stop and say so in one line. Move the question to the card, or to chat ending with "Waiting for your go".
    - A thread resolved with no letter to accept: reopen it and ask, as in step 5.
+   - Before you ask a Decision again, or say it is still open, read its thread on GitHub in the same turn: `python3 <apb plugin folder>/scripts/decision-check.py N` for a Decision on a PR (`gh pr view N --comments` leaves out thread replies and resolved state), or `gh issue view N --comments` for one asked on the card. A watcher line about something else, such as a merge, doesn't tell you whether the human answered.
 7. Add each override, and each new rule the human sets, as one line in `docs/reviewer-notes.md`, with the PR it came from.

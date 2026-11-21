@@ -3,7 +3,8 @@
 It exits, printing what it found, when:
 - GitHub: a PR is opened, merged or closed, a PR's checks finish, a PR gets new comments, review
   comments, replies on review comments or reviews, one of a PR's review threads (Decision threads) is
-  resolved, all of them are, or a watched issue gets new comments. A merged or closed PR stays watched
+  resolved, all of them are, or a watched issue gets new comments (each issue on its own line; an issue
+  not watched at the last read counts the comments posted since that read). A merged or closed PR stays watched
   while it has an unresolved thread (at most MAX_WATCHED such PRs).
 - Stuck: a command started from one of Claude Code's shells has used no CPU for --stuck-minutes.
 - Quiet: an agent that is still running has written nothing to .apb/events.jsonl for --quiet-minutes.
@@ -178,6 +179,7 @@ OPEN_PAGE = 10  # open PRs, most recently updated first
 RECENT_PAGE = 5  # merged or closed PRs, most recently updated first
 THREADS_CHECKED = 20  # review threads per PR in stage 1, for their resolved state
 THREADS_READ = 50  # review threads per PR in stage 2
+ISSUE_TIMES = 20  # latest comments per watched issue whose times stage 1 reads
 BUDGET = "rateLimit { cost remaining limit resetAt }"
 ROLLUP = "commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }"
 RESOLVED = "reviewThreads(first: %d) { nodes { isResolved } }" % THREADS_CHECKED
@@ -191,8 +193,9 @@ HEAD = "query($owner: String!, $name: String!) { %s repository(owner: $owner, na
 def check_query(issues, watch):
     """Stage 1: the open PRs and the recent merges and closes, with when each last changed; the
     watched issues; and the merged or closed PRs in watch, with their threads' resolved state."""
-    asks = "".join("\n    i%d: issue(number: %d) { title state updatedAt comments { totalCount } }" % (n, n)
-                   for n in issues)
+    # The latest comments' times tell what is new on an issue that wasn't watched at the last read.
+    asks = "".join("\n    i%d: issue(number: %d) { title state updatedAt comments(last: %d) { totalCount nodes "
+                   "{ createdAt } } }" % (n, n, ISSUE_TIMES) for n in issues)
     asks += "".join("\n    w%d: pullRequest(number: %d) { number updatedAt %s }" % (n, n, RESOLVED) for n in watch)
     return HEAD + """
     open: pullRequests(first: %d, states: OPEN, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes {
@@ -349,8 +352,11 @@ def gh_snapshot(repo, issues, watch=(), cache=None, graphql=gh_graphql):
         if node(p["number"]):
             answer["merged" if p["state"] == "MERGED" else "closed"]["nodes"].append(
                 dict(node(p["number"]), title=p["title"]))
+    meta["issue_times"] = {}
     for n in issues:
-        answer["i%d" % n] = r.get("i%d" % n)
+        i = answer["i%d" % n] = r.get("i%d" % n)
+        if i:
+            meta["issue_times"][str(n)] = [parse_time(c["createdAt"]) for c in i["comments"].get("nodes") or []]
     for p in watched:
         answer["w%d" % p["number"]] = node(p["number"])
     times = [p["updatedAt"] for p in opened + recent + r["latest"]["nodes"]]
@@ -374,9 +380,10 @@ def count(n, word, plural=None):
     return "%d %s" % (n, word if n == 1 else plural or word + "s")
 
 
-def gh_changes(old, new, repo=None):
+def gh_changes(old, new, repo=None, fresh=None):
     """What changed between two snapshots, as lines for the orchestrator. repo (owner/name) makes a
-    resolved thread's line a link."""
+    resolved thread's line a link. fresh: {issue: comments posted since the last read} for the issues
+    that weren't watched then."""
     out = []
     was_open = old["open"]
     for kind in ("merged", "closed"):
@@ -414,7 +421,9 @@ def gh_changes(old, new, repo=None):
             out.append("PR #%s: all review comments resolved" % n)
     for n, i in new["issues"].items():
         o = old["issues"].get(n)
-        if o is None:
+        if o is None:  # not watched at the last read: only the comments posted since then are new
+            if (fresh or {}).get(n):
+                out.append("Issue #%s: %s (%s)" % (n, count(fresh[n], "new comment"), i["title"]))
             continue
         if i["comments"] > o["comments"]:
             out.append("Issue #%s: %s (%s)" % (n, count(i["comments"] - o["comments"], "new comment"), i["title"]))
@@ -788,9 +797,13 @@ def read_github(opts, state, snapshot, t, registry):
     new = {k: v for k, v in new.items() if k != "meta"}
     old = state.get("github")
     if old is not None:
-        # An issue not watched last time has no old count, so gh_changes leaves it out this once.
-        found += ["GitHub: " + c for c in gh_changes(old, new, opts.repo)]
+        # An issue not watched last time has no old count: its comments posted since the last read are new.
+        since = state.get("read_at")
+        fresh = {n: sum(1 for c in times if c > since) for n, times in (meta.get("issue_times") or {}).items()
+                 if n not in old.get("issues", {})} if since is not None else {}
+        found += ["GitHub: " + c for c in gh_changes(old, new, opts.repo, fresh)]
     state["github"] = new
+    state["read_at"] = t
     # Activity: the newest change GitHub shows, or any change in what the watcher sees.
     times = [x for x in (state.get("active_at"), meta.get("newest")) if x is not None]
     if (old is not None and old != new) or not times:
