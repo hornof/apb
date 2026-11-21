@@ -207,6 +207,47 @@ class FilesOnGitHub(unittest.TestCase):
         with self.assertRaises(SystemExit):
             mp.check_files(self.PAGE, REPO, BRANCH, lambda r, b, p: p != "scripts/a.py")
 
+    def test_repeated_link_is_asked_once(self):
+        page = self.PAGE + '<a href="https://github.com/owner/repo/blob/main/docs/PRD.md#goals">'
+        asked = []
+        mp.check_files(page, REPO, BRANCH, lambda r, b, p: asked.append(p) or True)
+        self.assertEqual(asked, ["docs/PRD.md", "scripts/a.py"])
+
+    def test_random_pages_against_checking_every_link(self):
+        """Random link lists with repeats. Second way: check every link in page order, as before."""
+        rng = random.Random(104)
+        names = ["docs/PRD.md", "docs/TDD.md", "scripts/a.py", "README.md", "docs/x y.md", "LOG.md"]
+        for _ in range(300):
+            links = [rng.choice(names) for _ in range(rng.randint(0, 15))]
+            page = "".join(f'<a href="https://github.com/owner/repo/blob/main/{p}{rng.choice(["", "#h"])}">x</a>'
+                           for p in links)
+            present = {p for p in names if rng.random() < 0.8}
+            asked = []
+
+            def exists(r, b, p):
+                self.assertEqual((r, b), (REPO, BRANCH))
+                asked.append(p)
+                return p in present
+
+            missing = [p for p in links if p not in present]
+            first_seen, seen = [], set()
+            for p in links:
+                if p not in seen:
+                    seen.add(p)
+                    first_seen.append(p)
+            if missing:
+                with self.assertRaises(SystemExit) as caught:
+                    mp.check_files(page, REPO, BRANCH, exists)
+                # Same error as checking every link: it names the first missing file in page order.
+                self.assertIn(f": {missing[0]} (push first?)", str(caught.exception.code))
+                # It stops there, having asked about each file before it once.
+                self.assertEqual(asked, first_seen[:first_seen.index(missing[0]) + 1])
+            else:
+                mp.check_files(page, REPO, BRANCH, exists)
+                # Every distinct linked file asked about exactly once, in first-seen order.
+                self.assertEqual(asked, first_seen)
+            self.assertEqual(len(asked), len(set(asked)))
+
 
 class Source(unittest.TestCase):
     def test_clean_file_on_a_branch_passes(self):

@@ -179,7 +179,8 @@ def on_github(repo, branch, path):
 
 def check_files(page, repo, branch, exists):
     """Every repo file the page links to must exist on GitHub on that branch (so it must be pushed)."""
-    for path in repo_files(page, repo, branch):
+    # Ask GitHub once per file, in the order the page first links to it.
+    for path in dict.fromkeys(repo_files(page, repo, branch)):
         if not exists(repo, branch, path):
             sys.exit(f"linked file not on GitHub on branch {branch}: {path} (push first?)")
 
