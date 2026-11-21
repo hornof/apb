@@ -39,7 +39,7 @@ agent file (agents/builder.md) for everything about how to work and how to write
 
 - Worktree: /Users/x/src/apb-wt/issue-54, branch issue-54-brief-check, freshly made from origin/main.
 - Scratch folder: /tmp/scratchpad/issue-54/.
-- Bump `.claude-plugin/plugin.json` to 0.3.20. The PR closes #54.
+- The PR closes #54.
 - Command rule (the human sees every permission prompt): one plain command per shell call. No `$(...)`,
   loops, `&&`/`;` chains, heredocs or pipes into grep. Give every command a time limit.
 - Never merge. Report back the PR link."""
