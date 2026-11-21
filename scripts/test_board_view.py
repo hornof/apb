@@ -103,7 +103,10 @@ class FakeGitHub:
                 self.min_views = min(self.min_views, len(self.views))
                 return self._ok({"data": {"deleteProjectV2View": {"clientMutationId": None}}})
             assert "projectV2(number:" in query, query
-            assert var == {"owner": self.owner, "number": self.number}, var
+            assert var["owner"] == self.owner, var
+            if var["number"] != self.number:
+                return self._ok({"data": {"repositoryOwner": {"__typename": self.owner_type, "projectV2": None}},
+                                 "errors": [{"message": "Could not resolve to a ProjectV2 with the number %d." % var["number"]}]})
             return self._ok(self._read())
         # REST: create a view.
         assert args[2:5] == ["-X", "POST", "%s/%s/projectsV2/%d/views" % (
@@ -130,6 +133,25 @@ def go(fake, argv=None):
     with redirect_stdout(out), redirect_stderr(err):
         code = bv.main(argv or [fake.owner, str(fake.number)], run=fake)
     return code, out.getvalue(), err.getvalue()
+
+
+class tokens_set:
+    """Sets the named token variables for the length of a `with` block, then puts them back."""
+
+    def __init__(self, names):
+        self.names = names
+
+    def __enter__(self):
+        self.old = {n: os.environ.get(n) for n in self.names}
+        for n in self.names:
+            os.environ[n] = "ghp_claudes"
+
+    def __exit__(self, *exc):
+        for n, v in self.old.items():
+            if v is None:
+                os.environ.pop(n, None)
+            else:
+                os.environ[n] = v
 
 
 def kanbans(fake):
@@ -211,23 +233,20 @@ class RightNamesWrongColours(unittest.TestCase):
 
 
 class AsTheHumansLogin(unittest.TestCase):
-    def test_every_call_drops_gh_token(self):
+    def test_every_call_drops_both_token_variables(self):
         # GitHub refuses the views endpoint on a user-owned board from fine-grained and App tokens,
-        # so the script runs `gh` as the human's own stored login even if GH_TOKEN is set.
-        fake = FakeGitHub()
-        old = os.environ.get("GH_TOKEN")
-        os.environ["GH_TOKEN"] = "ghp_claudes"
-        try:
-            go(fake)
-        finally:
-            if old is None:
-                del os.environ["GH_TOKEN"]
-            else:
-                os.environ["GH_TOKEN"] = old
-        self.assertTrue(fake.calls)
-        for call in fake.calls:
-            self.assertNotIn("GH_TOKEN", call["env"])
-            self.assertIn("PATH", call["env"])
+        # so the script runs `gh` as the human's own stored login even if GH_TOKEN or GITHUB_TOKEN
+        # is set (`gh` reads either one ahead of its stored login).
+        for names in (["GH_TOKEN"], ["GITHUB_TOKEN"], ["GH_TOKEN", "GITHUB_TOKEN"]):
+            fake = FakeGitHub()
+            with tokens_set(names):
+                go(fake)
+            self.assertTrue(fake.calls)
+            # Compare only the names, so a failure never prints the environment (it holds secrets).
+            for call in fake.calls:
+                found = sorted({"GH_TOKEN", "GITHUB_TOKEN"} & set(call["env"]))
+                self.assertEqual(found, [], "set: %s" % names)
+                self.assertTrue("PATH" in call["env"])
 
     def test_every_call_has_a_time_limit(self):
         fake = FakeGitHub()
@@ -320,6 +339,26 @@ class WhenGitHubRefuses(unittest.TestCase):
         self.assertIn("In review", text)
         self.assertNotIn("Manual steps: none", text)
 
+    def test_first_read_refused_puts_githubs_error_in_the_manual_step(self):
+        def refuse(args, input=None, env=None, timeout=None):
+            return subprocess.CompletedProcess(args, 1, "", "HTTP 401: Bad credentials")
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stdout(out), redirect_stderr(err):
+            code = bv.main(["someone", "7"], run=refuse)
+        self.assertNotEqual(code, 0)
+        steps = [l for l in out.getvalue().splitlines() if l.startswith("Manual step:")]
+        self.assertEqual(len(steps), 1, out.getvalue())
+        self.assertIn("HTTP 401: Bad credentials", steps[0])
+        self.assertRegex(steps[0], r"(?i)fix\b.*\brun\b.*\bagain")
+
+    def test_board_not_found_is_in_the_manual_step(self):
+        fake = FakeGitHub()
+        code, out, _ = go(fake, ["someone", "99"])
+        self.assertNotEqual(code, 0)
+        line = [l for l in out.splitlines() if l.startswith("Manual step:")][0]
+        self.assertIn("Could not resolve to a ProjectV2 with the number 99", line)
+        self.assertRegex(line, r"(?i)fix\b.*\brun\b.*\bagain")
+
     def test_gh_that_hangs_is_reported(self):
         def hang(args, input=None, env=None, timeout=None):
             raise subprocess.TimeoutExpired(args, timeout)
@@ -345,19 +384,15 @@ class DefaultRun(unittest.TestCase):
         def fake_subprocess_run(args, **kw):
             seen.update(kw)
             return subprocess.CompletedProcess(args, 0, "{}", "")
-        real, old = bv.subprocess.run, os.environ.get("GH_TOKEN")
+        real = bv.subprocess.run
         bv.subprocess.run = fake_subprocess_run
-        os.environ["GH_TOKEN"] = "ghp_claudes"
         try:
-            bv.gh(["gh", "api", "user"])
+            with tokens_set(["GH_TOKEN", "GITHUB_TOKEN"]):
+                bv.gh(["gh", "api", "user"])
         finally:
             bv.subprocess.run = real
-            if old is None:
-                del os.environ["GH_TOKEN"]
-            else:
-                os.environ["GH_TOKEN"] = old
         self.assertGreater(seen["timeout"], 0)
-        self.assertNotIn("GH_TOKEN", seen["env"])
+        self.assertEqual(sorted({"GH_TOKEN", "GITHUB_TOKEN"} & set(seen["env"])), [])
 
 
 if __name__ == "__main__":

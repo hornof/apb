@@ -5,7 +5,8 @@ the board:
 
     python3 board-view.py <owner> <board number>
 
-It runs `gh` as the human's own stored login: it drops GH_TOKEN for every call, because GitHub's
+It runs `gh` as the human's own stored login: it drops GH_TOKEN and GITHUB_TOKEN for every call
+(`gh` reads either one ahead of its stored login), because GitHub's
 create-view endpoint refuses fine-grained and GitHub App tokens on user-owned boards.
 
 What it does, each part only if it isn't so already, so a second run changes nothing:
@@ -58,9 +59,13 @@ class Failed(Exception):
     pass
 
 
+TOKEN_VARIABLES = ("GH_TOKEN", "GITHUB_TOKEN")  # `gh` reads either ahead of the stored login
+
+
 def human_env():
     env = dict(os.environ)
-    env.pop("GH_TOKEN", None)
+    for name in TOKEN_VARIABLES:
+        env.pop(name, None)
     return env
 
 
@@ -179,8 +184,9 @@ def main(argv, run=gh):
     except Failed as e:
         print("board-view.py: %s" % e, file=sys.stderr)
         if not manual:
-            manual.append("on %s, add a view named %s with the Board layout, its columns grouped by "
-                          "Status (Todo / In progress / In review / Done)" % (url, VIEW))
+            # The first read failed, so nothing was changed: fix what GitHub said and run it again.
+            manual.append("GitHub said: %s. Fix that, then run board-view.py %s %d again"
+                          % (e, owner, number))
         for m in manual:
             print("Manual step: " + m)
         return 1

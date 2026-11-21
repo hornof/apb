@@ -42,6 +42,10 @@ class BoardStepRunsTheScript(unittest.TestCase):
         self.assertIn("Todo / In progress / In review / Done", body)
         self.assertIn("View 1", body)
 
+    def test_says_a_rerun_changes_nothing(self):
+        self.assertIn("Running it again changes nothing.", self.body())
+        self.assertNotIn("Run twice", self.body())
+
     def test_runs_after_the_board_exists(self):
         body = self.body()
         self.assertLess(body.index("create"), body.index("board-view.py"))
@@ -49,6 +53,7 @@ class BoardStepRunsTheScript(unittest.TestCase):
     def test_runs_as_the_humans_login_and_says_why(self):
         body = self.body()
         self.assertRegex(body, r"human's own `gh` login")
+        self.assertIn("drops `GH_TOKEN` and `GITHUB_TOKEN`", body)
         self.assertRegex(body, r"fine-grained[^.]*(App|app)")
         self.assertIn("user-owned", body)
 
