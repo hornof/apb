@@ -33,8 +33,8 @@ def issue(n, state="OPEN", last=None, prs=()):
             "prs": [dict(p) for p in prs]}
 
 
-def pr(n, state="OPEN", unresolved=0):
-    return {"kind": "pr", "number": n, "state": state, "unresolved": unresolved}
+def pr(n, state="OPEN"):
+    return {"kind": "pr", "number": n, "state": state}
 
 
 class Asks(unittest.TestCase):
@@ -58,8 +58,9 @@ class Verdict(unittest.TestCase):
     def test_an_open_pr_waits(self):
         self.assertEqual(self.v(pr(7)), "waiting")
 
-    def test_a_merged_pr_with_an_open_decision_waits(self):
-        self.assertEqual(self.v(pr(7, "MERGED", unresolved=1)), "waiting")
+    def test_a_merged_pr_is_stale_even_with_an_unresolved_thread(self):
+        # A merge is the human acting; merged PRs often keep unresolved threads, and they don't count.
+        self.assertEqual(self.v(dict(pr(7, "MERGED"), unresolved=3)), "stale")
 
     def test_a_merged_or_closed_pr_with_nothing_open_is_stale(self):
         self.assertEqual(self.v(pr(7, "MERGED")), "stale")
@@ -68,8 +69,12 @@ class Verdict(unittest.TestCase):
     def test_a_card_with_its_pr_open_waits(self):
         self.assertEqual(self.v(issue(3, prs=[pr(7)])), "waiting")
 
-    def test_a_card_whose_pr_has_an_open_decision_waits(self):
-        self.assertEqual(self.v(issue(3, "CLOSED", prs=[pr(7, "MERGED", unresolved=2)])), "waiting")
+    def test_a_card_whose_merged_pr_has_an_unresolved_thread_is_stale(self):
+        self.assertEqual(self.v(issue(3, "CLOSED", prs=[dict(pr(7, "MERGED"), unresolved=2)])), "stale")
+        self.assertEqual(self.v(issue(3, "OPEN", prs=[dict(pr(7, "CLOSED"), unresolved=1)])), "stale")
+
+    def test_the_query_does_not_read_threads(self):
+        self.assertNotIn("reviewThreads", ht.QUERY)
 
     def test_a_card_closed_by_its_merge_is_stale(self):
         self.assertEqual(self.v(issue(3, "CLOSED", prs=[pr(7, "MERGED")])), "stale")
@@ -148,7 +153,7 @@ def random_board(rng):
 def oracle(board, login):
     """{("issue"|"pr", number): "waiting" | "stale"} for everything assigned to login, straight from the board."""
     def pr_open(p):
-        return p["state"] == "OPEN" or not all(p["threads"])
+        return p["state"] == "OPEN"  # threads are on the board but never count
     out = {}
     for p in board["prs"].values():
         if login in p["assignees"]:

@@ -57,6 +57,14 @@ class Skills(unittest.TestCase):
         for words in ("--add-assignee", "--remove-assignee", "human-turn.py"):
             self.assertIn(words, text, words)
 
+    def test_loop_assigns_unassigns_and_checks(self):
+        step3 = re.search(r"^3\. (.*?)(?=^4\. )", read("skills/apb-loop/SKILL.md"), re.S | re.M)
+        self.assertIsNotNone(step3)
+        step3 = flat(step3.group(1))
+        for words in ("--add-assignee", "--remove-assignee", "human-turn.py",
+                      "Assign the card to the human while it waits on them"):
+            self.assertIn(words, step3, words)
+
     def test_the_script_is_named_where_it_lives(self):
         self.assertTrue(os.path.exists(os.path.join(ROOT, "scripts", "human-turn.py")))
 

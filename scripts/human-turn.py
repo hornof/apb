@@ -5,10 +5,10 @@ waits on them, and unassigns them as soon as they act (the playbook's "Assign th
 while it waits on them"). Nothing else uses the assignee. This script is the guard: the orchestrator runs
 it on every status check, and clears each flag it reports as stale.
 
-A PR assigned to the human waits on them while it is open (to merge, or to decide) or while it has an
-unresolved review thread (a Decision). A card assigned to the human waits on them while a PR that closes
-it ("Closes #N") is open or has an unresolved thread, or while the card is open and its last comment is a
-question from Claude: a comment by Claude (comment-author.py's rule) with a line ending in "?" or saying
+A PR assigned to the human waits on them while it is open (to merge, or to decide). A merged or closed
+PR waits on nobody: the merge is the human acting, and its leftover unresolved threads don't count. A card
+assigned to the human waits on them while a PR that closes it ("Closes #N") is open, or while the card is
+open and its last comment is a question from Claude: a comment by Claude (comment-author.py's rule) with a line ending in "?" or saying
 "Waiting for your go", outside quoted lines. Anything else assigned to the human is stale.
 
 Usage, from the project's repo root:
@@ -36,10 +36,9 @@ TIME_LIMIT = 60  # seconds for each gh call
 
 QUERY = """query($q: String!) { search(query: $q, type: ISSUE, first: 100) { nodes {
   __typename
-  ... on PullRequest { number state reviewThreads(first: 100) { nodes { isResolved } } }
+  ... on PullRequest { number state }
   ... on Issue { number state comments(last: 1) { nodes { body author { login } } }
-    closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes {
-      number state reviewThreads(first: 100) { nodes { isResolved } } } } } } } }"""
+    closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state } } } } } }"""
 
 
 def search_terms(repo, human):
@@ -61,9 +60,7 @@ def asks(body):
 
 
 def _pr(node):
-    threads = (node.get("reviewThreads") or {}).get("nodes") or []
-    return {"kind": "pr", "number": node["number"], "state": node["state"],
-            "unresolved": sum(1 for t in threads if not t.get("isResolved"))}
+    return {"kind": "pr", "number": node["number"], "state": node["state"]}
 
 
 def items(answer):
@@ -86,18 +83,14 @@ def items(answer):
 
 def _pr_waits(p):
     """Why the PR still waits on the human, or None."""
-    if p["state"] == "OPEN":
-        return "PR #%d is open" % p["number"]
-    if p["unresolved"]:
-        return "PR #%d has %d open Decision thread%s" % (p["number"], p["unresolved"], "" if p["unresolved"] == 1 else "s")
-    return None
+    return "PR #%d is open" % p["number"] if p["state"] == "OPEN" else None
 
 
 def verdict(item, claude_login=None):
     """("waiting", why) or ("stale", why)."""
     if item["kind"] == "pr":
         why = _pr_waits(item)
-        return ("waiting", why) if why else ("stale", "PR #%d is %s with no open Decision thread"
+        return ("waiting", why) if why else ("stale", "PR #%d is %s"
                                              % (item["number"], item["state"].lower()))
     for p in item["prs"]:
         why = _pr_waits(p)
@@ -108,8 +101,8 @@ def verdict(item, claude_login=None):
             and asks(last["body"]):
         return "waiting", "Claude's question on the card is unanswered"
     if item["state"] != "OPEN":
-        return "stale", "the card is closed, and no PR that closes it is open or has an open Decision thread"
-    return "stale", "no open PR closes it, no open Decision thread, and no unanswered question from Claude on it"
+        return "stale", "the card is closed, and no PR that closes it is open"
+    return "stale", "no open PR closes it, and no unanswered question from Claude is on it"
 
 
 def report(found, human, repo, claude_login=None):
