@@ -75,10 +75,41 @@ class Playbook(unittest.TestCase):
                       "in the same turn"):  # the alert goes with the message
             self.assertIn(words, self.text, words)
 
+    def test_keep_what_works(self):
+        for words in ("Keep what works.",
+                      "keep doing it exactly the same way",
+                      "Don't change its form, place or wording unless the human agrees",
+                      "A different form makes the human think something different is happening"):
+            self.assertIn(words, self.text, words)
+
+    def test_never_say_its_late(self):
+        self.assertIn("Never say it's late or suggest stopping. The human decides when to stop.", self.text)
+        self.assertNotIn("time of day", self.text)
+
+    def test_what_counts_as_a_change(self):
+        for words in ("What counts as a change.",
+                      "Undoing or withdrawing something",
+                      "promising to do something differently \"from now on\" (even only in chat)",
+                      "rewording or \"clarifying\" a rule", "fixing a typo", "moving a card",
+                      "restarting a watcher", "telling an agent to start or stop",
+                      "Only reading, checking and answering are not changes",
+                      "When the human says to stop changing things, make no change of any kind until they say otherwise",
+                      "answer only about the time since then",
+                      "If nothing changed, say \"nothing\""):
+            self.assertIn(words, self.text, words)
+
+    def test_copy_a_go_ahead_onto_the_card(self):
+        for words in ("Copy a go-ahead from chat onto the card.",
+                      "post it on the card or the coordination issue in the same turn",
+                      "quoting their words and the time"):
+            self.assertIn(words, self.text, words)
+
     def test_each_rule_once(self):
         whole = flat(read("docs/playbook.md"))
         for words in ("Never alert for progress", "Plain English.", "Check before asking the human to act",
-                      ALL_CLEAR, "one line per card in In progress and In review"):
+                      ALL_CLEAR, "one line per card in In progress and In review",
+                      "Keep what works.", "suggest stopping", "What counts as a change.",
+                      "Copy a go-ahead from chat"):
             self.assertEqual(whole.count(words), 1, words)
 
     def test_checks_before_a_hand_off(self):
@@ -98,6 +129,11 @@ class Template(unittest.TestCase):
         self.assertIn("one of four lines", text)
         self.assertIn(ALL_CLEAR, text)
         self.assertNotIn("one of three lines", text)
+
+    def test_same_words_as_the_playbook_on_stopping(self):
+        text = flat(read("templates/CLAUDE-template.md"))
+        self.assertIn("Never say it's late or suggest stopping.", text)
+        self.assertNotIn("time of day", text)
 
 
 if __name__ == "__main__":
