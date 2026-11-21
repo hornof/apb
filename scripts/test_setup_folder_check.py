@@ -98,6 +98,13 @@ class OneLineFolderQuestion(unittest.TestCase):
         self.assertRegex(body[q:], r"Only if the answer is no")
         self.assertLess(q, body.index("open a new Code session"))
 
+    def test_folders_are_compared_whatever_the_answer(self):
+        # A yes must not skip the comparison: a human who named another folder and says yes
+        # would otherwise get setup in the wrong session.
+        body = steps()["0"]
+        self.assertRegex(body[body.index("is that right?"):],
+                         r"whatever the answer, compare the project folder with this session's working folder")
+
 
 def substep(step, letter):
     body = steps()[step]

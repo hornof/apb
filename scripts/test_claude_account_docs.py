@@ -126,8 +126,11 @@ class ReuseAnEarlierAccount(unittest.TestCase):
         self.assertIn("oldest", self.text)
         self.assertRegex(self.text, r"name a different one|names? another")
 
-    def test_no_earlier_project_asks_as_before(self):
-        self.assertRegex(self.text, r"If it finds none[^.]*new account")
+    def test_no_earlier_project_recommends_a_new_account(self):
+        self.assertIn("If it finds none, recommend a new account and go on with step a.", self.text)
+        # No pointer to the skill as it was before this change.
+        self.assertNotIn("as before", self.text)
+        self.assertNotIn("ask as below", self.text)
 
     def test_copy_runs_only_after_the_answer(self):
         self.assertIn("only after the human answers", self.text)

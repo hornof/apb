@@ -226,10 +226,10 @@ class RealGit(unittest.TestCase):
                        GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
                        GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
             subprocess.run(["git", "-C", folder, "commit", "-q", "--allow-empty", "-m", date],
-                           env=env, check=True)
+                           env=env, check=True, timeout=30)
 
         for d in (a, b):
-            subprocess.run(["git", "init", "-q", d], check=True)
+            subprocess.run(["git", "init", "-q", d], check=True, timeout=30)
         commit(a, "2026-01-01T00:00:00Z")
         commit(a, "2026-12-01T00:00:00Z")  # a's latest commit is the newest of all
         commit(b, "2026-06-01T00:00:00Z")
