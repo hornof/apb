@@ -117,6 +117,10 @@ class ClaudeSwitchesTheWorkflowOn(unittest.TestCase):
         # 5g never asks a human with no account to sign in as one.
         self.assertNotRegex(body, r"sign in to github\.com in Chrome as the account")
 
+    def test_notes_the_account_that_switched_it_on(self):
+        # Decision 6: "a plus name the account".
+        self.assertRegex(self.body(), r"[Nn]ote which GitHub account switched it on")
+
     def test_confirms_it_is_on(self):
         self.assertRegex(self.body(), r"(reload|look again)[^.]*\bon\b")
 
@@ -130,6 +134,21 @@ class ClaudeSwitchesTheWorkflowOn(unittest.TestCase):
         # A human who said no to the account still gets the workflow switched on by Claude.
         body = steps()["5"]
         self.assertRegex(body, r"says no[^.]*step 5%s" % WORKFLOW_STEP)
+
+
+class HandOffNamesTheAccount(unittest.TestCase):
+    def last_step(self):
+        s = steps()
+        return s[max(s, key=lambda k: (int(re.match(r"\d+", k).group()), k))]
+
+    def test_hand_off_names_the_account(self):
+        body = self.last_step()
+        self.assertRegex(body, r"hand-off[^.]*names the GitHub account that switched on "
+                               r"\"Item closed\" in step 5%s" % WORKFLOW_STEP)
+
+    def test_hand_off_comes_after_the_deny_list_check(self):
+        body = self.last_step()
+        self.assertLess(body.index("`git push origin main`"), body.index("hand-off"))
 
 
 class NoManualStepLeft(unittest.TestCase):
