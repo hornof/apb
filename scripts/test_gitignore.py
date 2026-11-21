@@ -3,8 +3,9 @@ python3 -m unittest discover scripts
 
 The bot token for Code sessions in this repo lives in .claude/settings.local.json, so that file
 must never be committable. The other direction matters as much: no file the plugin ships may
-become ignored by accident. Both checks ask git itself (`git check-ignore`, `git ls-files`), with
-the user's global excludes file switched off, so only the repo's own .gitignore counts.
+become ignored by accident. Both checks ask git itself (`git check-ignore`), in a throwaway repo
+that holds only a copy of .gitignore, with the global excludes file switched off. That way
+neither ~/.gitignore nor this clone's .git/info/exclude can cover for a missing line.
 """
 import os
 import tempfile
@@ -44,12 +45,29 @@ def git(*args):
         capture_output=True, text=True, timeout=30)
 
 
-def ignored(path):
-    # --no-index: answer from the patterns alone, even if the path happens to be tracked.
-    out = git("check-ignore", "--no-index", "-q", path)
+def scratch_repo(tmp):
+    """A new repo whose only ignore source is a copy of this repo's .gitignore."""
+    subprocess.run(["git", "init", "-q", tmp], check=True, timeout=30)
+    with open(os.path.join(ROOT, ".gitignore"), encoding="utf-8") as src, \
+            open(os.path.join(tmp, ".gitignore"), "w", encoding="utf-8") as dst:
+        dst.write(src.read())
+
+
+def ignored_paths(paths):
+    """The subset of paths that the repo's .gitignore alone ignores."""
+    with tempfile.TemporaryDirectory() as tmp:
+        scratch_repo(tmp)
+        # --no-index: answer from the patterns alone; --stdin: one call for any number of paths.
+        out = subprocess.run(
+            ["git", "-c", "core.excludesFile=/dev/null", "-C", tmp, "check-ignore", "--no-index",
+             "--stdin"], input="\n".join(paths) + "\n", capture_output=True, text=True, timeout=30)
     if out.returncode not in (0, 1):
         raise RuntimeError(out.stderr)
-    return out.returncode == 0
+    return set(out.stdout.splitlines())
+
+
+def ignored(path):
+    return path in ignored_paths([path])
 
 
 class RepoGitignore(unittest.TestCase):
@@ -74,18 +92,17 @@ class RepoGitignore(unittest.TestCase):
 
     def test_no_tracked_file_matches_an_ignore_pattern(self):
         # Every file git tracks today, checked against the patterns: none may be ignored.
-        out = git("ls-files", "-ci", "--exclude-standard")
+        out = git("ls-files")
         self.assertEqual(out.returncode, 0, out.stderr)
-        self.assertEqual(out.stdout.split(), [], "tracked files that .gitignore now covers")
+        tracked = out.stdout.splitlines()
+        self.assertIn(".claude-plugin/plugin.json", tracked)
+        self.assertEqual(sorted(ignored_paths(tracked)), [], "tracked files that .gitignore now covers")
 
     def test_token_file_never_shows_in_status(self):
         # The issue's "done when": git status never lists the token file. Use a throwaway copy of
         # the .gitignore in a temp repo so this test never writes a token-shaped file into the repo.
         with tempfile.TemporaryDirectory() as tmp:
-            subprocess.run(["git", "init", "-q", tmp], check=True, timeout=30)
-            with open(os.path.join(ROOT, ".gitignore"), encoding="utf-8") as src, \
-                    open(os.path.join(tmp, ".gitignore"), "w", encoding="utf-8") as dst:
-                dst.write(src.read())
+            scratch_repo(tmp)
             os.makedirs(os.path.join(tmp, ".claude"))
             for name in ("settings.local.json", "settings.json"):
                 with open(os.path.join(tmp, ".claude", name), "w", encoding="utf-8") as f:
