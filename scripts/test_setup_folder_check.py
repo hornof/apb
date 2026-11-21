@@ -82,6 +82,48 @@ class WrongFolderStops(unittest.TestCase):
             self.assertIn(words, body)
 
 
+def substep(step, letter):
+    body = steps()[step]
+    m = re.search(r"(?:^| )%s\. (.*?)(?= [a-z]\. |$)" % letter, body)
+    return m.group(1)
+
+
+class SetupCommitsAreByTheAccount(unittest.TestCase):
+    """Changes for the `setup` branch wait for step 5e, so every `setup` commit has the account
+    as its author (or the human, if they said no to the account)."""
+
+    def test_step_1_holds_setup_changes_until_step_5e(self):
+        body = steps()["1"]
+        self.assertIn("made but not committed until step 5e shows the account", body)
+        self.assertIn("said no to it", body)
+        self.assertRegex(body, r"commit them all at once")
+
+    def test_step_4c_does_not_commit_before_5e(self):
+        body = substep("4", "c")
+        self.assertRegex(body, r"commit it on the `setup` branch[^.]*after step 5e")
+
+    def test_step_5e_commits_the_held_changes(self):
+        body = substep("5", "e")
+        self.assertRegex(body, r"commit the `setup` branch changes")
+        # The commit comes after the author check in 5e.
+        self.assertLess(body.index("git var GIT_AUTHOR_IDENT"),
+                        body.index("commit the `setup` branch changes"))
+
+    def test_no_step_before_5e_commits(self):
+        # Steps 1b to 4 change files for the branch but never tell Claude to commit them now.
+        s = steps()
+        for label in ("1a", "1b", "2", "3", "4"):
+            body = s[label]
+            for m in re.finditer(r"(\w+ )?\bcommit(s|ted)?\b[^.]*", body):
+                self.assertRegex(m.group(0), r"after step 5e|until step 5e|initial commit|"
+                                 r"no placeholder is ever committed",
+                                 (label, m.group(0)))
+
+    def test_no_account_commits_right_away(self):
+        body = steps()["5"]
+        self.assertRegex(body, r"says no[^.]*commits the `setup` branch changes")
+
+
 class Step7IsOneCommandHere(unittest.TestCase):
     def test_check_runs_in_this_session(self):
         body = steps()["7"]
