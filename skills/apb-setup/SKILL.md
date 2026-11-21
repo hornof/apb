@@ -16,7 +16,7 @@ This skill belongs in the orchestrator (the main Claude Code session, opened in 
    - After the initial commit is pushed, build the map artifact from `docs/MAP.md` and publish it to that same link: `python3 <apb plugin folder>/scripts/map-artifact.py <output.html> <map artifact link>`. The apb plugin folder is two folders above this skill's base directory.
    - From then on, build and publish it again after every change to `docs/MAP.md`, and again from main after each merge. Never edit the artifact by hand.
    - The progress page gets its own artifact the same way: before the initial commit, publish a first version to get its link, and put the link in the progress page's row in `docs/MAP.md`. After the initial commit is pushed, build it with `python3 <apb plugin folder>/scripts/progress-page.py <output.html>` and publish it to that link.
-   - Building and publishing the map and progress pages takes seconds (about 10-20 seconds on a new project), so run them on their own, not behind a slow check, and a wait there means something else is running.
+   - On a new project, building and publishing the map and progress pages takes about 10-20 seconds; run them on their own, not behind a slow check, so that a long wait there means something else is running.
 1b. PRD input issue: open an issue called "PRD input" that lists these questions for the human to answer:
    - What should it do?
    - Who is it for?

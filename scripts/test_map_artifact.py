@@ -230,18 +230,22 @@ class FilesOnGitHub(unittest.TestCase):
                 return p in present
 
             missing = [p for p in links if p not in present]
+            first_seen, seen = [], set()
+            for p in links:
+                if p not in seen:
+                    seen.add(p)
+                    first_seen.append(p)
             if missing:
                 with self.assertRaises(SystemExit) as caught:
                     mp.check_files(page, REPO, BRANCH, exists)
                 # Same error as checking every link: it names the first missing file in page order.
                 self.assertIn(f": {missing[0]} (push first?)", str(caught.exception.code))
                 # It stops there, having asked about each file before it once.
-                first_seen = list(dict.fromkeys(links))
                 self.assertEqual(asked, first_seen[:first_seen.index(missing[0]) + 1])
             else:
                 mp.check_files(page, REPO, BRANCH, exists)
                 # Every distinct linked file asked about exactly once, in first-seen order.
-                self.assertEqual(asked, list(dict.fromkeys(links)))
+                self.assertEqual(asked, first_seen)
             self.assertEqual(len(asked), len(set(asked)))
 
 
