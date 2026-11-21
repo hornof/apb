@@ -12,6 +12,8 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RULE = "Reread a decision's thread before asking it again."
+# `gh pr view N --comments` leaves out review-thread replies and resolved state, so the rule names this.
+DECISION_CHECK = "python3 <apb plugin folder>/scripts/decision-check.py N"
 
 
 def read(rel):
@@ -51,7 +53,8 @@ class Playbook(unittest.TestCase):
     def test_the_rule_says_when_what_to_read_and_why(self):
         rule = bullet(self.waits, RULE)
         for words in ("asking a decision a second time", "still open", "same turn", "Decision thread",
-                      "gh issue view N --comments", "merge", "reply on the card"):
+                      DECISION_CHECK, "resolved or answered", "gh issue view N --comments", "merge",
+                      "reply on the card"):
             self.assertIn(words, rule, words)
 
     def test_the_decision_rules_point_to_it(self):
@@ -61,9 +64,9 @@ class Playbook(unittest.TestCase):
 
     def test_the_watcher_gives_an_issue_comment_its_own_line(self):
         line = flat(next(l for l in self.waits.splitlines() if "an issue named with `--issue N`" in l))
-        self.assertIn("its own", line)
-        self.assertIn("merge", line)
-        self.assertIn("since that run's last read", line)
+        self.assertIn("It gets its own line, even when the same read finds something else, such as a merge.", line)
+        self.assertIn("after a run that didn't watch it, the watcher reports the comments posted since that "
+                      "run's last read.", line)
 
 
 class Skills(unittest.TestCase):
@@ -73,6 +76,8 @@ class Skills(unittest.TestCase):
             self.assertRegex(text, r"Before you ask a [dD]ecision again, or say it is still open, read its thread",
                              skill)
             self.assertIn("same turn", text, skill)
+            self.assertIn(DECISION_CHECK, text, skill)
+            self.assertIn("gh issue view N --comments", text, skill)
             self.assertIn("merge", text, skill)
 
 
