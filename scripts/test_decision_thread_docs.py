@@ -67,7 +67,7 @@ class Playbook(unittest.TestCase):
         rule = block(self.reviews, RULE)
         for words in ("Until the human replies in it or resolves it, nobody else replies",
                       "not the reviewer, the orchestrator or the advisor", "Resolve button",
-                      "under the last reply", "under the Decision", "plain-words summary",
+                      "under a thread's last reply", "right under the Decision", "plain-words summary",
                       "one PR-level comment that links each Decision thread",
                       "or nowhere, when the Decision is already plain"):
             self.assertIn(words, rule, words)
