@@ -40,11 +40,11 @@ HAND_OFF = ('Ask the same question in your message instead, in the hand-off form
 def refusal(tool):
     if tool == WRAP:
         first = ("Refused: in an apb project the wrap-up box has no question or buttons (docs/playbook.md, "
-                 "\"Ask in the chat, not with pop-up buttons\"). Call it again with the recap only, no ask "
+                 "\"Routine asks look the same every time\"). Call it again with the recap only, no ask "
                  "and no actions. ")
     else:
         first = ("Refused: in an apb project Claude asks in chat, not with pop-up buttons (docs/playbook.md, "
-                 "\"One question at a time\"). ")
+                 "\"Routine asks look the same every time\"). ")
     return first + HAND_OFF
 
 

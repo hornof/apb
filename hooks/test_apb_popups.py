@@ -288,8 +288,20 @@ class Wiring(unittest.TestCase):
 
     def test_playbook_names_the_hook(self):
         with open(PLAYBOOK) as f:
-            line = next(l for l in f if "not with pop-up buttons" in l)
-        self.assertIn("apb-popups.py", line)
+            text = f.read()
+        rule = text.index("**Routine asks look the same every time.**")
+        self.assertIn("apb-popups.py", text[rule:text.index("\n- **", rule + 1)])
+
+    def test_refusal_cites_a_rule_the_playbook_has(self):
+        with open(PLAYBOOK) as f:
+            text = f.read()
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("apb_popups", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        for tool in (ASK, WRAP):
+            for quoted in re.findall(r'"([^"]+)"\)', hook.refusal(tool)):
+                self.assertIn(quoted, text, tool)
 
 
 if __name__ == "__main__":
