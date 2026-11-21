@@ -1,0 +1,54 @@
+# The plugin version goes up on merge, never in a PR (#124).
+# - On every push to main (a merged PR): raise the patch number in .claude-plugin/plugin.json by one
+#   per change since the last raise, one commit each, and push.
+# - On every PR into main: fail if the PR changes the version.
+# The work is in scripts/version-bump.py; its tests are scripts/test_version_bump.py.
+name: Plugin version
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    # Runs one at a time. GitHub keeps only the newest pending run and drops older pending ones;
+    # that is safe, because each run raises the version for every merge not yet counted.
+    concurrency:
+      group: plugin-version-bump
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Commit as GitHub Actions
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      # A push made with this job's token starts no new workflow run, so the bump can't loop.
+      - name: Raise the version once per merge
+        run: python3 scripts/version-bump.py bump --push origin main
+
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The default checkout is GitHub's merge ref: HEAD^1 is main, HEAD^2 is the PR's head.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Use main's copy of the script, so a PR can't pass by editing the script it's checked with.
+      - name: Fail if the PR changes the plugin version
+        run: |
+          git show HEAD^1:scripts/version-bump.py > "$RUNNER_TEMP/version-bump.py" || cp scripts/version-bump.py "$RUNNER_TEMP/version-bump.py"
+          python3 "$RUNNER_TEMP/version-bump.py" check HEAD^1 HEAD^2
