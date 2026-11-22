@@ -1243,6 +1243,36 @@ class WorkRanOut(unittest.TestCase):
                           [{"event": "PostToolUse", "command": "python3 apb-watch.py", "background": True}])
         self.assertFalse(stop.work_ran_out(evs, "s1", self.now))
 
+    def test_a_wake_logged_as_an_automatic_prompt_is_no_prompt(self):
+        # Claude Code wakes the orchestrator with a prompt of its own (a watcher's report, a task
+        # notification, an agent's message); apb-events.py logs it with "automatic": true. The turn it
+        # starts was not started by the human, so when nothing runs, the work has run out (#134 review).
+        wake = {"event": "UserPromptSubmit", "automatic": True}
+        evs = self.events([{"event": "UserPromptSubmit"}, {"event": "Stop"}, wake])
+        self.assertTrue(stop.work_ran_out(evs, "s1", self.now))
+        self.assertTrue(stop.work_ran_out(evs, "s1", self.now, []))
+        # Both directions: the human's prompt in the same place is an answer, not a stop ...
+        human = self.events([{"event": "UserPromptSubmit"}, {"event": "Stop"},
+                             {"event": "UserPromptSubmit", "routine": True}])
+        self.assertFalse(stop.work_ran_out(human, "s1", self.now, []))
+        # ... and a human prompt in the turn wins over a wake in it.
+        both = self.events([{"event": "UserPromptSubmit"}, {"event": "Stop"}, wake, {"event": "UserPromptSubmit"}])
+        self.assertFalse(stop.work_ran_out(both, "s1", self.now, []))
+        # Something still running: not run out, wake or not.
+        self.assertFalse(stop.work_ran_out(evs, "s1", self.now, [{"id": "t", "type": "shell"}]))
+        # An automatic prompt alone also shows that prompts are logged.
+        self.assertTrue(stop.work_ran_out(self.events([wake, {"event": "Stop"}, wake]), "s1", self.now))
+
+    def test_a_wake_logged_as_an_automatic_prompt_may_end_quietly(self):
+        # The quiet wake-up exception still holds when the wake is logged as an automatic prompt.
+        evs = self.events([{"event": "UserPromptSubmit"}, {"event": "Stop", "holder": "claude"},
+                           {"event": "UserPromptSubmit", "automatic": True}])
+        self.assertTrue(stop.quiet_wake_up(evs, "s1", "Noted."))
+        self.assertFalse(stop.quiet_wake_up(evs, "s1", "Nothing for you to do."))
+        human = self.events([{"event": "UserPromptSubmit"}, {"event": "Stop", "holder": "claude"},
+                             {"event": "UserPromptSubmit"}])
+        self.assertFalse(stop.quiet_wake_up(human, "s1", "Noted."))
+
     def test_a_plain_question_and_answer(self):
         evs = self.events([{"event": "UserPromptSubmit"}, {"event": "Stop"}, {"event": "UserPromptSubmit"},
                            {"event": "PostToolUse", "command": "git status", "exit": 0}])
@@ -1699,6 +1729,11 @@ class Properties(unittest.TestCase):
                 by_prompt = not woken and rng.random() < 0.8
                 if by_prompt and prompts_logged:
                     events.append({"event": "UserPromptSubmit"})
+                # A wake Claude Code sends itself is logged as an automatic prompt; it is no prompt
+                # from the human, so the simulation treats it as a turn no prompt started.
+                wake_prompt = not by_prompt and prompts_logged and rng.random() < 0.5
+                if wake_prompt:
+                    events.append({"event": "UserPromptSubmit", "automatic": True})
                 stopped_now = woken
                 background_bash = False
                 checked = False
@@ -1739,8 +1774,8 @@ class Properties(unittest.TestCase):
                                        "command": rng.choice(["gh pr view 4",
                                                               "python3 scripts/progress-page.py p.html"])})
                 write_events(project, events)
-                if by_prompt and prompts_logged:
-                    seen_prompt = True
+                if (by_prompt or wake_prompt) and prompts_logged:
+                    seen_prompt = True  # any logged prompt shows that prompts are logged
                 message, valid, fact, unlinked = self.message(rng)
                 if not by_prompt and rng.random() < 0.5:  # a wake-up often ends quietly
                     message, valid, fact, unlinked = rng.choice(["", "Noted.", "  "]), False, False, False

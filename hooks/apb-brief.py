@@ -8,7 +8,7 @@ Claude Code runs this from hooks/hooks.json, with the event's JSON on stdin:
   found and says to send the task only. Only the brief's own words count: words inside a path, URL,
   branch or file name (/w/review-format, review-format, format.md) are left out. The format lives in agents/builder.md and agents/reviewer.md.
 - SubagentStop: when an agent's report says it "departed from" its file, or did something "as you
-  asked, instead of" what its file says, a Departure line goes into .apb/events.jsonl (in apb projects,
+  asked, instead of" what its file says (outside quotes, backticks and lines quoted with ">"), a Departure line goes into .apb/events.jsonl (in apb projects,
   the ones with docs/MAP.md, and in the apb repo itself; see hooks/apb_folder.py). hooks/apb-stop.py then sends back any hand-off to the human until
   the orchestrator has put it right and run:
 
@@ -105,18 +105,29 @@ DEPARTED = re.compile(r"\bdeparted from\b", re.I)
 AS_ASKED = re.compile(r"\bas you asked,?\s+instead of\b", re.I)
 NEGATION = re.compile(r"\b(?:not|never|nothing|no|none|\w+n't)\b", re.I)
 REPORT_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n\s*\n")
+# Quoted words: in quotation marks or backticks, or in single quotes that aren't an apostrophe. A
+# report that quotes the phrase (a review of this check, of its docs) says nothing about itself.
+QUOTE = re.compile(r"\"[^\"\n]*\"|\u201c[^\u201d\n]*\u201d|`[^`\n]*`|(?<!\w)'[^'\n]*'(?!\w)")
+QUOTED_LINE = re.compile(r"\s*>")
 
 
 def departure(text):
-    """The sentence where the report says it departed from its file, or None."""
+    """The sentence where the report says it departed from its file, or None. Words in quotes or
+    backticks, and lines quoted with ">", don't count."""
     if not isinstance(text, str):
         return None
-    for s in REPORT_SENTENCE.split(plain(text)):
-        flat = " ".join(s.split())
-        if AS_ASKED.search(flat):
+    text = "\n".join(line for line in text.split("\n") if not QUOTED_LINE.match(line))
+    # Blank out quoted words, keeping every position, so a sentence is cut at the same place in both.
+    masked = QUOTE.sub(lambda m: "_" * len(m.group(0)), text)
+    start = 0
+    for a, b in [m.span() for m in REPORT_SENTENCE.finditer(masked)] + [(len(masked), len(masked))]:
+        flat = " ".join(plain(text[start:a]).split())
+        bare = " ".join(plain(masked[start:a]).split())  # plain() drops the blanks
+        start = b
+        if AS_ASKED.search(bare):
             return flat[:MAX]
-        m = DEPARTED.search(flat)
-        clause = re.split(r"[,;:]", flat[:m.start()])[-1] if m else ""
+        m = DEPARTED.search(bare)
+        clause = re.split(r"[,;:]", bare[:m.start()])[-1] if m else ""
         if m and not NEGATION.search(" ".join(clause.split()[-4:])):
             return flat[:MAX]
     return None

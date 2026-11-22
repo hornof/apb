@@ -55,10 +55,20 @@ MANIFESTS = [REAL_MANIFEST, json.dumps({"name": "apb"}), json.dumps({"name": "AP
              "not json", "", None]
 
 
+CREATED = []  # every temporary folder make() made; Clean.tearDown removes them
+
+
+class Clean(unittest.TestCase):
+    def tearDown(self):
+        while CREATED:
+            shutil.rmtree(CREATED.pop(), ignore_errors=True)
+
+
 def make(map_md=False, manifest=None, hook=False):
     """A temporary folder: docs/MAP.md if map_md, .claude-plugin/plugin.json with manifest (unless
-    None), hooks/apb-watch-start.py if hook."""
+    None), hooks/apb-watch-start.py if hook. Clean removes it after the test."""
     d = tempfile.mkdtemp()
+    CREATED.append(d)
     if map_md:
         os.makedirs(os.path.join(d, "docs"))
         with open(os.path.join(d, "docs", "MAP.md"), "w") as f:
@@ -150,7 +160,7 @@ def ran_out(project):
         assert r.returncode == 0, r.stderr
 
 
-class Rule(unittest.TestCase):
+class Rule(Clean):
     """apb_folder.py against the oracle, over every folder shape."""
 
     def test_every_shape_matches_the_oracle(self):
@@ -199,7 +209,7 @@ class Rule(unittest.TestCase):
         self.assertEqual(hook.is_apb_repo.__module__, "apb_folder")
 
 
-class EveryHookUsesTheRule(unittest.TestCase):
+class EveryHookUsesTheRule(Clean):
     def test_every_script_in_hooks_json_uses_apb_folder(self):
         # A hook added later must use the shared rule too, so it can't skip the apb repo again.
         with open(HOOKS_JSON, encoding="utf-8") as f:
@@ -215,7 +225,7 @@ class EveryHookUsesTheRule(unittest.TestCase):
             self.assertNotIn('"docs", "MAP.md"', source, name)  # no hook checks MAP.md on its own
 
 
-class Events(unittest.TestCase):
+class Events(Clean):
     """apb-events.py writes the events file the Stop hook reads."""
 
     def test_writes_in_the_apb_repo(self):
@@ -239,7 +249,7 @@ class Events(unittest.TestCase):
         self.assertEqual(len(events(d)), 1)
 
 
-class Stop(unittest.TestCase):
+class Stop(Clean):
     """The card's acceptance, end to end: apb-events.py writes the turn, apb-stop.py judges the stop."""
 
     BARE = ["Nothing for you to do.", "Nothing for you to do right now.",
@@ -258,6 +268,36 @@ class Stop(unittest.TestCase):
                 self.assertIsNotNone(note, (message, tasks))
                 self.assertTrue(note.startswith("Say who holds the ball"), note)
                 self.assertTrue(events(d)[-1].get("sent_back"), (message, tasks))
+
+    def test_sends_back_after_a_watcher_wake_in_the_apb_repo(self):
+        # The Nov 21 incident: a finished turn ended with a full line; then a watcher woke the
+        # orchestrator (Claude Code's own prompt, which apb-events.py logs as automatic) with nothing
+        # running, and it closed with "Nothing for you to do." The hook must send that back.
+        wakes = ["<task-notification>watcher found: PR #129 merged</task-notification>",
+                 "Another Claude session sent a message: <agent-message>done</agent-message>"]
+        for wake in wakes:
+            for message in self.BARE:
+                d = apb_repo()
+                ran_out(d)
+                r = run(STOP, stop(self.GOOD, background_tasks=[]), d)
+                self.assertIsNone(sent_back(r))
+                run(EVENTS, event("UserPromptSubmit", prompt=wake), d)
+                self.assertTrue(events(d)[-1].get("automatic"), wake)
+                r = run(STOP, stop(message, background_tasks=[]), d)
+                note = sent_back(r)
+                self.assertIsNotNone(note, (wake, message))
+                self.assertTrue(note.startswith("Say who holds the ball"), note)
+
+    def test_lets_the_humans_answer_through(self):
+        # The other direction: the same turn started by the human's own prompt is an answer, not a stop.
+        for prompt in ["merged", "what does the watcher do?"]:
+            d = apb_repo()
+            ran_out(d)
+            run(STOP, stop(self.GOOD, background_tasks=[]), d)
+            run(EVENTS, event("UserPromptSubmit", prompt=prompt), d)
+            self.assertFalse(events(d)[-1].get("automatic"), prompt)
+            r = run(STOP, stop("Nothing for you to do.", background_tasks=[]), d)
+            self.assertIsNone(sent_back(r), prompt)
 
     def test_lets_it_through_while_something_runs(self):
         # The other direction: an agent still running means the work hasn't run out.
@@ -303,7 +343,7 @@ class Stop(unittest.TestCase):
         self.assertIsNone(sent_back(r))
 
 
-class Brief(unittest.TestCase):
+class Brief(Clean):
     DEPARTED = "Done. I departed from agents/builder.md: I skipped the LOG.md line."
 
     def test_records_a_departure_in_the_apb_repo(self):
@@ -345,7 +385,7 @@ class Brief(unittest.TestCase):
         self.assertIn("departed from its file", note)
 
 
-class Popups(unittest.TestCase):
+class Popups(Clean):
     QUESTION = {"questions": [{"question": "Which?", "options": [{"label": "a"}, {"label": "b"}]}]}
 
     def ask(self, d):
@@ -384,7 +424,7 @@ def acts(script, d):
     return sent_back(run(STOP, stop("Nothing for you to do.", background_tasks=[]), d)) is not None
 
 
-class RandomFolders(unittest.TestCase):
+class RandomFolders(Clean):
     def test_every_hook_acts_exactly_where_the_rule_says(self):
         # Random folder shapes and hooks, against the oracle: one rule for all four hooks (the watcher's
         # own random test is in test_apb_watch_start.py).
@@ -399,7 +439,7 @@ class RandomFolders(unittest.TestCase):
                 shutil.rmtree(d, ignore_errors=True)
 
 
-class NeverInTheWay(unittest.TestCase):
+class NeverInTheWay(Clean):
     def test_every_hook_exits_0_on_bad_input_in_the_apb_repo(self):
         d = apb_repo()
         for script in [EVENTS, STOP, BRIEF, POPUPS]:

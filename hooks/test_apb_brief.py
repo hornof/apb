@@ -240,6 +240,38 @@ class Departure(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIsNone(brief.departure(text))
 
+    def test_the_phrase_in_quotes_is_no_departure(self):
+        # In the apb repo reviewers quote the phrase when they check this hook and its docs (#134 review).
+        for text in ['The README says a report that "departed from" its file sends back every hand-off.',
+                     "The playbook says a report that “departed from” its file holds hand-offs.",
+                     "Checked the `departed from` regex in apb-brief.py.",
+                     "The 'departed from' check is in apb-brief.py.",
+                     "> I departed from agents/reviewer.md\nquoted from the old report.",
+                     "  > As you asked, instead of threads I posted one comment.",
+                     'The hooks.json text says "a report that says it departed from its file sends back".']:
+            with self.subTest(text=text):
+                self.assertIsNone(brief.departure(text))
+
+    def test_a_departure_next_to_a_quote_still_counts(self):
+        # The other direction: quoting something elsewhere doesn't hide a real departure.
+        for text in ['I departed from agents/builder.md: I wrote "Closes #132" instead of "Fixes #132".',
+                     "I used `git push` as usual. I departed from agents/reviewer.md: one comment.",
+                     "> The brief: post one comment.\nI departed from agents/reviewer.md on that.",
+                     "As you asked, instead of `threads` I posted one comment.",
+                     "The builder's report: I departed from agents/builder.md on the LOG.md line."]:
+            with self.subTest(text=text):
+                self.assertTrue(brief.departure(text))
+
+    def test_quoting_any_departure_hides_it(self):
+        # Every departure sentence, quoted whole in each way, is no departure; unquoted, it is one.
+        for text in DEPARTED:
+            if "\n" in text:
+                continue
+            for quoted in ['"%s"' % text, "`%s`" % text, "> " + text, "“%s”" % text]:
+                with self.subTest(quoted=quoted):
+                    self.assertIsNone(brief.departure(quoted))
+                    self.assertTrue(brief.departure("They said %s Then: %s" % (quoted, text)))
+
     def test_the_quote_is_the_sentence_and_is_short(self):
         quote = brief.departure("PR #57 is open. I departed from agents/reviewer.md: one comment. Tests pass.")
         self.assertIn("departed from agents/reviewer.md", quote)

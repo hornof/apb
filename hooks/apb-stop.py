@@ -6,15 +6,16 @@ hooks/apb_folder.py), and reads .apb/events.jsonl, which hooks/apb-events.py wri
 file yet (a fresh clone of the apb repo) it reads no events and lets the stop through.
 
 - The work ran out in this turn when nothing is running, and either an agent stopped since the last
-  stop or the turn was not started by a prompt (a background command finishing woke it). See the
+  stop or the turn was not started by the human's prompt (a watcher or a background command finishing
+  woke it; Claude Code's own wake prompt, logged with "automatic": true, is not the human's). See the
   playbook's "Helping the human keep track". What's running comes from the Stop input's
   background_tasks; without it, from the events file (agents started and not stopped, and background
   commands started in this turn).
 - Then the message must start with one of the four first lines. If it doesn't, the hook sends the
   message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
   and Claude goes on to add the line. "All clear: ..." is logged as holder human, todo "all clear".
-  One exception: a wake-up that changed nothing for the human. When no prompt and no agent's stop
-  started the turn (a watcher or a background command woke it; the SubagentStop with agent_type ""
+  One exception: a wake-up that changed nothing for the human. When no prompt of the human's and no
+  agent's stop started the turn (a watcher or a background command woke it; the SubagentStop with agent_type ""
   that Claude Code's own helper logs after each stop is not an agent's), an earlier stop in this session
   already said who holds the ball, and the message is empty or one word, the stop goes through and
   the ball stays where it was.
@@ -549,9 +550,16 @@ def work_ran_out(events, session, now, tasks=None):
         return False
     if any(e["event"] == "SubagentStop" for e in turn):
         return True
+    # Any logged prompt shows prompts are logged; only the human's starts a turn that isn't a stop.
     prompts_logged = any(e["event"] == "UserPromptSubmit" and e.get("session") == session
                          for e in events)
-    return prompts_logged and not any(e["event"] == "UserPromptSubmit" for e in turn)
+    return prompts_logged and not any(humans_prompt(e) for e in turn)
+
+
+def humans_prompt(e):
+    """True for a prompt the human sent. A prompt Claude Code sends itself (a watcher's or a background
+    command's wake, an agent's message), which hooks/apb-events.py logs with "automatic": true, is not."""
+    return e["event"] == "UserPromptSubmit" and not e.get("automatic")
 
 
 def quiet_wake_up(events, session, message):
@@ -563,7 +571,7 @@ def quiet_wake_up(events, session, message):
     if len((message or "").split()) > 1:
         return False
     for e in this_turn(events, session):
-        if e["event"] == "UserPromptSubmit":
+        if humans_prompt(e):
             return False
         # An agent's report. Claude Code's own helper also logs a SubagentStop, with agent_type ""
         # and no SubagentStart, just after each stop; it is no report.
