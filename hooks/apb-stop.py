@@ -77,8 +77,8 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   PRs missing their Projects line ("projects-line-missing") when those were why it sent the message back.
 - If the human holds the ball, other than after "All clear", it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no prompt of their own), one desktop alert. Only on a Mac. The
-  human's prompt or a new ask block ends the wait; a watcher's wake or an agent's message (an automatic
-  prompt) and a stop with no ask block don't, and start no new wait (#135).
+  human's own prompt or a new ask block ends the wait. A watcher's wake or an agent's message (logged
+  as an automatic prompt) doesn't, and the stop that follows it starts no new wait (#135).
   The reminder outlives the hook, so it is given a deadline (the wait plus LIFETIME_MARGIN) and
   ends there, with any alert it started.
 
