@@ -317,6 +317,7 @@ The apb plugin keeps a log of what every Claude session and agent does in the pr
   - The reviewer doesn't run the tests again; it checks the builder's untested points on the preview.
   - Tests that depend on screen width run at every width. The rest run at one width.
   - A push that changes only docs skips the browser tests.
+  - A PR that changes only docs runs no tests. The builder runs nothing on its computer, and the PR description and its report say "no tests: docs only". Docs are `*.md` files people read, such as a README, `docs/` or `LOG.md`. A file the model runs as instructions is not docs, even though it ends in `.md`: a skill's `SKILL.md`, an agent's file in `agents/`, and any `.md` a hook or script reads, such as a `CLAUDE.md` with a line a hook parses. A PR that changes one of those is a code change, and runs the test files that check it. So does a doc that a test file reads, such as a wording test on this playbook.
   - Never start a test suite while another one is running.
 - **Strongest model for thinking, faster model for typing.** Planning, the PRD and TDD, and reviews run on the strongest model available. Writing lots of code runs fine on a faster model. Claude Code usually picks well by default.
 
