@@ -799,5 +799,313 @@ class HooksFile(unittest.TestCase):
             self.assertGreaterEqual(hook["timeout"], 24 * 3600)
 
 
+
+# ---------------------------------------------------------------- only the orchestrator (#123)
+
+def git(folder, *a):
+    subprocess.run(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t@t", *a], check=True,
+                   capture_output=True, timeout=20)
+
+
+def in_git(project):
+    """Make project a git repo, its files committed, its main checkout on main."""
+    git(project, "init", "-q", "-b", "main")
+    git(project, "add", "-A")
+    git(project, "commit", "-q", "--allow-empty", "-m", "start")
+    return project
+
+
+def worktree_of(project, path=None, branch="build-1"):
+    """A linked worktree of project, at .claude/worktrees/<branch> unless a path is given."""
+    path = path or os.path.join(project, ".claude", "worktrees", branch)
+    git(project, "worktree", "add", "-q", "-b", branch, path)
+    return path
+
+
+class OnlyTheOrchestrator(unittest.TestCase):
+    """Build and review sessions run in linked worktrees; only the main checkout's session, the
+    orchestrator's, gets a watcher (#123)."""
+
+    def test_the_main_checkout_gets_a_watcher(self):
+        for make in (apb_project, apb_repo):
+            project, fake = in_git(make()), fake_watcher("found")
+            r = run(project, fake)
+            self.assertEqual(r.returncode, 2, (make.__name__, r.stderr))
+            self.assertEqual(len(starts_of(fake)), 1, make.__name__)
+
+    def test_a_session_in_a_worktree_gets_none(self):
+        for make in (apb_project, apb_repo):
+            project = in_git(make())
+            elsewhere = os.path.join(tempfile.mkdtemp(), "anywhere")
+            for folder in (worktree_of(project), worktree_of(project, elsewhere, "review-1")):
+                fake = fake_watcher("found")
+                for event in ["SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"]:
+                    r = run(folder, fake, payload(event))
+                    self.assertEqual(r.returncode, 0, (make.__name__, folder, event, r.stderr))
+                self.assertEqual(starts_of(fake), [], folder)
+                self.assertFalse(os.path.exists(os.path.join(folder, ".apb")), folder)
+
+    def test_the_rule_is_gits_not_the_folder_name(self):
+        # A repo's main checkout that happens to sit under .claude/worktrees still gets its watcher.
+        parent = os.path.join(tempfile.mkdtemp(), ".claude", "worktrees")
+        os.makedirs(parent)
+        project = apb_project()
+        moved = os.path.join(parent, "main-checkout")
+        os.rename(project, moved)
+        in_git(moved)
+        fake = fake_watcher("found")
+        self.assertEqual(run(moved, fake).returncode, 2)
+        self.assertEqual(len(starts_of(fake)), 1)
+
+    def test_a_folder_outside_git_still_gets_a_watcher(self):
+        project, fake = apb_project(), fake_watcher("found")
+        self.assertEqual(run(project, fake).returncode, 2)
+
+    def test_the_orchestrator_and_two_build_sessions_run_one_watcher(self):
+        project = in_git(apb_repo())
+        builds = [worktree_of(project, branch="build-1"), worktree_of(project, branch="build-2")]
+        fake = fake_watcher("sleep 4")
+        procs = [start(project, fake, payload(session_id="orchestrator"))]
+        procs += [start(b, fake, payload(session_id="build-%d" % i)) for i, b in enumerate(builds)]
+        try:
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) >= 1))
+            for p in procs[1:]:
+                self.assertEqual(p.wait(timeout=15), 0)  # the build sessions' hooks end at once
+            time.sleep(0.5)
+            starts = starts_of(fake)
+            self.assertEqual(len(starts), 1)
+            self.assertEqual(starts[0]["cwd"], os.path.realpath(project))
+            self.assertEqual([e["session"] for e in events(project, "watcher-start")], ["orchestrator"])
+            # The merge the watcher reports wakes the orchestrator's hook alone.
+            self.assertEqual(procs[0].wait(timeout=15), 2)
+            self.assertIn(b"PR #3 merged", procs[0].stderr.read())
+        finally:
+            for p in procs:
+                finish(p)
+
+    def test_random_layouts_agree_with_a_second_reading(self):
+        # The hook's worktree test against an oracle that reads .git directly: a linked worktree's
+        # .git is a file pointing into the main repo's .git/worktrees/.
+        spec = importlib.util.spec_from_file_location("apb_watch_start", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+
+        def oracle(folder):
+            dot = os.path.join(folder, ".git")
+            if not os.path.isfile(dot):
+                return False
+            with open(dot) as f:
+                return "/worktrees/" in f.read()
+
+        rng = random.Random(123)
+        for i in range(12):
+            project = apb_project() if rng.random() < 0.5 else apb_repo()
+            if rng.random() < 0.2:
+                self.assertEqual(hook.linked_worktree(project), oracle(project), project)
+                continue
+            in_git(project)
+            folders = [project]
+            for n in range(rng.randint(0, 2)):
+                path = None if rng.random() < 0.5 else os.path.join(tempfile.mkdtemp(), "w")
+                folders.append(worktree_of(project, path, "b%d-%d" % (i, n)))
+            for folder in folders:
+                self.assertEqual(hook.linked_worktree(folder), oracle(folder), folder)
+                self.assertEqual(hook.linked_worktree(folder), folder != project, folder)
+
+
+FAKE_CLAUDE = r'''
+# Stands in for a Claude Code session: the hooks' root process. Each time the test writes go-<n> in
+# its folder it starts the hook, as Claude Code starts an async hook, and when that hook ends it
+# writes its exit code to rc-<n>. At "quit" it stops the hooks still running and exits.
+import os, signal, subprocess, sys, time
+here, hook = sys.argv[1], sys.argv[2:]
+n, running, end = 1, {}, time.time() + 90
+while time.time() < end and not os.path.exists(os.path.join(here, "quit")):
+    if os.path.exists(os.path.join(here, "go-%d" % n)):
+        with open(os.path.join(here, "payload.json"), "rb") as stdin:
+            running[n] = subprocess.Popen(hook, stdin=stdin, stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL)
+        n += 1
+    for k, p in list(running.items()):
+        if p.poll() is not None:
+            with open(os.path.join(here, "rc-%d" % k), "w") as f:
+                f.write(str(p.returncode))
+            del running[k]
+    time.sleep(0.05)
+for p in running.values():
+    p.send_signal(signal.SIGTERM)
+    p.wait(timeout=10)
+'''
+
+
+class Session:
+    """A fake Claude Code session in project: hooks run as its children, so it is their root."""
+
+    def __init__(self, project, fake, session_id):
+        self.dir = tempfile.mkdtemp()
+        with open(os.path.join(self.dir, "payload.json"), "w") as f:
+            json.dump(payload(session_id=session_id), f)
+        script = os.path.join(self.dir, "fake-claude.py")
+        with open(script, "w") as f:
+            f.write(FAKE_CLAUDE)
+        self.proc = subprocess.Popen([sys.executable, script, self.dir] + args(fake, budget=60),
+                                     env=env_for(project), cwd=tempfile.gettempdir())
+        self.pid = self.proc.pid
+        self.runs = 0
+
+    def hook(self):
+        """Run the hook once more; returns its number."""
+        self.runs += 1
+        open(os.path.join(self.dir, "go-%d" % self.runs), "w").close()
+        return self.runs
+
+    def rc(self, n):
+        path = os.path.join(self.dir, "rc-%d" % n)
+        if not os.path.exists(path):
+            return None
+        with open(path) as f:
+            return int(f.read() or "-1")
+
+    def close(self):
+        open(os.path.join(self.dir, "quit"), "w").close()
+        try:
+            self.proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+            self.proc.wait(timeout=10)
+
+
+class NewestSessionTakesOver(unittest.TestCase):
+    """After a plugin update the human opens a new orchestrator session while the old one is still
+    open: the new one takes the watcher over, and the old one doesn't take it back (#123)."""
+
+    def held(self, project):
+        try:
+            with open(pid_file(project)) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
+    def test_a_newer_session_takes_the_watcher_and_the_older_one_leaves_it(self):
+        project, fake = apb_project(), fake_watcher("sleep 30")
+        old = Session(project, fake, "old")
+        new = None
+        try:
+            first = old.hook()
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 1))
+            self.assertEqual(self.held(project)["parent"], old.pid)
+            old_hook, old_watcher = self.held(project)["pid"], starts_of(fake)[0]["pid"]
+            time.sleep(1.5)  # ps tells start times apart to the second
+            new = Session(project, fake, "new")
+            new.hook()
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 2, 15))
+            self.assertFalse(alive(old_hook), "the old hook has exited before the new watcher starts")
+            # One hook run: the new session holds the pid file, and its watcher is the only one.
+            held = self.held(project)
+            self.assertEqual((held["parent"], held["session"]), (new.pid, "new"))
+            argv = starts_of(fake)[1]["argv"]
+            self.assertEqual(argv[argv.index("--root-pid") + 1], str(new.pid))
+            self.assertTrue(wait_for(lambda: old.rc(first) is not None, 15))
+            self.assertEqual(old.rc(first), 0, "the old session is not woken")
+            self.assertTrue(wait_for(lambda: not alive(old_watcher)))
+            self.assertTrue(alive(starts_of(fake)[1]["pid"]))
+            self.assertEqual([e["session"] for e in events(project, "watcher-start")], ["old", "new"])
+            # The old session's next hook leaves the watcher with the new one.
+            again = old.hook()
+            self.assertTrue(wait_for(lambda: old.rc(again) is not None, 15))
+            self.assertEqual(old.rc(again), 0)
+            self.assertEqual(len(starts_of(fake)), 2)
+            self.assertEqual(self.held(project)["parent"], new.pid)
+            self.assertTrue(alive(starts_of(fake)[1]["pid"]))
+        finally:
+            old.close()
+            if new:
+                new.close()
+            for s in starts_of(fake):
+                if alive(s["pid"]):
+                    os.kill(s["pid"], signal.SIGTERM)
+
+    def test_the_older_session_stays_out_after_the_newer_ones_hook_exits(self):
+        # The newer session's hook ends (a wake, a failure, the budget) and frees the pid file; the
+        # older session must still not take the watcher back while the newer Claude Code is open.
+        project, fake = apb_project(), fake_watcher("sleep 30")
+        old = Session(project, fake, "old")
+        new = None
+        try:
+            old.hook()
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 1))
+            time.sleep(1.5)
+            set_mode(fake, "found")
+            new = Session(project, fake, "new")
+            woken = new.hook()
+            self.assertTrue(wait_for(lambda: new.rc(woken) is not None, 15))
+            self.assertEqual(new.rc(woken), 2)
+            self.assertFalse(os.path.exists(pid_file(project)))
+            again = old.hook()
+            self.assertTrue(wait_for(lambda: old.rc(again) is not None, 15))
+            self.assertEqual(old.rc(again), 0)
+            self.assertEqual(len(starts_of(fake)), 2, "the older session started no watcher")
+            # The newer session's next hook starts it again.
+            back = new.hook()
+            self.assertTrue(wait_for(lambda: new.rc(back) is not None, 15))
+            self.assertEqual(len(starts_of(fake)), 3)
+            # Once the newer session is closed, the older one gets the watcher again.
+            new.close()
+            last = old.hook()
+            self.assertTrue(wait_for(lambda: old.rc(last) is not None, 15))
+            self.assertEqual(old.rc(last), 2)
+            self.assertEqual(len(starts_of(fake)), 4)
+        finally:
+            old.close()
+            if new:
+                new.close()
+            for s in starts_of(fake):
+                if alive(s["pid"]):
+                    os.kill(s["pid"], signal.SIGTERM)
+
+    def test_a_takeover_waits_for_the_old_hook_to_exit(self):
+        # The old hook takes a moment to stop its watchers; the new one writes the pid file only after.
+        spec = importlib.util.spec_from_file_location("apb_watch_start", SCRIPT)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        slow = subprocess.Popen([sys.executable, "-c", "import signal, sys, time\n"
+                                 "signal.signal(signal.SIGTERM, lambda *a: (time.sleep(1), sys.exit(0)))\n"
+                                 "time.sleep(60)", "apb-watch-start.py"])
+        try:
+            self.assertTrue(wait_for(lambda: alive(slow.pid)))
+            time.sleep(0.3)  # its SIGTERM handler is set
+            folder = tempfile.mkdtemp()
+            path = os.path.join(folder, "watcher.pid")
+            with open(path, "w") as f:
+                json.dump({"pid": slow.pid, "parent": os.getpid(), "session": "old"}, f)
+            self.assertTrue(hook.claim(path, lambda: {"pid": os.getpid(), "parent": 1, "session": "new"},
+                                       lambda held: True))
+            self.assertIsNotNone(slow.poll(), "the old hook has exited when the claim returns")
+            with open(path) as f:
+                self.assertEqual(json.load(f)["session"], "new")
+        finally:
+            if slow.poll() is None:
+                slow.kill()
+            slow.wait(timeout=10)
+
+    def test_a_second_hook_in_the_same_session_takes_nothing_over(self):
+        project, fake = apb_project(), fake_watcher("sleep 30")
+        s = Session(project, fake, "one")
+        try:
+            first = s.hook()
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 1))
+            time.sleep(1.5)
+            second = s.hook()  # the same session's next tool call, while the first hook runs
+            self.assertTrue(wait_for(lambda: s.rc(second) is not None, 15))
+            self.assertEqual(s.rc(second), 0)
+            self.assertEqual(len(starts_of(fake)), 1)
+            self.assertEqual(self.held(project)["parent"], s.pid)
+            self.assertIsNone(s.rc(first), "the first hook still runs")
+        finally:
+            s.close()
+            for st in starts_of(fake):
+                if alive(st["pid"]):
+                    os.kill(st["pid"], signal.SIGTERM)
+
 if __name__ == "__main__":
     unittest.main()
