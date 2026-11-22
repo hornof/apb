@@ -473,17 +473,22 @@ class Waiting(unittest.TestCase):
         w = World()
         w.break_watcher()
         os.remove(os.path.join(w.apb, "watcher-owner.json"))
-        proc = subprocess.Popen([sys.executable, SCRIPT] + w.args(wait=15), stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, text=True, env=w.env())
-        proc.stdin.write(json.dumps({"hook_event_name": "SessionStart", "source": "startup",
-                                     "session_id": "sess-1", "cwd": w.project}))
-        proc.stdin.close()
-        time.sleep(1.5)
-        w.start_watcher()
-        w.owner(ROOT_PID, "x")
-        out = proc.stdout.read()
-        proc.stdout.close()
-        proc.wait(timeout=30)
+        payload = os.path.join(tmp(), "payload.json")
+        with open(payload, "w") as f:
+            json.dump({"hook_event_name": "SessionStart", "source": "startup", "session_id": "sess-1",
+                       "cwd": w.project}, f)
+        with open(payload) as stdin:  # a file, so the hook reads its whole payload at once
+            proc = subprocess.Popen([sys.executable, SCRIPT] + w.args(wait=15), stdin=stdin,
+                                    stdout=subprocess.PIPE, text=True, env=w.env())
+        try:
+            time.sleep(1.5)
+            w.start_watcher()
+            w.owner(ROOT_PID, "x")
+            out, _ = proc.communicate(timeout=30)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate(timeout=10)
         text = json.loads(out)["hookSpecificOutput"]["additionalContext"]
         self.assertTrue(lines_of(text)["Watcher"][0], text)
 
