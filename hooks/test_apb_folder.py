@@ -291,28 +291,43 @@ class Stop(Clean):
 
     def test_lets_the_humans_answer_through(self):
         # The other direction: the same turn started by the human's own prompt is an answer, not a stop.
+        # #159: an answer may end without an ask line, but a bare ask line is sent back, with the forms.
         for prompt in ["merged", "what does the watcher do?"]:
-            d = apb_repo()
-            ran_out(d)
-            run(STOP, stop(self.GOOD, background_tasks=[]), d)
-            run(EVENTS, event("UserPromptSubmit", prompt=prompt), d)
-            self.assertFalse(events(d)[-1].get("automatic"), prompt)
-            r = run(STOP, stop("Nothing for you to do.", background_tasks=[]), d)
-            self.assertIsNone(sent_back(r), prompt)
+            notes = []
+            for answer in ["It wakes the orchestrator when the issue gets a comment.", "Nothing for you to do."]:
+                d = apb_repo()
+                ran_out(d)
+                run(STOP, stop(self.GOOD, background_tasks=[]), d)
+                run(EVENTS, event("UserPromptSubmit", prompt=prompt), d)
+                self.assertFalse(events(d)[-1].get("automatic"), prompt)
+                notes.append(sent_back(run(STOP, stop(answer, background_tasks=[]), d)))
+            self.assertIsNone(notes[0], prompt)
+            self.assertIsNotNone(notes[1], prompt)
+            self.assertTrue(notes[1].startswith("Your ask line isn't in one of the forms"), notes[1])
 
-    def test_lets_it_through_while_something_runs(self):
-        # The other direction: an agent still running means the work hasn't run out.
+    def test_while_something_runs_only_a_bare_ask_line_is_sent_back(self):
+        # An agent still running means the work hasn't run out: a turn may end without an ask line.
+        # #159 (2026-11-22, "apb orch 13" and "apb orch 14"): a bare "Nothing for you to do." with a
+        # builder running is still sent back, quoting the forms.
         for message in self.BARE:
-            d = apb_repo()
-            ran_out(d)
-            r = run(STOP, stop(message, background_tasks=[{"id": "b2", "type": "agent"}]), d)
-            self.assertEqual(r.returncode, 0)
-            self.assertIsNone(sent_back(r), message)
-            d = apb_repo()
-            ran_out(d)
-            run(EVENTS, event("SubagentStart", agent_id="b2", agent_type="apb:builder"), d)
-            r = run(STOP, stop(message), d)  # no background_tasks: the events file says b2 runs
-            self.assertIsNone(sent_back(r), message)
+            for via_events in (False, True):
+                d = apb_repo()
+                ran_out(d)
+                if via_events:
+                    run(EVENTS, event("SubagentStart", agent_id="b2", agent_type="apb:builder"), d)
+                    payloads = [stop("The builder is on step 3."), stop(message)]  # the events file says b2 runs
+                else:
+                    tasks = [{"id": "b2", "type": "agent"}]
+                    payloads = [stop("The builder is on step 3.", background_tasks=tasks),
+                                stop(message, background_tasks=tasks)]
+                r = run(STOP, payloads[0], d)
+                self.assertEqual(r.returncode, 0)
+                self.assertIsNone(sent_back(r), message)
+                r = run(STOP, payloads[1], d)
+                note = sent_back(r)
+                self.assertIsNotNone(note, (message, via_events))
+                self.assertTrue(note.startswith("Your ask line isn't in one of the forms"), note)
+                self.assertTrue(events(d)[-1].get("malformed-ask"), (message, via_events))
 
     def test_lets_a_full_first_line_through(self):
         d = apb_repo()

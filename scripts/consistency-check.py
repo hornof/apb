@@ -11,8 +11,10 @@ the fix is a new case here, with a test built from the incident, not another sen
 case in CASES names the incident that added it.
 
 The cases:
-- build-in-todo: a build is running for a card (a git worktree on a branch named issue-<N>, or an
-  open PR, draft or not, that closes the card or comes from such a branch), but the card is in Todo.
+- build-in-todo: a build is running for a card (a git worktree on a branch named issue-<N>, or on the
+  branch Claude Code gives an agent's isolated worktree, worktree-agent-<id>, when the events file says
+  that agent was launched on the card (#159); or an open PR, draft or not, that closes the card or comes
+  from such a branch), but the card is in Todo.
 - pr-ready-not-in-review: a PR ready for review (not a draft) closes an open card that isn't in In review.
 - in-review-with-draft-pr: a card is in In review, and every open PR that closes it is a draft (#156: a
   card moves to In review only when its PR is marked ready).
@@ -26,8 +28,8 @@ The cases:
 - reply-in-unanswered-decision: someone other than the human (the orchestrator, the reviewer, the
   advisor) replied in a Decision thread the human hasn't answered or resolved.
 - merge-with-open-request: the turn asks the human to merge a PR while an advisor comment on it has no
-  later reply from Claude, or the reviewer's Fix post has an item with no commit and no reason it
-  wasn't fixed.
+  later reply from Claude that addresses it (links it or quotes it; the reviewer's posts don't count),
+  or the reviewer's Fix post has an item with no commit on the PR and no reason it wasn't fixed (#159).
 - decision-without-advisor-comment: in a project with an advisor, the turn hands the human a Decision
   on a PR that has no PR-level advisor comment posted after its Decisions.
 
@@ -93,10 +95,16 @@ CASES = [
 INCIDENT = {c["id"]: c["incident"] for c in CASES}
 
 BRANCH = re.compile(r"(?:^|/)issue-(\d+)(?:-|$)")
+# The branch Claude Code gives the worktree of an agent launched with isolation: "worktree" (#142, #159).
+AGENT_BRANCH = re.compile(r"(?:^|/)worktree-agent-([0-9a-z]+)$")
 CONFIRM = re.compile(r"(?i)\bresolved\s*=\s*\(?[a-z]\)?")
 ADVISOR = re.compile(r"[—-]\s*Claude \(advisor\)")
+REVIEWER = re.compile(r"[—-]\s*Claude \(reviewer\)")
+SIGNATURE = re.compile(r"[—-]\s*Claude \([\w ]+\)\s*$")
+QUOTE_MIN = 15  # characters a quoted line needs to say which comment it answers
 THREAD_LINK = re.compile(r"#discussion_r\d+")
-SHA = re.compile(r"\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b|/commit/[0-9a-f]{7,40}")
+# A word that may be a commit: 7 to 40 hex characters. It counts only if a commit on the PR starts with it.
+SHA = re.compile(r"(?i)(?<![0-9a-z])[0-9a-f]{7,40}(?![0-9a-z])")
 WHY_NOT = re.compile(r"(?i)\b(?:not fixed|won'?t fix|wontfix|why not|not doing|declined|no change|left as is|"
                      r"not changed|skipped)\b")
 ITEM = re.compile(r"\s*(\d+)[.)]\s+\S")
@@ -111,6 +119,43 @@ def own_text(body):
 
 def is_advisor(c):
     return bool(ADVISOR.search(own_text(c.get("body"))))
+
+
+def is_reviewer(c):
+    return bool(REVIEWER.search(own_text(c.get("body"))))
+
+
+def anchor(c):
+    """The comment's own anchor in its URL (issuecomment-123, pullrequestreview-45), or None."""
+    m = re.search(r"#((?:issuecomment|pullrequestreview|discussion_r)-?\d+)$", c.get("url") or "")
+    return m.group(1) if m else None
+
+
+def flat(text):
+    return " ".join((text or "").split())
+
+
+def addresses(reply, c):
+    """True if the reply addresses comment c: it links c (its anchor, not a longer number), or it quotes a
+    line of c's own text of at least QUOTE_MIN characters that isn't only c's signature."""
+    body = reply.get("body") or ""
+    a = anchor(c)
+    if a and re.search(re.escape(a) + r"(?!\d)", body):
+        return True
+    asked = flat(own_text(c.get("body")))
+    for line in body.splitlines():
+        if not line.lstrip().startswith(">"):
+            continue
+        quoted = flat(line.lstrip().lstrip(">").strip())
+        if len(quoted) >= QUOTE_MIN and not SIGNATURE.fullmatch(quoted) and quoted in asked:
+            return True
+    return False
+
+
+def on_pr(text, commits):
+    """True if the text names a commit on the PR: a hex word of 7 to 40 characters that one starts with."""
+    oids = [o.lower() for o in commits or [] if isinstance(o, str)]
+    return any(o.startswith(w.lower()) for w in SHA.findall(text or "") for o in oids)
 
 
 def is_claude(c, claude_login):
@@ -171,6 +216,11 @@ def _named_for(n, name):
     return bool(m) and int(m.group(1)) == n
 
 
+def _agent_of(branch):
+    m = AGENT_BRANCH.search(branch or "")
+    return m.group(1) if m else None
+
+
 def board_cases(s):
     out = []
     prs = s.get("prs") or []
@@ -200,7 +250,9 @@ def board_cases(s):
                                 "scripts/board-move.py pr-draft %d" % (n, drafts[0]["number"], drafts[0]["number"]), n))
             continue
         if status == "todo":
-            builds = ["worktree on %s" % w for w in s.get("worktrees") or [] if _named_for(n, w)]
+            agents = s.get("agents") or {}
+            builds = ["worktree on %s" % w for w in s.get("worktrees") or []
+                      if _named_for(n, w) or n in agents.get(_agent_of(w), [])]
             builds += ["PR #%d" % p["number"] for p in prs
                        if n in p.get("closes", []) or _named_for(n, p.get("head"))]
             if builds:
@@ -299,17 +351,20 @@ def merge_cases(s, hand_off):
         posts = list(p.get("comments") or []) + list(p.get("reviews") or [])
         for c in posts:
             if is_advisor(c) and not THREAD_LINK.search(c.get("body") or ""):
-                answered = any(_later(r, c) and is_claude(r, login) and not is_advisor(r) for r in posts)
+                # Only a reply that addresses it, from Claude but not the advisor or the reviewer (#159).
+                answered = any(_later(r, c) and is_claude(r, login) and not is_advisor(r) and not is_reviewer(r)
+                               and addresses(r, c) for r in posts)
                 if not answered:
                     out.append(_problem("merge-with-open-request", "this turn asks for the merge of PR #%d, but the "
-                                        "advisor's comment %s has no reply saying it's done or why not. Act on it "
-                                        "and reply first." % (n, c.get("url") or "on it")))
+                                        "advisor's comment %s has no reply that links it or quotes it and says it's "
+                                        "done or why not. Act on it and reply first." % (n, c.get("url") or "on it")))
             if is_claude(c, login) and not is_advisor(c):
                 for k, text in sorted(fix_items(c.get("body")).items()):
-                    if not SHA.search(text) and not WHY_NOT.search(text):
+                    if not on_pr(text, p.get("commits")) and not WHY_NOT.search(text):
                         out.append(_problem("merge-with-open-request", "this turn asks for the merge of PR #%d, but "
-                                            "Fix item %d in %s has no commit and no reason it wasn't fixed. Add the "
-                                            "commit to the Fix post, or say there why not." % (n, k, c.get("url") or "the Fix post")))
+                                            "Fix item %d in %s has no commit on the PR and no reason it wasn't fixed. "
+                                            "Add the commit to the Fix post, or say there why not."
+                                            % (n, k, c.get("url") or "the Fix post")))
     return out
 
 
@@ -360,6 +415,7 @@ QUERY = """query($owner: String!, $name: String!, $q: String!) {
         content { ... on Issue { %(card)s } } } } } }
     pullRequests(states: OPEN, first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes {
       number isDraft headRefName assignees(first: 10) { nodes { login } }
+      commits(last: 100) { nodes { commit { oid } } }
       closingIssuesReferences(first: 10) { nodes { number } }
       reviewThreads(first: 20) { nodes { isResolved comments(first: 10) { nodes { %(c)s } } } }
       comments(last: 30) { nodes { %(c)s } }
@@ -394,9 +450,10 @@ def _items(page):
     return projects[0]["items"] if projects else None
 
 
-def from_answers(answers, repo, claude_login, worktrees, coordination=None):
+def from_answers(answers, repo, claude_login, worktrees, coordination=None, agents=None):
     """The snapshot check() reads, from GitHub's answers: the answer to QUERY first, then one answer to
-    PAGE per further board page. coordination: the bodies of the coordination issue's last comments."""
+    PAGE per further board page. coordination: the bodies of the coordination issue's last comments.
+    agents: {agent id: the cards it was launched on} (agent_cards)."""
     first = answers[0]["data"]
     owner = first["repository"].get("owner") or {}
     board = []
@@ -421,13 +478,15 @@ def from_answers(answers, repo, claude_login, worktrees, coordination=None):
                     "closes": [c["number"] for c in _nodes(p.get("closingIssuesReferences")) if c],
                     "threads": [{"isResolved": bool(t.get("isResolved")), "comments": _comments(t.get("comments"))}
                                 for t in _nodes(p.get("reviewThreads")) if t and _nodes(t.get("comments"))],
-                    "comments": _comments(p.get("comments")), "reviews": _comments(p.get("reviews"))})
+                    "comments": _comments(p.get("comments")), "reviews": _comments(p.get("reviews")),
+                    "commits": [((c or {}).get("commit") or {}).get("oid") for c in _nodes(p.get("commits"))
+                                if ((c or {}).get("commit") or {}).get("oid")]})
     everything = [c for p in prs for c in p["comments"] + p["reviews"] + [x for t in p["threads"] for x in t["comments"]]]
     advisor = any(is_advisor(c) for c in everything) or any(is_advisor({"body": b}) for b in coordination or [])
     return {"repo": repo, "human": owner.get("login") if owner.get("__typename") == "User" else None,
             "claude_login": claude_login, "board": board, "prs": prs, "worktrees": list(worktrees),
             "assigned": human_turn.items({"data": {"search": first.get("assigned") or {"nodes": []}}}),
-            "advisor": advisor}
+            "advisor": advisor, "agents": dict(agents or {})}
 
 
 class OutOfTime(Exception):
@@ -444,6 +503,26 @@ def worktree_branches(project, time_limit=5):
     if out.returncode != 0:
         return []
     return [l.split(" ", 1)[1].replace("refs/heads/", "", 1) for l in out.stdout.splitlines() if l.startswith("branch ")]
+
+
+def agent_cards(project):
+    """{agent id: the cards it was launched on}, from the AgentLaunch lines hooks/apb-events.py writes to
+    the project's events file ({} without one)."""
+    found = {}
+    try:
+        with open(os.path.join(project, ".apb", "events.jsonl"), "rb") as f:
+            raw = f.read().decode("utf-8", "replace")
+    except OSError:
+        return found
+    for line in raw.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(e, dict) and e.get("event") == "AgentLaunch" and isinstance(e.get("launched"), str):
+            cards = e.get("cards") if isinstance(e.get("cards"), list) else []
+            found[e["launched"]] = [c for c in cards if isinstance(c, int) and not isinstance(c, bool)]
+    return found
 
 
 def coordination_issue(project):
@@ -496,7 +575,8 @@ def fetch(repo, project, claude_login=None, human=None, gh="gh", budget=TIME_LIM
     left = end - time.time()
     if left <= 0:
         raise OutOfTime("no time left for git")
-    s = from_answers(answers, repo, claude_login, worktree_branches(project, min(time_limit, left)), coordination)
+    s = from_answers(answers, repo, claude_login, worktree_branches(project, min(time_limit, left)), coordination,
+                     agent_cards(project))
     if human:
         s["human"] = human
     return s
