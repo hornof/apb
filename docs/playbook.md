@@ -12,7 +12,7 @@ Idea → PRD → TDD → Split the TDD into cards → Build → Review → Merge
 1. **PRD** (what and why). Claude writes it from the human's description: goals, user journeys, requirements that each end with a check ("loads in under 1 second", "works on a phone"), mockups, and the look. If a technical question could change the design, Claude first runs a spike: a short, time-boxed investigation whose findings go in `docs/spikes/`. The human reviews and approves: **gate 1**.
 2. **TDD** (how it's built and tested). Architecture, where data lives, the test plan, risks, and the work split into PR-sized pieces. Use `docs/system-design-guide.md` for the design part. The human approves: **gate 2**.
 3. **Split the TDD into cards.** Each piece of work becomes a GitHub issue on a Projects board (to do, in progress, in review, done). Merged PRs close their issues. The same board holds one issue each for the PRD input, the PRD and the TDD from setup on, so it always shows where the project stands.
-4. **Build.** For each piece: Claude writes the tests first, then the code until the tests pass, then opens one small PR.
+4. **Build.** For each piece, one small PR: the builder opens a draft PR as soon as it starts, so the build shows on GitHub from its first minute, then writes the tests first, then the code until the tests pass, and marks the PR ready for review.
 5. **Review and merge.** A second Claude reviews the PR. The human reads the review, checks the PR's preview site, and merges: **gate 3**. Tests must pass first.
 
    Every PR gets this review before the human sees it, whether it holds code or only docs. There is one review round. The reviewer sorts each item into one of three buckets:
@@ -32,7 +32,7 @@ A gate passes only when the human explicitly approves that document. After appro
 |---|---|---|
 | **The human** | Sets the goal, approves the three gates, merges every PR, judges how things look | — |
 | **Orchestrator**: the main Claude Code session, the one the human talks to | Writes the PRD and TDD, keeps the board, starts the builder and reviewer | Merges |
-| **Builder**: a separate Claude the orchestrator starts, from `agents/builder.md` | Writes tests, then code, for one issue; opens the PR | Merges |
+| **Builder**: a separate Claude the orchestrator starts, from `agents/builder.md` | Writes tests, then code, for one issue; opens a draft PR when it starts and marks it ready for review when done | Merges |
 | **Reviewer**: a separate Claude the orchestrator starts, from `agents/reviewer.md` | Reviews the PR and the live product | Writes code |
 | **Advisor** (optional): Claude in Cowork, outside the repo | Talks through the idea, does research, gives a second opinion; posts on GitHub issues | Writes to the repo |
 
@@ -232,9 +232,24 @@ For generated content, also:
 - **Keep a review page** that shows everything made so far, plus the rejected items and why, updated after each batch.
 - **Check images on a real page.** Color profiles and near-white backgrounds can show as a gray box on a white page. Convert to sRGB and turn near-white into pure white.
 
+## What every watcher does
+
+A watcher wakes a Claude session when the project changes on GitHub. More than one can run at once, one for each session that needs waking. This section is the watcher's job, the same for every watcher. The list after it says how each one runs today, so a broken one can be swapped for another without changing the job.
+
+- **It watches the project's repo:** PRs opened, closed or merged, new commits, comments and reviews, new issues, and board moves.
+- **It wakes its session on every real change and says what changed in one line.** Otherwise it stays quiet, with one heartbeat a day at most.
+- **It backs off while the repo is quiet,** from a read every 2 minutes to every 15 minutes to every hour, and goes back to every 2 minutes on any change.
+- **It stays inside the GitHub API budget,** which every watcher and agent on the same account shares.
+- **Every build shows on GitHub from its first minute,** so a watcher needs to read nothing but GitHub: no board, no files on the machine the build runs on. As soon as a builder starts, it pushes its branch (`issue-<N>-<short name>`) and opens a draft PR that closes its card. It marks the PR ready for review when the build is done. Before this rule a builder's work stayed in a local worktree until its first push: on #132 about 15 minutes of work had nothing on GitHub, and every watcher check came back quiet.
+
+**How each watcher runs today.**
+
+- **The orchestrator's watcher.** Runs: on the human's Mac, in the background, for the orchestrator's Claude Code session. It is `scripts/apb-watch.py`, kept running by the plugin's hook `hooks/apb-watch-start.py` (#94, #118); "While Claude waits" below has the detail. It works. Known limits: it runs only while the Mac is awake and the orchestrator's session is open. It backs off to 15 minutes, not an hour, and exits after an hour with no change, when the hook starts it again. It reads PRs and the issues it is told to watch, not new issues or board moves. It doesn't report a draft PR marked ready; the builder's report wakes the orchestrator then. It also reads the events file on the Mac (stuck commands, quiet agents), which a watcher elsewhere can't.
+- **The advisor's watcher.** Runs: in Cowork, in the advisor's cloud chat, outside apb, as a background job in the chat. Broken since Nov 21, 2026: a new cloud chat replaces its machine after each reply, so the job dies within minutes (anthropics/claude-code#111511). Until that is fixed, timed messages back into the chat wake the advisor instead. Known limits: the timed messages come on a schedule, not on a change, so the advisor can be up to one interval late. It reads only GitHub, so it sees a build only through its draft PR.
+
 ## While Claude waits
 
-The orchestrator acts only when something wakes it: a message from the human, an agent's report, or a background command finishing. A merge on GitHub or a frozen test run wakes nothing. So the orchestrator never waits without the watcher, and never states anything it hasn't just checked.
+The orchestrator acts only when something wakes it: a message from the human, an agent's report, or a background command finishing. A merge on GitHub or a frozen test run wakes nothing. So the orchestrator never waits without the watcher, and never states anything it hasn't just checked. This section is how the orchestrator's watcher does the job in "What every watcher does".
 
 - **The watcher** is `scripts/apb-watch.py` in the apb plugin. It checks for stuck commands and quiet agents every 20 seconds. It reads GitHub every 2 minutes while the repo has had activity in the last hour, and every 15 minutes once it has been quiet that long; any change brings it back to 2 minutes. `--poll N` sets a fixed number of seconds instead. It exits, saying what it found, when:
   - a PR is opened, merged or closed, its checks finish, it gets new comments, one of its review threads is resolved (it names the thread with a link), or all of them are. A merged or closed PR stays watched while it has an unresolved thread, since the human may resolve a Decision after the merge.
