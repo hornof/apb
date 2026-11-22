@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import random
+import re
 import stat
 import subprocess
 import sys
@@ -683,17 +684,37 @@ class Replay(unittest.TestCase):
             self.assertEqual(stop.decision_without_link(c["message"]),
                              "decision-without-link" in c["still_caught"], (c["time"], c["message"]))
 
+    @staticmethod
+    def prose_after_ask(message):
+        """#121's one-ask case, worked out separately: a line of prose (not a numbered item, not a link,
+        not quoted) below the last line that starts with an ask form."""
+        lines = [l.strip().strip("*_").strip() for l in message.splitlines()]
+        starts = [k for k, l in enumerate(lines)
+                  if re.match(r"(?i)(nothing for you to do|\d+ things? for you to do|all clear:)", l)]
+        if not starts:
+            return False
+        return any(l and not l.startswith(">") and not re.match(r"\d+[.)]\s", l) and not l.startswith("http")
+                   for l in lines[starts[-1] + 1:])
+
     def test_the_hook_sends_back_only_the_real_ones(self):
+        caught_by_121 = 0
         for c in REPLAYED:
             project = apb_project()
-            # A turn the human started, with no lookup in it: only the two checks can send it back.
+            # A turn the human started, with no lookup in it, while the builder ran (as it did that
+            # evening): only the two checks, and #121's ask-not-last case, can send it back.
             write_events(project, [{"event": "UserPromptSubmit"}])
-            r = stop.handle(payload(c["message"]), project, time.time(), no_github, no_github)
-            self.assertEqual(r["send_back"], bool(c["still_caught"]), (c["time"], c["message"]))
+            running = [{"id": "b1", "type": "subagent", "status": "running"}]
+            r = stop.handle(payload(c["message"], background_tasks=running), project, time.time(), no_github, no_github)
+            after = self.prose_after_ask(c["message"])
+            caught_by_121 += after and not c["still_caught"]
+            self.assertEqual(r["send_back"], bool(c["still_caught"]) or after, (c["time"], c["message"]))
+            if not c["still_caught"] and not after:
+                self.assertNotIn("sent_back", read_events(project)[-1])
             last = read_events(project)[-1]
             self.assertEqual("unchecked" in last, "github-fact" in c["still_caught"], c["time"])
             self.assertEqual("decision-without-link" in last, "decision-without-link" in c["still_caught"],
                              c["time"])
+        self.assertGreater(caught_by_121, 0)  # the ask written first, as on Nov 18, is caught now
 
 
 class DecisionLink(unittest.TestCase):
@@ -978,7 +999,8 @@ class ProjectsLine(unittest.TestCase):
         self.assertEqual(last["holder"], "human")
 
     def test_only_a_hand_off_to_the_human_is_checked(self):
-        r, calls = self.run_with("Nothing for you to do right now. Waiting on the reviewer for %s, ETA "
+        # #121: with nothing running, the wait names GitHub's checks.
+        r, calls = self.run_with("Nothing for you to do right now. Waiting on GitHub checks for %s, ETA "
                                  "7:10 PM." % (APB_PR % 74), {74: pr(["hooks/a.py"], "")})
         self.assertFalse(sent_back(r))
         self.assertEqual(calls, [])
@@ -1327,8 +1349,9 @@ class AlreadyDoneHook(unittest.TestCase):
         self.assertEqual(self.looked_up(calls), self.LOOKUPS)  # the retry looked nothing up
 
     def test_only_a_hand_off_is_checked(self):
-        r, calls = self.run_with("Nothing for you to do right now. Waiting on the reviewer, ETA 7:10 PM.\n"
-                                 "Then: merge PR #44, see %s" % THREAD,
+        # #121: what follows goes above the ask, and with nothing running the wait names GitHub's checks.
+        r, calls = self.run_with("Then: merge PR #44, see %s\n"
+                                 "Nothing for you to do right now. Waiting on GitHub checks, ETA 7:10 PM." % THREAD,
                                  prs={44: pr([], "", "MERGED")}, threads={82: {4627001605: True}})
         self.assertFalse(sent_back(r))
         self.assertEqual(calls, [])
@@ -1834,9 +1857,13 @@ class Properties(unittest.TestCase):
 
     def message(self, rng):
         """A random message and, known by construction: whether it ends with a valid ask block,
-        whether it states a GitHub fact, and whether it asks a decision with no GitHub link."""
+        whether it states a GitHub fact, whether it asks a decision with no GitHub link, and (#121)
+        whether prose follows its ask line ("after") and what its ask hands the human ("ask": the
+        words and the numbers it names, or "all clear"), for the one-ask and repeated-ask checks."""
         text, valid, fact, asks, link, item_unlinked, nothing = self.body(rng)
         all_clear = text == ALL_CLEAR
+        has_ask = self.last_body["kind"] in (0, 1, 2, 3, 5)
+        after, below = False, []
         tail, tail_fact, tail_link, tail_asks = rng.choice(self.TAILS)
         if tail:
             # What happened goes above the ask (#153). Below it, the ask is no longer the last thing,
@@ -1849,22 +1876,36 @@ class Properties(unittest.TestCase):
                 text = text + "\n\n" + tail
                 valid = valid and tail in self.LINK_TAILS and not all_clear
                 nothing = nothing and valid
+                after = has_ask and tail not in self.LINK_TAILS and not tail.startswith(">")
+                below = [tail] if tail in self.LINK_TAILS else []
         # A message whose ask block is "Nothing for you to do right now" asks nothing.
         asks = not nothing and (asks or tail_asks)
-        return text, valid, fact or tail_fact, (asks and not (link or tail_link)) or item_unlinked
+        ask = None
+        if valid and all_clear:
+            ask = "all clear"
+        elif valid and self.last_body["kind"] in (1, 2):
+            b = self.last_body
+            parts = ([b["thing"]] if b["kind"] == 1 else
+                     ["%d things" % b["n"]] + ["%d. %s." % (i, b["thing"]) for i in range(1, b["n"] + 1)])
+            joined = " ".join(parts + below)
+            ask = (" ".join(re.findall(r"[a-z0-9]+", joined.lower())),
+                   {int(x or y) for x, y in re.findall(r"(?<![\w/])#(\d+)\b|/(?:pull|issues)/(\d+)\b", joined)})
+        info = {"after": after, "ask": ask}
+        return text, valid, fact or tail_fact, (asks and not (link or tail_link)) or item_unlinked, info
 
     def body(self, rng):
         """(text, a valid ask block, states a fact, asks a decision, holds a link, a numbered item under
         "N things" asks a decision with no link on its own line, starts with "Nothing for you")."""
         kind = rng.randrange(7)
         thing, fact, names, asks, link = rng.choice(self.THINGS)
+        n = rng.randint(2, 6)
+        self.last_body = {"kind": kind, "thing": thing, "n": n}
         if kind == 0:
             return NOTHING, True, False, False, False, False, True
         if kind == 5:
             return ALL_CLEAR, True, False, False, False, False, False
         if kind == 1:
             return "1 thing for you to do right now: %s." % thing, True, fact, names, link, False, False
-        n = rng.randint(2, 6)
         items = ["%d. %s." % (i, thing) for i in range(1, n + 1)]
         # In a list, the thing is an item: a decision there needs the link on the item's own line,
         # so a link in the tail doesn't help it.
@@ -1882,8 +1923,10 @@ class Properties(unittest.TestCase):
         rng = random.Random(41)
         quiet_stops = 0  # quiet wake-ups the histories reached, so the exception is really tested
         quiet_after_helper = 0  # those whose turn starts with the helper's SubagentStop
+        new_cases = {"after": 0, "repeat": 0}  # #121's cases the histories reached
         for history in range(40):
             project = apb_project()
+            last_ask = None  # what the last stop that went through with an ask block handed over
             sim_running = set()
             next_id = [0]
             checks = 0
@@ -1956,9 +1999,10 @@ class Properties(unittest.TestCase):
                 write_events(project, events)
                 if (by_prompt or wake_prompt) and prompts_logged:
                     seen_prompt = True  # any logged prompt shows that prompts are logged
-                message, valid, fact, unlinked = self.message(rng)
+                message, valid, fact, unlinked, info = self.message(rng)
                 if not by_prompt and rng.random() < 0.5:  # a wake-up often ends quietly
                     message, valid, fact, unlinked = rng.choice(["", "Noted.", "  "]), False, False, False
+                    info = {"after": False, "ask": None}
                 # A turn that no prompt started counts only once prompts are known to be logged.
                 # The hook's work-ran-out check counts the helper's SubagentStop like any other.
                 ran_out = (not sim_running and not background_bash
@@ -1976,20 +2020,39 @@ class Properties(unittest.TestCase):
                     quiet = woken_quietly and len(message.split()) <= 1
                     quiet_stops += quiet and ran_out and not valid and not hook_active
                     quiet_after_helper += quiet and helper and not valid and not hook_active
-                    want_send_back = not hook_active and ((ran_out and not valid and not quiet)
-                                                          or (fact and not checked) or unlinked)
+                    no_line = ran_out and not valid and not quiet
+                    # #121: prose after the ask line; the same ask again with no word from the human.
+                    after = not hook_active and info["after"] and not no_line
+                    repeat = (not hook_active and not after and info["ask"] is not None
+                              and not (by_prompt and prompts_logged) and last_ask not in (None, "claude")
+                              and self.same_ask(last_ask, info["ask"]))
+                    new_cases["after"] += after
+                    new_cases["repeat"] += repeat
+                    want_send_back = not hook_active and (no_line or (fact and not checked) or unlinked
+                                                          or after or repeat)
                     r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time(),
                                     no_github, no_github)
                     checks += 1
-                    self.assertEqual(r["send_back"], want_send_back, (history, turn, message, events))
+                    self.assertEqual(r["send_back"], want_send_back, (history, turn, message, events, last_ask))
                     if not r["send_back"]:
                         said_holder = said_holder or valid
+                        if valid:
+                            last_ask = info["ask"] or "claude"
                         break
                     hook_active = True  # Claude Code tries again; it may still have no line
-                    message, valid, fact, unlinked = self.message(rng)
+                    message, valid, fact, unlinked, info = self.message(rng)
             self.assertGreater(checks, 0)
         self.assertGreater(quiet_stops, 0)
         self.assertGreater(quiet_after_helper, 0)
+        self.assertGreater(new_cases["after"], 0)
+        self.assertGreater(new_cases["repeat"], 0)
+
+    @staticmethod
+    def same_ask(before, now):
+        """The same hand-off: both All clear, or the same words, or the same PRs and cards named."""
+        if "all clear" in (before, now):
+            return before == now
+        return before[0] == now[0] or (bool(before[1]) and before[1] == now[1])
 
 
 class HooksFile(unittest.TestCase):

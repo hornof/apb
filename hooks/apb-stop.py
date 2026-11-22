@@ -54,6 +54,20 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   or "Projects:" with links to the projects' PRs that apply the change), the hook sends the message
   back once, with a note that starts "An apb PR in this hand-off changes how projects run." It looks
   each PR up with gh (at most MAX_PRS).
+- One ask per turn (#121), on any stop but a retry: if the turn's text (every assistant text block in
+  the transcript since the last prompt, and the last message) holds more than one ask line, or prose
+  follows the message's ask line, it sends the message back once ("one-ask"). If the human hasn't
+  written since the last stop that handed them something, and this message hands them the same thing
+  (the same words, or the same PRs and cards; All clear again), it sends it back once, to end with one
+  word instead ("repeated-ask").
+- Nothing running (#121): if the message ends "Nothing for you to do right now. Waiting on …" while
+  nothing runs (nothing_running) and the Waiting on line names nothing outside the session (OUTSIDE:
+  checks, CI, a build session, …), it sends it back once: the ball is the human's ("nothing-running").
+- The end-of-turn check (#121): when the turn hands something over (ends with an ask block) or started
+  an agent, in the main checkout of a project on GitHub, it runs scripts/consistency-check.py within
+  CHECK_BUDGET seconds and sends the message back once with each problem ("consistency"). On a GitHub
+  error, it lets the stop through, logs "consistency-error" and tells the human (systemMessage) that the
+  check couldn't run. CASES lists this hook's own cases and their incidents.
 - Both checks share one gh time budget (PR_BUDGET seconds, at most PR_TIME_LIMIT for one call) and look
   each PR up once. Whatever can't be looked up in time is let through.
 - It appends a Stop line to the events file, with who holds the ball when the message's ask block
@@ -85,6 +99,39 @@ ABANDONED = 3 * 3600  # an agent silent this long is taken to be gone; same as s
 REMIND_AFTER = 30 * 60  # seconds the human holds the ball, with no action, before one reminder
 LIFETIME_MARGIN = 60  # seconds the reminder may run past its wait before its deadline ends it
 MAX = 300  # longest string kept in a line, in characters
+CHECK_BUDGET = 10  # seconds for the whole consistency check: its gh calls and its git worktree list
+GIT_LIMIT = 3  # seconds for each of the two git calls before it (the project's repo, linked worktree or not)
+STARTUP = 3  # seconds left for Python, the events file and the rest; the worst case must fit hooks.json's timeout:
+# PR_BUDGET + CHECK_BUDGET + 2 * GIT_LIMIT + STARTUP <= 25 (test_apb_stop_checks.py checks it)
+
+# The checks this hook makes on the message itself (#121), each with the incident that added it. The
+# GitHub-state cases are in scripts/consistency-check.py's CASES.
+CASES = [
+    {"id": "one-ask", "incident": "2026-11-21 ~7:15 PM and ~8:10 PM: the ask line twice in one reply; "
+                                  "2026-11-22 ~5:08 AM, apb orch 11: the ask in two text blocks of one turn (#121)"},
+    {"id": "repeated-ask", "incident": "2026-11-21 ~8:14 PM, apb orch 5: three replies in a row, each with the same "
+                                       "ask about #130 (#121)"},
+    {"id": "nothing-running", "incident": "2026-11-21 ~4:58 PM: \"Nothing for you to do right now. Waiting on a new "
+                                          "comment on #25\" with nothing running (#121)"},
+]
+
+ONE_ASK = ("One ask per turn: say it once, as the turn's last line (playbook, \"Helping the human keep track\"): "
+           "this turn has %s. Keep only the last one, at the very end, and put what happened above it.")
+REPEATED = ("Your last ask is still open and nothing new needs the human: \"%s\". Don't post it again. End with "
+            "one word (for example \"Noted.\"), and the ball stays where it was.")
+IDLE = ("Nothing is running (no agent, no background command), so there is nothing to wait on and the ball is "
+        "the human's. End with \"1 thing for you to do right now: <the human's next step>\" (for example, choose "
+        "the next card), or \"All clear\". If you are waiting on something outside this session, such as GitHub "
+        "checks or a build session, name it in the Waiting on line.")
+INCONSISTENT = ("The board and GitHub disagree with what's happening (the end-of-turn check, scripts/"
+                "consistency-check.py). Fix each, then end the turn:\n%s")
+COULD_NOT_CHECK = "apb's end-of-turn check couldn't run (%s), so the board wasn't compared with GitHub this turn."
+# An ask line: one of the four forms, with or without "right now", as the line's start.
+ASK_LINE = re.compile(r"(?i)(?:nothing for you to do\b|\d+ things? for you to do\b|all clear:)")
+# What a Waiting on line may name that runs outside this session, so nothing local needs to run.
+OUTSIDE = re.compile(r"(?i)\b(?:checks?|CI|tests?|actions|workflows?|deploy\w*|preview|bot|(?:build|review|"
+                     r"other|separate)\s+sessions?)\b")
+REFS = re.compile(r"(?<![\w/])#(\d+)\b|/(?:pull|issues)/(\d+)\b")
 
 REASON = ("Say who holds the ball. Your work just ran out, so end the message with one of these "
           "lines, with nothing after it but its numbered list and any link or fenced block that belongs "
@@ -173,7 +220,8 @@ PROJECTS_NONE = re.compile(r"(?i:none)\b")
 PR_LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/pull/\d+|\b[\w.-]+/[\w.-]+#\d+")
 MAX_PRS = 3  # apb PRs looked up in one stop
 PR_TIME_LIMIT = 4  # seconds for one gh call
-PR_BUDGET = 6  # seconds for all the stop's gh calls, both checks together; the Stop hook has 10 in all
+PR_BUDGET = 6  # seconds for the PR lookups of the already-done and Projects-line checks together; the Stop
+# hook has 25 in all (see CHECK_BUDGET)
 
 DONE = ("A hand-off asks the human for something that is already done: %s. Look it up again, then hand "
         "off only what is left.")
@@ -589,11 +637,7 @@ def work_ran_out(events, session, now, tasks=None):
     """tasks: the Stop input's background_tasks, the work Claude Code still has in flight. When
     Claude Code doesn't send it, the events file says what's running instead."""
     turn = this_turn(events, session)
-    if isinstance(tasks, list):
-        if tasks:
-            return False
-    elif running_agents(events, now) or any(
-            e["event"] == "PostToolUse" and e.get("background") and "agent_id" not in e for e in turn):
+    if not nothing_running(events, session, now, tasks):
         return False
     if any(e["event"] == "SubagentStop" for e in turn):
         return True
@@ -601,6 +645,202 @@ def work_ran_out(events, session, now, tasks=None):
     prompts_logged = any(e["event"] == "UserPromptSubmit" and e.get("session") == session
                          for e in events)
     return prompts_logged and not any(humans_prompt(e) for e in turn)
+
+
+def nothing_running(events, session, now, tasks=None):
+    """True if nothing Claude Code runs for this session is still going: the Stop input's
+    background_tasks when it sends them, else the events file (agents started and not stopped, and
+    background commands started in this turn)."""
+    if isinstance(tasks, list):
+        return not tasks
+    return not (running_agents(events, now) or any(
+        e["event"] == "PostToolUse" and e.get("background") and "agent_id" not in e
+        for e in this_turn(events, session)))
+
+
+def ask_lines(text):
+    """The ask lines in the text (one of the four forms, with or without "right now"), outside quoted lines."""
+    return [clean(l) for l in unquoted(text) if ASK_LINE.match(clean(l))]
+
+
+def text_after_ask(message):
+    """True if a line of prose follows the message's last ask line: anything but a blank line, a numbered
+    item, a line of links or a fenced block (what may belong to the ask). Quoted lines don't count."""
+    if not isinstance(message, str):
+        return False
+    lines = [l for l in message.splitlines() if not QUOTED.match(l)]
+    asks = [k for k, l in enumerate(lines) if ASK_LINE.match(clean(l))]
+    if not asks:
+        return False
+    fenced = False
+    for line in lines[asks[-1] + 1:]:
+        if FENCE.match(line.strip()):
+            fenced = not fenced
+            continue
+        bare = clean(line)
+        if fenced or not bare or ITEM.match(bare) or LINK_ONLY.fullmatch(bare):
+            continue
+        return True
+    return False
+
+
+def turn_texts(p, message):
+    """Claude's text in this turn, oldest first: each assistant text block in the transcript since the
+    last prompt (a user entry with text, not a tool result), and the last message, if the transcript
+    doesn't end with it yet."""
+    texts = []
+    path = p.get("transcript_path")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                    if e.get("isSidechain"):
+                        continue
+                    content = e["message"]["content"]
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    continue
+                parts = [content] if isinstance(content, str) else content if isinstance(content, list) else []
+                said = [c if isinstance(c, str) else c.get("text") for c in parts
+                        if isinstance(c, str) or (isinstance(c, dict) and c.get("type") == "text")]
+                said = [t for t in said if isinstance(t, str)]
+                if e.get("type") == "user" and said:
+                    texts = []
+                elif e.get("type") == "assistant" and said:
+                    texts.append("\n".join(said))
+    except (OSError, TypeError):
+        texts = []
+    if isinstance(message, str) and (not texts or texts[-1].strip() != message.strip()):
+        texts.append(message)
+    return texts
+
+
+def refs(text):
+    """The issue and PR numbers a text names (#N, or a link to one)."""
+    return {int(a or b) for a, b in REFS.findall(text or "")}
+
+
+def words(text):
+    return " ".join(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def repeated_ask(events, session, block):
+    """The open ask this message repeats, or None: the human hasn't written since the last stop of this
+    session that handed them something, and this message hands them the same thing (the same words, or
+    the same PRs and cards; "All clear" again)."""
+    if not block or block["holder"] != "human" or any(humans_prompt(e) for e in this_turn(events, session)):
+        return None
+    last = None
+    for e in reversed(events):
+        if e.get("session") == session and e["event"] == "Stop" and e.get("holder"):
+            last = e
+            break
+    if not last or last.get("holder") != "human":
+        return None
+    before = " ".join([last.get("todo") or ""] + list(last.get("items") or []) + list(last.get("links") or []))
+    now = " ".join([block["todo"] or ""] + block["items"] + block["links"])
+    if block["todo"] == CLEAR or last.get("todo") == CLEAR:
+        return before if block["todo"] == last.get("todo") else None
+    same = words(before) == words(now) or (refs(before) and refs(before) == refs(now))
+    return (last.get("todo") or before) if same else None
+
+
+def idle_nothing(events, session, now, tasks, block):
+    """True if the message ends "Nothing for you to do right now. Waiting on …" while nothing runs, and
+    what it waits on isn't something outside this session (GitHub checks, a build session, …)."""
+    return (bool(block) and block["holder"] == "claude" and nothing_running(events, session, now, tasks)
+            and not OUTSIDE.search(block["line"]))
+
+
+def project_repo(project):
+    """The project's GitHub repo, owner/name, from its origin remote, or None."""
+    try:
+        out = subprocess.run(["git", "-C", project, "remote", "get-url", "origin"], stdin=subprocess.DEVNULL,
+                             capture_output=True, text=True, timeout=GIT_LIMIT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?\s*$", out.stdout) if out.returncode == 0 else None
+    return "%s/%s" % (m.group(1), m.group(2)) if m else None
+
+
+def linked_worktree(project):
+    """True if the folder is a linked git worktree (a build's or a review's), not the main checkout."""
+    try:
+        out = subprocess.run(["git", "-C", project, "rev-parse", "--absolute-git-dir", "--path-format=absolute",
+                              "--git-common-dir"], stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                             timeout=GIT_LIMIT)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    lines = out.stdout.split("\n")
+    if out.returncode != 0 or len(lines) < 2 or not lines[0] or not lines[1]:
+        return False
+    return os.path.realpath(lines[0]) != os.path.realpath(lines[1])
+
+
+def consistency():
+    """scripts/consistency-check.py, loaded."""
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts",
+                        "consistency-check.py")
+    spec = importlib.util.spec_from_file_location("apb_consistency_check", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def hand_off_refs(message, repo):
+    """What the hand-off at the end of the message hands the human, in the project's repo:
+    {"prs": PRs it names, "merge": PRs it asks to merge, "issues": other numbers it names (cards),
+    "decisions": PRs whose Decision threads it links}."""
+    out = {"prs": [], "merge": [], "issues": [], "decisions": []}
+
+    def add(key, n):
+        if n not in out[key]:
+            out[key].append(n)
+    for line in hand_off_lines(message):
+        text = QUOTE.sub(" ", line)
+        for m in THREAD_LINK.finditer(text):
+            if m.group(1).lower() == (repo or "").lower():
+                add("decisions", int(m.group(2)))
+                add("prs", int(m.group(2)))
+        rest = THREAD_LINK.sub(" ", text)
+        links = list(PULL_LINK.finditer(rest))
+        own = [int(m.group(2)) for m in links if m.group(1).lower() == (repo or "").lower()]
+        bare = [] if links else [int(m.group(1)) for m in BARE_PR.finditer(rest)]
+        for n in own + bare:
+            add("prs", n)
+            if MERGE.search(text):
+                add("merge", n)
+        for m in re.finditer(r"(?<![\w/])#(\d+)\b|github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)", rest):
+            n = int(m.group(1) or m.group(3))
+            if m.group(2) and m.group(2).lower() != (repo or "").lower():
+                continue
+            if n not in out["prs"]:
+                add("issues", n)
+    return out
+
+
+def check_state(p, project, events, session, block, message, lookup=None):
+    """(problems, error): what the end-of-turn consistency check finds, run when the turn hands something
+    over (it ends with an ask block) or started an agent. (None, None) when it doesn't run: a retry, no
+    GitHub repo, or a build's own worktree. lookup(repo, project) stands in for GitHub in tests."""
+    started = any(e["event"] == "SubagentStart" for e in this_turn(events, session))
+    if p.get("stop_hook_active") or not (block or started):
+        return None, None
+    repo = project_repo(project)
+    if not repo or linked_worktree(project):
+        return None, None
+    try:
+        cc = consistency()
+        if lookup is None:
+            login = cc.authors.claude_login(None, settings=os.path.join(project, ".claude", "settings.local.json"))
+            snapshot = cc.fetch(repo, project, login, budget=CHECK_BUDGET, time_limit=CHECK_BUDGET)
+        else:
+            snapshot = lookup(repo, project)
+        hand_off = hand_off_refs(message, repo) if block and block["holder"] == "human" else {}
+        return cc.check(snapshot, hand_off), None
+    except Exception as e:  # never block on GitHub, or on the check itself
+        return None, (str(e) or type(e).__name__)[:MAX]
 
 
 def humans_prompt(e):
@@ -713,10 +953,11 @@ def append(project, line):
         return f.tell()
 
 
-def handle(p, project, now, pr_lookup=None, thread_lookup=None):
-    """Decide on one stop and log it. pr_lookup(repo, number) and thread_lookup(repo, number) stand in
-    for gh in tests.
-    Returns {"send_back": bool, "remind": what or None, "end": the events file's size after the line}."""
+def handle(p, project, now, pr_lookup=None, thread_lookup=None, state_lookup=None):
+    """Decide on one stop and log it. pr_lookup(repo, number), thread_lookup(repo, number) and
+    state_lookup(repo, project) stand in for gh in tests.
+    Returns {"send_back": bool, "remind": what or None, "end": the events file's size after the line,
+    "note" when sent back, "warning" when the consistency check couldn't run}."""
     session = p.get("session_id")
     if not isinstance(session, str):
         return {"send_back": False, "remind": None, "end": 0}
@@ -739,7 +980,19 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None):
     done = already_done(message, github) if hand_off else []
     # A hand-off of an apb PR that changes how projects run needs its "Projects:" line.
     no_projects = projects_line_missing(message, github=github) if hand_off else []
-    send_back = no_line or bool(unchecked) or departed or unlinked or bool(done) or bool(no_projects)
+    # One ask per turn, as its last line (#121).
+    if retry:
+        asks, not_last = [], False
+    else:
+        asks = [a for t in turn_texts(p, message) for a in ask_lines(t)]
+        not_last = block is None and not no_line and text_after_ask(message)
+    one_ask = len(asks) > 1 or not_last
+    repeat = None if retry or one_ask else repeated_ask(events, session, block)
+    idle = not retry and idle_nothing(events, session, now, p.get("background_tasks"), block)
+    # The board and GitHub agree with what's happening (#121).
+    problems, error = check_state(p, project, events, session, block, message, state_lookup)
+    send_back = (no_line or bool(unchecked) or departed or unlinked or bool(done) or bool(no_projects)
+                 or one_ask or bool(repeat) or idle or bool(problems))
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}
     if send_back:
@@ -754,6 +1007,14 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None):
             line["already-done"] = [d[:MAX] for d in done]
         if no_projects:
             line["projects-line-missing"] = no_projects
+        if one_ask:
+            line["one-ask"] = True
+        if repeat:
+            line["repeated-ask"] = repeat[:MAX]
+        if idle:
+            line["nothing-running"] = True
+        if problems:
+            line["consistency"] = sorted({x["case"] for x in problems})
     elif said:
         line["holder"] = said[0]
         if said[1]:
@@ -764,7 +1025,10 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None):
             line["items"] = [l[:MAX] for l in block["items"]]
         if block["links"]:
             line["links"] = [l[:MAX] for l in block["links"]]
+    if error:
+        line["consistency-error"] = error
     end = append(project, line)
+    warning = COULD_NOT_CHECK % error if error else None
     if send_back:
         notes = ([REASON] if no_line else []) + ([UNCHECKED + ", ".join(unchecked) + "."] if unchecked else [])
         if departed:
@@ -777,7 +1041,16 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None):
         if no_projects:
             links = ", ".join("https://github.com/%s/pull/%d" % (apb_repo(), n) for n in no_projects)
             notes.append(PROJECTS % links)
-        return {"send_back": True, "remind": None, "end": end, "note": "\n\n".join(notes)}
+        if one_ask:
+            many = len(asks) > 1
+            notes.append(ONE_ASK % ("%d ask lines" % len(asks) if many else "an ask that isn't its last line"))
+        if repeat:
+            notes.append(REPEATED % repeat)
+        if idle:
+            notes.append(IDLE)
+        if problems:
+            notes.append(INCONSISTENT % "\n".join("- %s" % x["problem"] for x in problems))
+        return {"send_back": True, "remind": None, "end": end, "note": "\n\n".join(notes), "warning": warning}
     if said:
         holder, todo = said
     elif any(e["event"] == "UserPromptSubmit" for e in this_turn(events, session)):
@@ -785,7 +1058,8 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None):
     else:
         holder, todo = None, None  # woken with no new line: the running wait carries on
     # All clear got its one alert from the orchestrator; nothing more until the human writes.
-    return {"send_back": False, "remind": todo if holder == "human" and todo != CLEAR else None, "end": end}
+    return {"send_back": False, "remind": todo if holder == "human" and todo != CLEAR else None, "end": end,
+            "warning": warning}
 
 
 def remind_after():
@@ -864,9 +1138,14 @@ def main():
     result = handle(p, project, time.time())
     if result["send_back"]:
         # A quiet note: Claude goes on with it, shown as "Stop hook feedback", not as an error.
-        sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "Stop",
-                                                            "additionalContext": result["note"]}}))
+        out = {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": result["note"]}}
+        if result.get("warning"):
+            out["systemMessage"] = result["warning"]
+        sys.stdout.write(json.dumps(out))
         return
+    if result.get("warning"):
+        # The consistency check couldn't run: the turn ends, and the human sees why nothing was checked.
+        sys.stdout.write(json.dumps({"systemMessage": result["warning"]}))
     if result["remind"]:
         start_reminder(project, p["session_id"], result["remind"], result["end"])
 

@@ -254,7 +254,8 @@ class Stop(Clean):
 
     BARE = ["Nothing for you to do.", "Nothing for you to do right now.",
             "Nothing for you to do. Four cards wait in Todo."]
-    GOOD = "Nothing for you to do right now. Waiting on the builder for card #132, ETA 7:10 PM."
+    # #121: with nothing running, a full line waits on something outside the session.
+    GOOD = "Nothing for you to do right now. Waiting on GitHub checks for card #132, ETA 7:10 PM."
 
     def test_sends_back_nothing_for_you_while_nothing_runs_in_the_apb_repo(self):
         for message in self.BARE:
