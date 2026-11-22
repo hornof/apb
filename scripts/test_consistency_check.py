@@ -162,9 +162,40 @@ class Assignment(unittest.TestCase):
         self.assertEqual(cc.check(s, {"prs": [134], "merge": [134], "issues": [], "decisions": []}), [])
 
     def test_a_question_on_a_card_needs_the_card_assigned(self):
-        s = snap(board=[card(40, "in progress")])
-        found = cc.check(s, {"prs": [], "merge": [], "issues": [40], "decisions": []})
+        c = dict(card(40, "in progress"), last_comment={"author": CLAUDE, "body": "Which name should it use?"}, prs=[])
+        found = cc.check(snap(board=[c]), {"prs": [], "merge": [], "issues": [40], "decisions": []})
         self.assertEqual(cases(found), ["hand-off-not-assigned"])
+
+    def test_choosing_the_next_card_needs_no_assignment_on_either_turn(self):
+        # Review fix 1 on #157: "choose the next card to build, #130 or #131" flagged both cards as
+        # unassigned, and once assigned, the next turn flagged both as stale.
+        hand_off = {"prs": [], "merge": [], "issues": [130, 131], "decisions": []}
+        first = snap(board=[card(130), card(131)])
+        self.assertEqual(cc.check(first, hand_off), [])
+        assigned = [card(130, assignees=[HUMAN]), card(131, assignees=[HUMAN])]
+        items = [{"kind": "issue", "number": n, "state": "OPEN", "last_comment": None, "prs": []} for n in (130, 131)]
+        second = snap(board=assigned, assigned=items)
+        self.assertEqual(cases(cc.check(second, hand_off)), ["stale-assignment"])
+
+    def test_the_two_cases_never_ask_for_opposite_things(self):
+        # Both directions, for every kind of card: of "assigned" and "not assigned", exactly one is clean.
+        rng = random.Random(157)
+        lasts = [None, {"author": CLAUDE, "body": "Which one?"}, {"author": CLAUDE, "body": "Done.\n\n— Claude (orchestrator)"},
+                 {"author": HUMAN, "body": "why?"}, {"author": HUMAN, "body": "b" + ADVISOR}]
+        for _ in range(300):
+            last = rng.choice(lasts)
+            pr_kind = rng.choice([None, "ready", "draft"])
+            prs = [] if pr_kind is None else [pr(70, closes=[7], draft=pr_kind == "draft", assignees=[HUMAN])]
+            hand_off = {"prs": [], "merge": [], "issues": [7], "decisions": []}
+            clean = []
+            for assignees in ([], [HUMAN]):
+                c = dict(card(7, "in review" if pr_kind == "ready" else "in progress", assignees=assignees), last_comment=last)
+                item = {"kind": "issue", "number": 7, "state": "OPEN", "last_comment": last,
+                        "prs": [{"kind": "pr", "number": 70, "state": "OPEN", "draft": pr_kind == "draft"}] if prs else []}
+                found = cc.check(snap(board=[c], prs=prs, assigned=[item] if assignees else []), hand_off)
+                clean.append(not [p for p in found if p["case"] in ("hand-off-not-assigned", "stale-assignment")
+                                  and "card #7" in p["problem"]])
+            self.assertEqual(sum(clean), 1, (last, pr_kind, clean))
 
     def test_no_hand_off_no_assignment_needed(self):
         s = snap(board=[card(132, "in review")], prs=[pr(134, closes=[132])])

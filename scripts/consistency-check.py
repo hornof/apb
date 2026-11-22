@@ -199,6 +199,17 @@ def board_cases(s):
     return out
 
 
+def card_item(c, s):
+    """The card in the shape human-turn.py's verdict() reads: its last comment, and the PRs that close it
+    (from GitHub's answer, or else the snapshot's open PRs)."""
+    prs = c.get("prs")
+    if prs is None:
+        prs = [{"kind": "pr", "number": p["number"], "state": "OPEN", "draft": bool(p.get("draft"))}
+               for p in s.get("prs") or [] if c["number"] in p.get("closes", [])]
+    return {"kind": "issue", "number": c["number"], "state": c.get("state"), "last_comment": c.get("last_comment"),
+            "prs": prs}
+
+
 def assignment_cases(s, hand_off):
     human, repo = s.get("human"), s.get("repo")
     out = []
@@ -214,13 +225,19 @@ def assignment_cases(s, hand_off):
             want_cards += [c for c in prs[n].get("closes", []) if c not in want_cards]
         elif n in cards and n not in want_cards:
             want_cards.append(n)
+    login = s.get("claude_login")
+    # Only what human-turn.py would call waiting on the human needs the assignment, so this case and
+    # stale-assignment never ask for opposite things (review fix 1 on #157): a card handed over with no
+    # PR ready for review and no question from Claude on it ("choose the next card") stays unassigned.
     for n in want_prs:
-        if human not in prs[n].get("assignees", []):
+        item = {"kind": "pr", "number": n, "state": "OPEN", "draft": bool(prs[n].get("draft"))}
+        if human_turn.verdict(item, login)[0] == "waiting" and human not in prs[n].get("assignees", []):
             out.append(_problem("hand-off-not-assigned", "this turn hands PR #%d to %s, but it isn't assigned to them. "
                                 "Assign it: gh pr edit %d --repo %s --add-assignee %s" % (n, human, n, repo, human)))
     for n in want_cards:
         c = cards.get(n)
-        if c and c.get("state") == "OPEN" and human not in c.get("assignees", []):
+        if (c and c.get("state") == "OPEN" and human_turn.verdict(card_item(c, s), login)[0] == "waiting"
+                and human not in c.get("assignees", [])):
             out.append(_problem("hand-off-not-assigned", "this turn hands card #%d to %s, but it isn't assigned to "
                                 "them. Assign it: gh issue edit %d --repo %s --add-assignee %s"
                                 % (n, human, n, repo, human), n))
@@ -320,13 +337,16 @@ def check(s, hand_off=None):
 # ---------------------------------------------------------------- reading GitHub
 
 COMMENT = "body author { login } createdAt url"
+# A card: what the board cases read, and what human-turn.py's verdict reads (its last comment, its PRs).
+CARD = """number state assignees(first: 10) { nodes { login } } comments(last: 1) { nodes { body author { login } } }
+          closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number state isDraft } }"""
 QUERY = """query($owner: String!, $name: String!, $q: String!) {
   repository(owner: $owner, name: $name) {
     owner { __typename login }
     projectsV2(first: 1) { nodes { items(first: 100, orderBy: {field: POSITION, direction: ASC}) {
       pageInfo { hasNextPage endCursor }
       nodes { fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
-        content { ... on Issue { number state assignees(first: 10) { nodes { login } } } } } } } }
+        content { ... on Issue { %(card)s } } } } } }
     pullRequests(states: OPEN, first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes {
       number isDraft headRefName assignees(first: 10) { nodes { login } }
       closingIssuesReferences(first: 10) { nodes { number } }
@@ -337,13 +357,14 @@ QUERY = """query($owner: String!, $name: String!, $q: String!) {
     __typename
     ... on PullRequest { number state isDraft }
     ... on Issue { number state comments(last: 1) { nodes { body author { login } } }
-      closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft } } } } } }""" % {"c": COMMENT}
+      closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft } } } } } }""" % {
+    "c": COMMENT, "card": CARD}
 PAGE = """query($owner: String!, $name: String!, $after: String!) {
   repository(owner: $owner, name: $name) {
     projectsV2(first: 1) { nodes { items(first: 100, after: $after, orderBy: {field: POSITION, direction: ASC}) {
       pageInfo { hasNextPage endCursor }
       nodes { fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
-        content { ... on Issue { number state assignees(first: 10) { nodes { login } } } } } } } } } }"""
+        content { ... on Issue { %s } } } } } } } }""" % CARD
 COORDINATION = """query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
   issue(number: $number) { comments(last: 30) { nodes { body } } } } }"""
 
@@ -374,9 +395,14 @@ def from_answers(answers, repo, claude_login, worktrees, coordination=None):
             content = (item or {}).get("content") or {}
             if "number" not in content:
                 continue
-            board.append({"number": content["number"], "state": content.get("state"),
-                          "status": (((item.get("fieldValueByName") or {}).get("name")) or "").lower(),
-                          "assignees": [a["login"] for a in _nodes(content.get("assignees")) if a]})
+            c = {"number": content["number"], "state": content.get("state"),
+                 "status": (((item.get("fieldValueByName") or {}).get("name")) or "").lower(),
+                 "assignees": [a["login"] for a in _nodes(content.get("assignees")) if a]}
+            if "closedByPullRequestsReferences" in content:
+                # human-turn.py's own reading of a card, so both scripts judge it the same way.
+                read = human_turn.items({"data": {"search": {"nodes": [dict(content, __typename="Issue")]}}})[0]
+                c["last_comment"], c["prs"] = read["last_comment"], read["prs"]
+            board.append(c)
     prs = []
     for p in _nodes(first["repository"].get("pullRequests")):
         prs.append({"number": p["number"], "draft": bool(p.get("isDraft")), "head": p.get("headRefName") or "",
