@@ -33,8 +33,8 @@ def issue(n, state="OPEN", last=None, prs=()):
             "prs": [dict(p) for p in prs]}
 
 
-def pr(n, state="OPEN"):
-    return {"kind": "pr", "number": n, "state": state}
+def pr(n, state="OPEN", draft=False):
+    return {"kind": "pr", "number": n, "state": state, "draft": draft}
 
 
 class Asks(unittest.TestCase):
@@ -68,6 +68,26 @@ class Verdict(unittest.TestCase):
 
     def test_a_card_with_its_pr_open_waits(self):
         self.assertEqual(self.v(issue(3, prs=[pr(7)])), "waiting")
+
+    def test_a_draft_pr_does_not_wait_on_the_human(self):
+        # Issue #131: a builder opens a draft PR at build start; it waits on the builder, not the human.
+        self.assertEqual(self.v(pr(7, draft=True)), "stale")
+        self.assertEqual(self.v(issue(3, prs=[pr(7, draft=True)])), "stale")
+        self.assertEqual(self.v(issue(3, prs=[pr(7, draft=True), pr(8)])), "waiting")
+
+    def test_a_draft_does_not_hide_claudes_question_on_the_card(self):
+        item = issue(3, last=(CLAUDE, "Which one?"), prs=[pr(7, draft=True)])
+        self.assertEqual(self.v(item), "waiting")
+
+    def test_the_query_reads_is_draft_for_both_pr_shapes(self):
+        self.assertEqual(ht.QUERY.count("isDraft"), 2)
+        answer = {"data": {"search": {"nodes": [
+            {"__typename": "PullRequest", "number": 7, "state": "OPEN", "isDraft": True},
+            {"__typename": "Issue", "number": 3, "state": "OPEN", "comments": {"nodes": []},
+             "closedByPullRequestsReferences": {"nodes": [{"number": 7, "state": "OPEN", "isDraft": True}]}}]}}}
+        got = ht.items(answer)
+        self.assertTrue(got[0]["draft"])
+        self.assertTrue(got[1]["prs"][0]["draft"])
 
     def test_a_card_whose_merged_pr_has_an_unresolved_thread_is_stale(self):
         self.assertEqual(self.v(issue(3, "CLOSED", prs=[dict(pr(7, "MERGED"), unresolved=2)])), "stale")
@@ -130,7 +150,7 @@ def random_board(rng):
     Each comment carries "asks": whether the generator wrote a question, so the oracle needn't parse it."""
     prs = {}
     for n in range(100, 100 + rng.randint(0, 6)):
-        prs[n] = {"number": n, "state": rng.choice(["OPEN", "MERGED", "CLOSED"]),
+        prs[n] = {"number": n, "state": rng.choice(["OPEN", "MERGED", "CLOSED"]), "draft": rng.random() < 0.3,
                   "threads": [rng.random() < 0.6 for _ in range(rng.randint(0, 3))],
                   "assignees": rng.sample([HUMAN, CLAUDE, "other"], rng.randint(0, 2))}
     issues = {}
@@ -153,7 +173,7 @@ def random_board(rng):
 def oracle(board, login):
     """{("issue"|"pr", number): "waiting" | "stale"} for everything assigned to login, straight from the board."""
     def pr_open(p):
-        return p["state"] == "OPEN"  # threads are on the board but never count
+        return p["state"] == "OPEN" and not p["draft"]  # threads are on the board but never count
     out = {}
     for p in board["prs"].values():
         if login in p["assignees"]:
@@ -183,10 +203,13 @@ def respond(query, variables, board):
             return {"nodes": []}
         return {"nodes": [{"isResolved": r} for r in p["threads"]]}
 
+    def draft(p):
+        return {"isDraft": p["draft"]} if "isDraft" in query else {}
+
     for p in board["prs"].values():
         if login in p["assignees"]:
             nodes.append({"__typename": "PullRequest", "number": p["number"], "state": p["state"],
-                          "reviewThreads": threads(p)})
+                          "reviewThreads": threads(p)} | draft(p))
     for i in board["issues"].values():
         if login in i["assignees"]:
             node = {"__typename": "Issue", "number": i["number"], "state": i["state"]}
@@ -196,6 +219,7 @@ def respond(query, variables, board):
             if "includeClosedPrs: true" in query:
                 node["closedByPullRequestsReferences"] = {"nodes": [
                     {"number": n, "state": board["prs"][n]["state"], "reviewThreads": threads(board["prs"][n])}
+                    | draft(board["prs"][n])
                     for n in i["closed_by"]]}
             nodes.append(node)
     return {"data": {"search": {"nodes": nodes}}}
