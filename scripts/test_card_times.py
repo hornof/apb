@@ -319,6 +319,42 @@ class HumanWaits(unittest.TestCase):
         self.assertEqual(ct.QUERY.count("author { login }"), 4)
 
 
+class DraftPr(unittest.TestCase):
+    """Issue #131: a builder opens a draft PR in its first minute and marks it ready when the build is
+    done. Build runs to the ready time, and review starts there; a PR never a draft uses createdAt."""
+
+    def test_build_ends_and_review_starts_when_the_draft_is_marked_ready(self):
+        events = builder_54() + [stop(25, "human", "merge PR #58")]
+        draft = pr(opened=3, merged=30) | {"readyAt": gh_at(20)}
+        r = ct.card_times(events, issue([draft]))
+        self.assertEqual(r["build_min"], 18.0)   # builder start 12:02 to ready 12:20
+        self.assertEqual(r["review_min"], 5.0)   # ready 12:20 to the hand-off 12:25
+
+    def test_a_pr_never_a_draft_uses_its_opening(self):
+        events = builder_54() + [stop(25, "human", "merge PR #58")]
+        r = ct.card_times(events, issue([pr(opened=10, merged=30)]))
+        self.assertEqual((r["build_min"], r["review_min"]), (8.0, 15.0))
+
+    def test_a_hand_off_before_the_ready_time_is_not_the_review_hand_off(self):
+        events = builder_54() + [stop(12, "human", "answer on #54"), stop(25, "human", "merge PR #58")]
+        r = ct.card_times(events, issue([pr(opened=3, merged=30) | {"readyAt": gh_at(20)}]))
+        self.assertEqual(r["review_min"], 5.0)
+
+    def test_flatten_takes_the_last_ready_time(self):
+        got = json.loads(json.dumps(GQL))
+        node = got["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"][0]
+        node["timelineItems"] = {"nodes": [{"createdAt": gh_at(15)}, {"createdAt": gh_at(18)}]}
+        self.assertEqual(ct.flatten(got)["prs"][0]["readyAt"], gh_at(18))
+        self.assertIn("READY_FOR_REVIEW_EVENT", ct.QUERY)
+
+    def test_flatten_with_no_ready_event_has_no_ready_time(self):
+        got = json.loads(json.dumps(GQL))
+        node = got["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"][0]
+        node["timelineItems"] = {"nodes": []}
+        self.assertIsNone(ct.flatten(got)["prs"][0]["readyAt"])
+        self.assertIsNone(ct.flatten(GQL)["prs"][0]["readyAt"])
+
+
 class LastAction(unittest.TestCase):
     def test_closed_without_a_merge(self):
         events = builder_54() + [stop(12, "human", "PR #58")]
