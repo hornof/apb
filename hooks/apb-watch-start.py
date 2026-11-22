@@ -27,8 +27,10 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
 - The newest session in a folder takes the watchers over. After a plugin update the human opens a new
   orchestrator session while the old one is often still open. A hook whose Claude Code started later
   than the holder's stops the holder's hook (and so its watchers), waits for it to exit, and takes the
-  pid file. The older session's hooks find a newer holder and leave it alone, so it never takes the
-  watchers back. Hooks of the same session never take over from each other (same Claude Code process).
+  pid file. It also writes .apb/watcher-owner.json, naming its Claude Code process and when that
+  started. An older session's hook starts nothing while that process is open, even after the newer
+  hook has exited (after a wake, a failure or the budget) and freed the pid files, so it never takes
+  the watchers back. Once the newer session is closed, the older one may run them again. Hooks of the same session never take over from each other (same Claude Code process).
   Start times come from one ps snapshot, to the second; a tie takes nothing over.
 - No second copy of either. Each watcher has its own pid file in .apb/ (watcher.pid,
   watcher-coordination.pid), written under a lock, so hooks fired at once start each watcher once.
@@ -79,6 +81,7 @@ GRACE = 120  # seconds a watcher run may go past its limit before it is stopped
 BACKOFF = 60  # seconds after a failed run before a hook tries that watcher again
 NAME = "apb-watch-start.py"
 MAX = 300  # longest string kept in an events line, in characters
+OWNER_SLACK = 3  # seconds two readings of one process's start time may differ by
 NO_EVENTS = "no-events-file"  # given to the coordination watcher, so it checks no agents
 COORDINATION = re.compile(r"^[\s>*+-]*\**coordination:?\**:?\s*(?:([\w.-]+/[\w.-]+))?#(\d+)",
                           re.IGNORECASE | re.MULTILINE)
@@ -205,14 +208,50 @@ def linked_worktree(folder):
     return os.path.realpath(lines[0]) != os.path.realpath(lines[1])
 
 
-def started_later(mine, theirs):
-    """True if process mine started after process theirs, by one ps snapshot (to the second)."""
+def start_times():
+    """{pid: when it started, in epoch seconds} for every process, from one ps snapshot (to the second);
+    {} if ps can't be read."""
     try:
         watch = load_watch()
-        procs = watch.parse_ps(watch.read_ps())
-        return procs[mine]["elapsed"] < procs[theirs]["elapsed"]
+        now = time.time()
+        return {pid: now - p["elapsed"] for pid, p in watch.parse_ps(watch.read_ps()).items()}
     except Exception:
+        return {}
+
+
+def started_later(mine, theirs):
+    """True if process mine started after process theirs, by one ps snapshot (to the second)."""
+    times = start_times()
+    return mine in times and theirs in times and times[mine] > times[theirs] + 0.5
+
+
+def newer_owner(path, root):
+    """True if the owner file names another session's Claude Code that is still open and started no
+    earlier than this one (root): then this session leaves the watchers to it, even while its hook is
+    between runs and the pid files are free. A pid now used by another process doesn't count."""
+    try:
+        with open(path) as f:
+            owner = json.load(f)
+        pid, started = owner["root"], float(owner["started"])
+    except (OSError, ValueError, TypeError, KeyError):
         return False
+    if not isinstance(pid, int) or pid == root:
+        return False
+    times = start_times()
+    if pid not in times or abs(times[pid] - started) > OWNER_SLACK or not alive(pid):
+        return False  # closed, or its pid reused
+    return root not in times or times[root] <= times[pid] + 0.5
+
+
+def own(path, root, session):
+    """Write the owner file: this session now runs the watchers."""
+    started = start_times().get(root)
+    if started is None:
+        return
+    tmp = "%s.%d" % (path, os.getpid())
+    with open(tmp, "w") as f:
+        json.dump({"root": root, "started": started, "session": session}, f)
+    os.replace(tmp, path)
 
 
 def gone(pid, seconds):
@@ -410,10 +449,16 @@ def main(argv):
             return True
         return False
 
+    owner = os.path.join(folder, "watcher-owner.json")
+    mine()
+    if newer_owner(owner, found["root"]):
+        return 0  # a newer session runs the watchers; its hook may just be between runs
     held = [w for w in watchers(folder, repo, issue)
             if not backing_off(w["failed"], opts.backoff) and claim(w["pid"], mine, takes_over)]
     if not held:
         return 0
+    if found["root"] is not None:
+        own(owner, found["root"], session)
     if "from" in found:
         log(folder, {"event": "watcher-takeover", "session": session, "from": found["from"], "pid": me})
     stopping, done = threading.Event(), queue.Queue()

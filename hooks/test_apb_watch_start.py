@@ -1025,6 +1025,44 @@ class NewestSessionTakesOver(unittest.TestCase):
                 if alive(s["pid"]):
                     os.kill(s["pid"], signal.SIGTERM)
 
+    def test_the_older_session_stays_out_after_the_newer_ones_hook_exits(self):
+        # The newer session's hook ends (a wake, a failure, the budget) and frees the pid file; the
+        # older session must still not take the watcher back while the newer Claude Code is open.
+        project, fake = apb_project(), fake_watcher("sleep 30")
+        old = Session(project, fake, "old")
+        new = None
+        try:
+            old.hook()
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 1))
+            time.sleep(1.5)
+            set_mode(fake, "found")
+            new = Session(project, fake, "new")
+            woken = new.hook()
+            self.assertTrue(wait_for(lambda: new.rc(woken) is not None, 15))
+            self.assertEqual(new.rc(woken), 2)
+            self.assertFalse(os.path.exists(pid_file(project)))
+            again = old.hook()
+            self.assertTrue(wait_for(lambda: old.rc(again) is not None, 15))
+            self.assertEqual(old.rc(again), 0)
+            self.assertEqual(len(starts_of(fake)), 2, "the older session started no watcher")
+            # The newer session's next hook starts it again.
+            back = new.hook()
+            self.assertTrue(wait_for(lambda: new.rc(back) is not None, 15))
+            self.assertEqual(len(starts_of(fake)), 3)
+            # Once the newer session is closed, the older one gets the watcher again.
+            new.close()
+            last = old.hook()
+            self.assertTrue(wait_for(lambda: old.rc(last) is not None, 15))
+            self.assertEqual(old.rc(last), 2)
+            self.assertEqual(len(starts_of(fake)), 4)
+        finally:
+            old.close()
+            if new:
+                new.close()
+            for s in starts_of(fake):
+                if alive(s["pid"]):
+                    os.kill(s["pid"], signal.SIGTERM)
+
     def test_a_takeover_waits_for_the_old_hook_to_exit(self):
         # The old hook takes a moment to stop its watchers; the new one writes the pid file only after.
         spec = importlib.util.spec_from_file_location("apb_watch_start", SCRIPT)
