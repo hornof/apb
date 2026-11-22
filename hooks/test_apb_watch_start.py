@@ -943,6 +943,7 @@ class Session:
 
     def __init__(self, project, fake, session_id):
         self.dir = tempfile.mkdtemp()
+        self.session_id = session_id
         with open(os.path.join(self.dir, "payload.json"), "w") as f:
             json.dump(payload(session_id=session_id), f)
         script = os.path.join(self.dir, "fake-claude.py")
@@ -953,8 +954,12 @@ class Session:
         self.pid = self.proc.pid
         self.runs = 0
 
-    def hook(self):
-        """Run the hook once more; returns its number."""
+    def hook(self, event=None, **extra):
+        """Run the hook once more; returns its number. With event, the payload is that event's, with
+        extra (such as source="resume" at SessionStart); without, a tool call's."""
+        p = payload(event or "PreToolUse", session_id=self.session_id, **extra)
+        with open(os.path.join(self.dir, "payload.json"), "w") as f:
+            json.dump(p, f)
         self.runs += 1
         open(os.path.join(self.dir, "go-%d" % self.runs), "w").close()
         return self.runs
@@ -1141,6 +1146,144 @@ class NewestSessionTakesOver(unittest.TestCase):
             for st in starts_of(fake):
                 if alive(st["pid"]):
                     os.kill(st["pid"], signal.SIGTERM)
+
+
+def file_bytes(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+class ReopenedSessionTakesNothing(unittest.TestCase):
+    """Issue #146: reopening an old session starts a new Claude Code process, so by start time it looked
+    like the newest; it took the watcher and the next orchestrator number. A reopened session leaves an
+    open holder alone and gets no number; it still starts the watcher when no open session holds it."""
+
+    def setUp(self):
+        sys.path.insert(0, HERE)
+        import apb_session
+        self.names = apb_session
+        self.project, self.fake = apb_project(), fake_watcher("sleep 30")
+        self.apb = os.path.join(self.project, ".apb")
+        self.sessions = []
+
+    def tearDown(self):
+        for s in self.sessions:
+            s.close()
+        for st in starts_of(self.fake):
+            if alive(st["pid"]):
+                os.kill(st["pid"], signal.SIGTERM)
+
+    def session(self, sid):
+        s = Session(self.project, self.fake, sid)
+        self.sessions.append(s)
+        return s
+
+    def ran(self, s, n):
+        self.assertTrue(wait_for(lambda: s.rc(n) is not None, 15), "hook %d of %s ended" % (n, s.session_id))
+        return s.rc(n)
+
+    def held(self):
+        try:
+            return read_json(pid_file(self.project))
+        except (OSError, ValueError):
+            return None
+
+    def owner(self):
+        return read_json(os.path.join(self.apb, "watcher-owner.json"))
+
+    def newest_holds(self):
+        """A new session starts and holds the watcher, named apb orch 1."""
+        new = self.session("orch1")
+        new.hook("SessionStart", source="startup")
+        self.assertTrue(wait_for(lambda: len(starts_of(self.fake)) == 1))
+        self.assertTrue(wait_for(lambda: (self.owner() or {}).get("session") == "orch1"))
+        self.assertTrue(self.owner()["name"].startswith("apb orch 1 · "))
+        time.sleep(1.5)  # ps tells start times apart to the second: the reopened process starts later
+        return new
+
+    def assert_untouched(self, new, before):
+        self.assertEqual(len(starts_of(self.fake)), 1, "the reopened session started no watcher")
+        self.assertEqual(self.held()["parent"], new.pid)
+        self.assertEqual(self.owner()["session"], "orch1")
+        self.assertEqual(file_bytes(os.path.join(self.apb, "sessions.json")), before, "sessions.json unchanged")
+        self.assertEqual(events(self.project, "watcher-takeover"), [])
+        self.assertTrue(alive(starts_of(self.fake)[0]["pid"]), "the holder's watcher still runs")
+
+    def test_a_reopened_old_session_leaves_a_live_newer_holder_alone(self):
+        new = self.newest_holds()
+        before = file_bytes(os.path.join(self.apb, "sessions.json"))
+        old = self.session("bf4e8d74")
+        self.assertEqual(self.ran(old, old.hook("SessionStart", source="resume")), 0)
+        self.assertEqual(self.ran(old, old.hook("UserPromptSubmit")), 0)
+        self.assertEqual(self.ran(old, old.hook()), 0, "a later tool call, which carries no source")
+        self.assert_untouched(new, before)
+        self.assertIsNone(self.names.session_name(self.apb, "bf4e8d74", "x", assign=False), "no number")
+
+    def test_it_stays_out_while_the_holders_hook_is_between_runs(self):
+        new = self.newest_holds()
+        old = self.session("bf4e8d74")
+        self.assertEqual(self.ran(old, old.hook("SessionStart", source="resume")), 0)
+        # The holder's watcher ends; its hook exits and frees the pid file.
+        os.kill(starts_of(self.fake)[0]["pid"], signal.SIGTERM)
+        self.assertTrue(wait_for(lambda: not os.path.exists(pid_file(self.project)), 15))
+        before = file_bytes(os.path.join(self.apb, "sessions.json"))
+        self.assertEqual(self.ran(old, old.hook()), 0)
+        self.assertEqual(len(starts_of(self.fake)), 1, "the reopened session started no watcher")
+        self.assertEqual(self.owner()["session"], "orch1")
+        self.assertEqual(file_bytes(os.path.join(self.apb, "sessions.json")), before)
+        self.assertEqual(events(self.project, "watcher-takeover"), [])
+
+    def test_a_session_first_active_before_the_holder_counts_as_reopened(self):
+        # Without the SessionStart source (an older plugin at that start, say): its first line in the
+        # events file comes before the holder's.
+        os.makedirs(self.apb)
+        with open(os.path.join(self.apb, "events.jsonl"), "w") as f:
+            f.write(json.dumps({"time": "2026-11-21T17:31:00.000Z", "event": "Stop", "session": "bf4e8d74"}) + "\n")
+        new = self.newest_holds()
+        before = file_bytes(os.path.join(self.apb, "sessions.json"))
+        old = self.session("bf4e8d74")
+        self.assertEqual(self.ran(old, old.hook()), 0)
+        self.assert_untouched(new, before)
+
+    def test_a_new_session_still_takes_over_and_gets_the_next_number(self):
+        new = self.newest_holds()
+        old = self.session("bf4e8d74")
+        self.assertEqual(self.ran(old, old.hook("SessionStart", source="resume")), 0)
+        time.sleep(1.5)
+        newest = self.session("orch2")
+        newest.hook("SessionStart", source="startup")
+        self.assertTrue(wait_for(lambda: len(starts_of(self.fake)) == 2, 15))
+        self.assertTrue(wait_for(lambda: (self.owner() or {}).get("session") == "orch2"))
+        self.assertTrue(self.owner()["name"].startswith("apb orch 2 · "), "the reopened one used no number")
+        self.assertEqual(self.held()["parent"], newest.pid)
+        self.assertEqual([(e["session"], e["from"]) for e in events(self.project, "watcher-takeover")],
+                         [("orch2", "orch1")])
+
+    def test_a_reopened_session_with_no_live_holder_starts_the_watcher(self):
+        gone = self.newest_holds()
+        gone.close()
+        self.assertTrue(wait_for(lambda: not alive(starts_of(self.fake)[0]["pid"]), 15))
+        before = file_bytes(os.path.join(self.apb, "sessions.json"))
+        old = self.session("bf4e8d74")
+        old.hook("SessionStart", source="resume")
+        self.assertTrue(wait_for(lambda: len(starts_of(self.fake)) == 2, 15))
+        self.assertEqual((self.held()["parent"], self.held()["session"]), (old.pid, "bf4e8d74"))
+        self.assertTrue(wait_for(lambda: (self.owner() or {}).get("session") == "bf4e8d74"))
+        self.assertIsNone(self.owner()["name"], "it holds the watcher but gets no number")
+        self.assertEqual(file_bytes(os.path.join(self.apb, "sessions.json")), before)
+
+    def test_a_reopened_session_keeps_the_name_it_had(self):
+        os.makedirs(self.apb)
+        named = self.names.session_name(self.apb, "bf4e8d74", "0.3.1")
+        old = self.session("bf4e8d74")
+        old.hook("SessionStart", source="resume")
+        self.assertTrue(wait_for(lambda: len(starts_of(self.fake)) == 1, 15))
+        self.assertTrue(wait_for(lambda: (self.owner() or {}).get("session") == "bf4e8d74"))
+        self.assertEqual(self.owner()["name"], named)
+
 
 if __name__ == "__main__":
     unittest.main()

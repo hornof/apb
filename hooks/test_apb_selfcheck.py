@@ -511,6 +511,54 @@ class Waiting(unittest.TestCase):
         self.assertLess(w.took, 20)
 
 
+def resumed(w, session="bf4e8d74"):
+    return {"hook_event_name": "SessionStart", "source": "resume", "session_id": session, "cwd": w.project}
+
+
+class Reopened(unittest.TestCase):
+    """Issue #146: a reopened (resumed) session gets no orchestrator number, and its block doesn't claim
+    the watcher when another open session holds it."""
+
+    def test_a_reopened_session_with_another_holder_gets_no_number_and_says_who_holds_it(self):
+        w = World()
+        w.break_owner()  # an open session (pid 1), "apb orch 2 · 0.3.58 · Nov 20 9:00 AM", holds it
+        text = w.context(payload=resumed(w))
+        ok, rest = lines_of(text)["Watcher"]
+        self.assertNotIn("held by this session", rest)
+        self.assertIn("apb orch 2 · 0.3.58", rest)
+        self.assertIn("reopened", rest)
+        self.assertTrue(ok, "a reopened session leaving the watcher to an open holder is how it should be")
+        self.assertIsNone(apb_session.session_name(w.apb, "bf4e8d74", "x", assign=False), "no number given")
+        self.assertFalse(os.path.exists(os.path.join(w.apb, apb_session.SESSIONS)), "sessions.json not written")
+        self.assertNotIn("set_session_title", text, "no name, so nothing to rename the session to")
+        heads = [l for l in text.splitlines() if l.startswith("apb startup self-check")]
+        self.assertEqual(heads[-1], "apb startup self-check", "the block's head names no session")
+
+    def test_a_reopened_session_that_holds_the_watcher_says_so(self):
+        # No open session held it, so the reopened one started it (the owner file names it).
+        w = World()
+        ok, rest = lines_of(w.context(payload=resumed(w)))["Watcher"]
+        self.assertTrue(ok)
+        self.assertIn("held by this session", rest)
+
+    def test_a_reopened_session_whose_holder_is_closed_does_not_say_it_leaves_it(self):
+        w = World()
+        closed = subprocess.Popen([sys.executable, "-c", "pass"])
+        closed.wait(timeout=10)
+        w.owner(closed.pid, "apb orch 5 · 0.3.60 · Nov 21 9:00 PM")
+        ok, rest = lines_of(w.context(payload=resumed(w), wait=0.5))["Watcher"]
+        self.assertFalse(ok, rest)
+        self.assertNotIn("held by this session", rest)
+        self.assertNotIn("reopened", rest)
+
+    def test_a_new_session_still_gets_the_next_number(self):
+        w = World()
+        w.context(payload=resumed(w))
+        text = w.context()
+        self.assertIn(apb_session.session_name(w.apb, "sess-1", "x"), text)
+        self.assertTrue(apb_session.session_name(w.apb, "sess-1", "x").startswith("apb orch 1 · "))
+
+
 class StaysOut(unittest.TestCase):
     def test_a_subagent_gets_nothing(self):
         w = World()

@@ -33,6 +33,13 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
   hook has exited (after a wake, a failure or the budget) and freed the pid files, so it never takes
   the watchers back. Once the newer session is closed, the older one may run them again. Hooks of the same session never take over from each other (same Claude Code process).
   Start times come from one ps snapshot, to the second; a tie takes nothing over.
+- A reopened session takes nothing over (#146). Reopening (resuming) an old session starts a new
+  Claude Code process, so by start time it looks like the newest. So a session that is resumed never
+  takes the watchers from an open session that holds them, even while that session's hook is between
+  runs, and gets no orchestrator number: the owner file carries the name it already had, or none. It
+  still starts the watchers when no open session holds them. A session counts as resumed when its
+  SessionStart said so (`source` "resume", recorded in .apb/resumed.json, since later events don't
+  carry it), or when its first line in .apb/events.jsonl comes before the holder's (hooks/apb_session.py).
 - No second copy of either. Each watcher has its own pid file in .apb/ (watcher.pid,
   watcher-coordination.pid), written under a lock, so hooks fired at once start each watcher once.
   A hook takes every pid file that is free and runs those watchers side by side; a hook that finds
@@ -227,10 +234,11 @@ def started_later(mine, theirs):
     return mine in times and theirs in times and times[mine] > times[theirs] + 0.5
 
 
-def newer_owner(path, root):
+def newer_owner(path, root, resumed=lambda session: False):
     """True if the owner file names another session's Claude Code that is still open and started no
-    earlier than this one (root): then this session leaves the watchers to it, even while its hook is
-    between runs and the pid files are free. A pid now used by another process doesn't count."""
+    earlier than this one (root), or that is open at all when resumed(its session) says this session
+    was reopened (#146): then this session leaves the watchers to it, even while its hook is between
+    runs and the pid files are free. A pid now used by another process doesn't count."""
     try:
         with open(path) as f:
             owner = json.load(f)
@@ -242,7 +250,7 @@ def newer_owner(path, root):
     times = start_times()
     if pid not in times or abs(times[pid] - started) > OWNER_SLACK or not alive(pid):
         return False  # closed, or its pid reused
-    return root not in times or times[root] <= times[pid] + 0.5
+    return root not in times or times[root] <= times[pid] + 0.5 or bool(resumed(owner.get("session")))
 
 
 def plugin_version():
@@ -253,14 +261,15 @@ def plugin_version():
         return None
 
 
-def own(path, root, session):
+def own(path, root, session, assign=True):
     """Write the owner file: this session now runs the watchers. It carries the session's name
-    (hooks/apb_session.py, #133), so `apb-watch.py --list` can say which session holds them."""
+    (hooks/apb_session.py, #133), so `apb-watch.py --list` can say which session holds them. A reopened
+    session (assign False, #146) is given no number: its name is the one it had, or None."""
     started = start_times().get(root)
     if started is None:
         return
     try:
-        name = apb_session.session_name(os.path.dirname(path), session, plugin_version())
+        name = apb_session.session_name(os.path.dirname(path), session, plugin_version(), assign=assign)
     except Exception:
         name = None
     tmp = "%s.%d" % (path, os.getpid())
@@ -444,8 +453,20 @@ def main(argv):
         coordination(read(os.path.join(project, "CLAUDE.md")))
     if repo and (own_repo(project) or "").lower() == repo.lower():
         repo = None  # the project's own repo: one watcher, as with "#N"
+    if p.get("source") == "resume":
+        apb_session.mark_resumed(folder, session)  # later events don't carry the source (#146)
     me = os.getpid()
     found = {}
+    reopened = {}
+
+    def marked():
+        if "marked" not in reopened:
+            reopened["marked"] = p.get("source") == "resume" or apb_session.is_resumed(folder, session)
+        return reopened["marked"]
+
+    def resumed(other):
+        """True if this session was reopened, so it leaves an open holder (other: its session) alone."""
+        return marked() or apb_session.active_before(folder, session, other)
 
     def mine():
         # The parent is Claude Code, not the hook's direct parent: that may be a shell that outlives it.
@@ -459,21 +480,21 @@ def main(argv):
         root = found["root"]
         if root is None or not isinstance(other.get("parent"), int):
             return False
-        if started_later(root, other["parent"]):
+        if started_later(root, other["parent"]) and not resumed(other.get("session")):
             found.setdefault("from", other.get("session"))
             return True
         return False
 
     owner = os.path.join(folder, "watcher-owner.json")
     mine()
-    if newer_owner(owner, found["root"]):
-        return 0  # a newer session runs the watchers; its hook may just be between runs
+    if newer_owner(owner, found["root"], resumed):
+        return 0  # a newer session runs the watchers (or this one was reopened); its hook may be between runs
     held = [w for w in watchers(folder, repo, issue)
             if not backing_off(w["failed"], opts.backoff) and claim(w["pid"], mine, takes_over)]
     if not held:
         return 0
     if found["root"] is not None:
-        own(owner, found["root"], session)
+        own(owner, found["root"], session, assign=not marked())
     if "from" in found:
         log(folder, {"event": "watcher-takeover", "session": session, "from": found["from"], "pid": me})
     stopping, done = threading.Event(), queue.Queue()

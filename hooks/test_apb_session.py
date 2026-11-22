@@ -144,5 +144,118 @@ class Numbers(unittest.TestCase):
         self.assertTrue(apb_session.session_name(d, "a", "1", 0).startswith("apb orch 2 · "))
 
 
+def sessions_bytes(d):
+    path = os.path.join(d, apb_session.SESSIONS)
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
+class Reopened(unittest.TestCase):
+    """Issue #146: a reopened (resumed) session gets no orchestrator number."""
+
+    def test_an_unnamed_session_asked_without_assign_gets_none_and_nothing_is_written(self):
+        d = apb_dir(["s1"])
+        apb_session.session_name(d, "s1", "1", 0)
+        before = sessions_bytes(d)
+        self.assertIsNone(apb_session.session_name(d, "old", "1", 0, assign=False))
+        self.assertEqual(sessions_bytes(d), before)
+        # The next new session still takes the next number: the reopened one used none.
+        self.assertTrue(apb_session.session_name(d, "new", "1", 0).startswith("apb orch 2 · "))
+
+    def test_a_named_session_asked_without_assign_keeps_its_name(self):
+        d = apb_dir()
+        name = apb_session.session_name(d, "a", "1", 0)
+        apb_session.session_name(d, "b", "1", 0)
+        before = sessions_bytes(d)
+        self.assertEqual(apb_session.session_name(d, "a", "2", 999, assign=False), name)
+        self.assertEqual(sessions_bytes(d), before)
+
+    def test_without_assign_an_empty_folder_stays_without_a_sessions_file(self):
+        d = apb_dir()
+        self.assertIsNone(apb_session.session_name(d, "a", "1", 0, assign=False))
+        self.assertIsNone(sessions_bytes(d))
+
+    def test_a_marked_session_is_resumed_and_others_are_not(self):
+        d = apb_dir()
+        self.assertFalse(apb_session.is_resumed(d, "a"))
+        apb_session.mark_resumed(d, "a")
+        self.assertTrue(apb_session.is_resumed(d, "a"))
+        self.assertFalse(apb_session.is_resumed(d, "b"))
+        apb_session.mark_resumed(d, "a")  # twice is fine
+        self.assertTrue(apb_session.is_resumed(d, "a"))
+        self.assertFalse(apb_session.is_resumed(d, None))
+        apb_session.mark_resumed(d, None)  # no session id: nothing to mark
+        self.assertIsNone(sessions_bytes(d), "marking never touches sessions.json")
+
+    def test_a_garbled_resumed_file_counts_as_no_marks(self):
+        d = apb_dir()
+        with open(os.path.join(d, apb_session.RESUMED), "w") as f:
+            f.write("[not a dict")
+        self.assertFalse(apb_session.is_resumed(d, "a"))
+        apb_session.mark_resumed(d, "a")
+        self.assertTrue(apb_session.is_resumed(d, "a"))
+
+    def test_marks_from_many_hooks_at_once_are_all_kept(self):
+        d = apb_dir()
+        code = ("import sys; sys.path.insert(0, %r); import apb_session; "
+                "apb_session.mark_resumed(%r, sys.argv[1])" % (HERE, d))
+        procs = [subprocess.Popen([sys.executable, "-c", code, "s%d" % i]) for i in range(8)]
+        for p in procs:
+            p.wait(timeout=30)
+        self.assertTrue(all(apb_session.is_resumed(d, "s%d" % i) for i in range(8)))
+
+
+def write_events(d, sessions):
+    with open(os.path.join(d, "events.jsonl"), "w", encoding="utf-8") as f:
+        for i, s in enumerate(sessions):
+            f.write(json.dumps({"time": "2026-11-21T00:00:%02d.000Z" % (i % 60), "event": "Stop", "session": s})
+                    + "\n")
+
+
+class FirstActivity(unittest.TestCase):
+    """Issue #146: a session whose first activity in this folder is older than the holder's was reopened."""
+
+    def test_the_cards_case(self):
+        d = apb_dir()
+        write_events(d, ["bf4e8d74", "x", "orch6", "bf4e8d74", "orch6"])
+        self.assertTrue(apb_session.active_before(d, "bf4e8d74", "orch6"))
+        self.assertFalse(apb_session.active_before(d, "orch6", "bf4e8d74"))
+
+    def test_a_session_with_no_activity_is_not_before_anyone(self):
+        d = apb_dir()
+        write_events(d, ["holder"])
+        self.assertFalse(apb_session.active_before(d, "new", "holder"))
+        self.assertFalse(apb_session.active_before(d, "new", None))
+        self.assertFalse(apb_session.active_before(apb_dir(), "a", "b"), "no events file")
+
+    def test_a_holder_with_no_activity_is_after_any_active_session(self):
+        d = apb_dir()
+        write_events(d, ["old"])
+        self.assertTrue(apb_session.active_before(d, "old", "holder"))
+
+    def test_an_id_inside_another_id_does_not_count(self):
+        d = apb_dir()
+        write_events(d, ["abc-1", "holder", "abc"])
+        self.assertFalse(apb_session.active_before(d, "abc", "holder"))
+
+    def test_random_logs_agree_with_a_replay(self):
+        rnd = random.Random(146)
+        for _ in range(300):
+            log = [rnd.choice(["a", "b", "c", "ab", "a b"]) for _ in range(rnd.randrange(0, 10))]
+            d = apb_dir()
+            write_events(d, log)
+            if rnd.random() < 0.2:
+                with open(os.path.join(d, "events.jsonl"), "a") as f:
+                    f.write("{garbled\n")
+            mine, theirs = rnd.choice("abcd"), rnd.choice("abcd")
+            first = {}
+            for i, s in enumerate(log):
+                first.setdefault(s, i)
+            expected = mine != theirs and mine in first and first[mine] < first.get(theirs, len(log))
+            self.assertEqual(apb_session.active_before(d, mine, theirs), expected, (log, mine, theirs))
+
+
 if __name__ == "__main__":
     unittest.main()
