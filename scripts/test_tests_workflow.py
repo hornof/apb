@@ -93,8 +93,13 @@ class Workflow(unittest.TestCase):
         for name, job in self.jobs.items():
             steps = [s for s in job.get("steps", []) if any(c in " ".join(s.get("run", "").split())
                                                             for c in SUITES.values())]
+            self.assertEqual(len(steps), 2, name)
+            # Runs after a pass and after a failure. Not `failure()` alone: then a green PR would
+            # skip the second suite (review of PR #150, Fix 2).
+            runs_either_way = {"success() || failure()", "failure() || success()", "always()", "!cancelled()"}
             for step in steps[1:]:
-                self.assertIn("failure()", step.get("if", ""), step.get("name"))
+                cond = " ".join(step.get("if", "").replace("${{", "").replace("}}", "").split())
+                self.assertIn(cond, runs_either_way, step.get("name"))
 
     def group(self, **ctx):
         return evaluate(self.wf["concurrency"]["group"], ctx)
