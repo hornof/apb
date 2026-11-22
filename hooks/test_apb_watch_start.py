@@ -1025,8 +1025,9 @@ class NewestSessionTakesOver(unittest.TestCase):
             asked = time.time()
             self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 2, 15))
             if alive(old_hook):
-                # #136: seen once on GitHub (Python 3.15), never here. Say what the old hook was doing,
-                # so a repeat shows whether it was slow to exit (the hook waits 10 s at most) or not stopped.
+                # #136: seen once on GitHub's macOS runner (Python 3.15), never in local runs. Say what the
+                # old hook was doing, so a repeat shows whether it was slow to exit (the hook waits 10 s at
+                # most) or not stopped.
                 ps = subprocess.run(["ps", "-o", "pid=,ppid=,stat=,etime=,command=", "-ww", "-p", str(old_hook)],
                                     capture_output=True, text=True, timeout=10).stdout.strip()
                 self.fail("the old hook has not exited %.1f s after the new hook started, yet the new watcher "

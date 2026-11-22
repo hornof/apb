@@ -9,8 +9,8 @@ runs, and importing it makes unittest's text runner end a failed run with one li
       test_module.SomeCase.test_that_failed
       test_module.OtherCase.test_that_raised (error)
 
-It acts on any unittest run that imports this file: in this folder, `discover`, not a run of one
-other test file.
+Only a run that imports this file names its failures: `discover` on this folder does; running one
+other test file on its own does not.
 
 The tests below check that in a separate run on a made-up suite: the oracle is the list of outcomes the
 made-up suite was built with, not the runner's own result.
@@ -68,7 +68,9 @@ BODY = {
     "fail": "        self.fail('made to fail')\n",
     "error": "        raise RuntimeError('made to error')\n",
     "skip": "        self.skipTest('made to skip')\n",
+    "unexpected": "        pass\n",  # marked as an expected failure, but it passes
 }
+DECORATOR = {"unexpected": "    @unittest.expectedFailure\n"}
 
 
 def sample_suite(outcomes, copies=1):
@@ -84,7 +86,8 @@ def sample_suite(outcomes, copies=1):
     for module, tests in outcomes.items():
         classes = {}
         for cls, name, outcome in tests:
-            classes.setdefault(cls, []).append("    def %s(self):\n%s" % (name, BODY[outcome]))
+            classes.setdefault(cls, []).append("%s    def %s(self):\n%s"
+                                               % (DECORATOR.get(outcome, ""), name, BODY[outcome]))
         text = head + "".join("\n\nclass %s(unittest.TestCase):\n%s" % (c, "\n".join(m))
                               for c, m in classes.items())
         with open(os.path.join(d, module + ".py"), "w") as f:
@@ -102,7 +105,7 @@ def run_suite(folder, extra=()):
 def expected(outcomes):
     """The lines a failed run must end with, worked out from the outcomes the suite was made with.
     unittest runs modules, classes and tests in name order."""
-    fails, errors = [], []
+    fails, errors, unexpected = [], [], []
     for module in sorted(outcomes):
         for cls, name, outcome in sorted(outcomes[module]):
             tid = "%s.%s.%s" % (module, cls, name)
@@ -110,7 +113,9 @@ def expected(outcomes):
                 fails.append("  " + tid)
             elif outcome == "error":
                 errors.append("  %s (error)" % tid)
-    names = fails + errors
+            elif outcome == "unexpected":
+                unexpected.append("  %s (unexpected success)" % tid)
+    names = fails + errors + unexpected
     return [HEADER % len(names)] + names if names else []
 
 
@@ -123,6 +128,15 @@ class NamesFailingTests(unittest.TestCase):
         self.assertEqual(lines[-3:], ["Failed tests (2):", "  test_sample.A.test_bad",
                                       "  test_sample.B.test_broken (error)"])
         self.assertTrue(lines[-4].startswith("FAILED ("), lines[-4])
+
+    def test_an_unexpected_success_is_named_after_the_errors(self):
+        outcomes = {"test_sample": [("A", "test_bad", "fail"), ("A", "test_lucky", "unexpected"),
+                                    ("B", "test_broken", "error")]}
+        rc, lines = run_suite(sample_suite(outcomes))
+        self.assertNotEqual(rc, 0)
+        self.assertEqual(lines[-4:], ["Failed tests (3):", "  test_sample.A.test_bad",
+                                      "  test_sample.B.test_broken (error)",
+                                      "  test_sample.A.test_lucky (unexpected success)"])
 
     def test_a_passing_run_names_nothing(self):
         outcomes = {"test_sample": [("A", "test_ok", "pass"), ("A", "test_skipped", "skip")]}
