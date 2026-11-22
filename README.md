@@ -61,6 +61,7 @@ The orchestrator (the main Claude Code session, the one the human talks to) star
 | `docs/collaborator-guide.md` | Step-by-step onboarding for a teammate new to AI-assisted building |
 | `docs/system-design-guide.md` | The design steps for the TDD, with common patterns and red flags |
 | `docs/product-guide.md` | Product management for the human: whether a new idea belongs in the current work, the backlog of ideas that don't, ranking it, and choosing what to build next |
+| `docs/projects.md` | The projects that use apb and whether each is in use; an apb change goes to every project marked in use, and to no other |
 
 ## Install
 
