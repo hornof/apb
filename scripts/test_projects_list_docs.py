@@ -223,8 +223,45 @@ class Setup(unittest.TestCase):
         self.assertIn("gh pr create", after)
         self.assertRegex(self.text, r"hand-off[^.]*links? the apb PR")
 
+    def test_every_clone_command_names_the_clone(self):
+        # Review Fix 1 on PR #151: the session stays in the project folder, so a bare git or gh
+        # command would act on the project's repo. Each command names the clone or the apb repo.
+        for cmd in ("`gh repo clone <apb repo> <clone>`", "`git -C <clone> switch -c <branch>`",
+                    "`git -C <clone> push -u origin <branch>`",
+                    "`gh pr create -R <apb repo> --head <branch>`"):
+            self.assertIn(cmd, self.text)
+        self.assertRegex(self.text, r"`git -C <clone> commit [^`]*`")
+        step = self.text[self.text.index("apb's list of projects"):self.text.index("setup-done")]
+        for bare in re.findall(r"`((?:git|gh) [^`]*)`", step):
+            if bare.startswith("git "):
+                self.assertTrue(bare.startswith("git -C <clone> "), bare)
+            if bare.startswith("gh pr "):
+                self.assertIn("-R <apb repo>", bare)
+
+    def test_checks_push_access_before_the_clone(self):
+        # Review Fix 2: anyone else's account can't push to the apb repo; check before cloning.
+        check = "`gh api repos/<apb repo> --jq .permissions.push`"
+        self.assertIn(check, self.text)
+        self.assertLess(self.text.index(check), self.text.index("`gh repo clone <apb repo>"))
+        self.assertIn("If Claude's account can't push to the apb repo", self.text)
+
+    def test_hand_off_covers_no_apb_pr(self):
+        # Review Fix 3: the step can skip, so the hand-off says why when there is no PR.
+        self.assertRegex(self.text, r"hand-off[^.]*links the apb PR that adds the project's row, "
+                                    r"or says the row was already there, or why it wasn't added")
+
     def test_row_comes_after_the_deny_list_check(self):
         self.assertLess(self.text.index("`git push origin main`"), self.text.index("`%s`" % LIST))
+
+
+class Readme(unittest.TestCase):
+    """Review Fix 4 on PR #151: the README's row for the list mentions the checkout."""
+
+    def test_readme_row_mentions_checkout(self):
+        row = [l for l in read("README.md").splitlines() if l.startswith("| `%s`" % LIST)]
+        self.assertEqual(len(row), 1)
+        self.assertIn("whether each is in use", row[0])
+        self.assertIn("checkout", row[0])
 
 
 if __name__ == "__main__":
