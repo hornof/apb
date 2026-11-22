@@ -144,7 +144,76 @@ class PrReady(unittest.TestCase):
             bm.pr_ready("hum/proj", 20, b)
 
 
+class PrDraft(unittest.TestCase):
+    """#156, the other direction: a PR turned back into a draft sends its card back to In progress."""
+
+    def test_moves_each_card_back_to_the_top_of_in_progress(self):
+        b = board((1, "In progress"), (3, "In review"), (9, "In review"))
+        b.prs[20] = {"state": "OPEN", "draft": True, "closes": [3]}
+        out = bm.pr_draft("hum/proj", 20, b)
+        self.assertEqual(b.column("In progress"), [3, 1])
+        self.assertEqual(b.column("In review"), [9])
+        self.assertIn("#3", out)
+
+    def test_a_ready_pr_is_refused(self):
+        b = board((3, "In review"))
+        b.prs[20] = {"state": "OPEN", "draft": False, "closes": [3]}
+        with self.assertRaises(bm.Refused):
+            bm.pr_draft("hum/proj", 20, b)
+        self.assertEqual(b.status(3), "In review")
+        self.assertFalse(any("mutation" in q for q, _ in b.calls))
+
+    def test_a_merged_pr_none_or_one_closing_nothing_is_refused(self):
+        b = board((3, "In review"))
+        b.prs[20] = {"state": "MERGED", "draft": True, "closes": [3]}
+        b.prs[22] = {"state": "OPEN", "draft": True, "closes": []}
+        for n in (20, 21, 22):
+            with self.assertRaises(bm.Refused):
+                bm.pr_draft("hum/proj", n, b)
+        self.assertEqual(b.status(3), "In review")
+
+
+class DraftThenReady(unittest.TestCase):
+    """#156's "done when": opening a draft leaves the card In progress, marking it ready moves it to In
+    review, and turning it back into a draft moves it back."""
+
+    def test_the_whole_life_of_a_pr(self):
+        b = board((156, "Todo"), (2, "In review"))
+        bm.start_build("hum/proj", 156, b)
+        b.prs[160] = {"state": "OPEN", "draft": True, "closes": [156]}  # the builder opens its draft
+        with self.assertRaises(bm.Refused):
+            bm.pr_ready("hum/proj", 160, b)  # a move at draft-open is refused
+        self.assertEqual(b.status(156), "In progress")
+        b.prs[160]["draft"] = False  # gh pr ready
+        bm.pr_ready("hum/proj", 160, b)
+        self.assertEqual(b.column("In review"), [156, 2])
+        b.prs[160]["draft"] = True  # gh pr ready --undo
+        bm.pr_draft("hum/proj", 160, b)
+        self.assertEqual(b.column("In progress"), [156])
+        self.assertEqual(b.column("In review"), [2])
+
+
 class Properties(unittest.TestCase):
+    def test_random_boards_draft_and_ready_round_trip(self):
+        # Both directions, from any column: ready puts the card on top of In review, draft puts it back on
+        # top of In progress, and no other card moves either way.
+        rng = random.Random(156)
+        for _ in range(300):
+            numbers = rng.sample(range(1, 80), rng.randint(1, 10))
+            b = board(*[(n, rng.choice(COLUMNS)) for n in numbers])
+            target = rng.choice(numbers)
+            before = [(i["issue"], i["status"]) for i in b.items if i["issue"] != target]
+            b.prs[600] = {"state": "OPEN", "draft": False, "closes": [target]}
+            for _ in range(rng.randint(1, 4)):
+                if b.prs[600]["draft"]:
+                    bm.pr_draft("hum/proj", 600, b)
+                    self.assertEqual(b.column("In progress")[0], target)
+                else:
+                    bm.pr_ready("hum/proj", 600, b)
+                    self.assertEqual(b.column("In review")[0], target)
+                self.assertEqual([(i["issue"], i["status"]) for i in b.items if i["issue"] != target], before)
+                b.prs[600]["draft"] = not b.prs[600]["draft"]
+
     def test_random_boards_both_steps(self):
         rng = random.Random(121)
         for _ in range(300):
@@ -193,6 +262,12 @@ class Script(unittest.TestCase):
     def test_a_refusal_exits_1(self):
         answer = {"data": {"repository": {"projectsV2": {"nodes": []}, "issue": None}}}
         r, _ = self.run_script(["start-build", "7"], answer)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("#7", r.stderr)
+
+    def test_pr_draft_is_a_step(self):
+        answer = {"data": {"repository": {"projectsV2": {"nodes": []}, "pullRequest": None}}}
+        r, _ = self.run_script(["pr-draft", "7"], answer)
         self.assertEqual(r.returncode, 1)
         self.assertIn("#7", r.stderr)
 

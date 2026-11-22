@@ -14,6 +14,8 @@ The cases:
 - build-in-todo: a build is running for a card (a git worktree on a branch named issue-<N>, or an
   open PR, draft or not, that closes the card or comes from such a branch), but the card is in Todo.
 - pr-ready-not-in-review: a PR ready for review (not a draft) closes an open card that isn't in In review.
+- in-review-with-draft-pr: a card is in In review, and every open PR that closes it is a draft (#156: a
+  card moves to In review only when its PR is marked ready).
 - board-vs-issue: a card is Done but its issue is open, or its issue is closed but it isn't Done.
 - hand-off-not-assigned: the turn hands the human a PR or a card (a merge, a Decision, a question on
   the card), and that PR, or the card a handed PR closes, isn't assigned to the human.
@@ -71,6 +73,8 @@ CASES = [
      "incident": "2026-11-20: #117 and #118 were built as separate sessions while their cards sat in Todo (#121)"},
     {"id": "pr-ready-not-in-review",
      "incident": "#121: a PR ready for review closes a card that isn't In review"},
+    {"id": "in-review-with-draft-pr",
+     "incident": "2026-11-21: #153 and #140 went to In review while their PRs #154 and #155 were drafts (#156)"},
     {"id": "board-vs-issue",
      "incident": "#121: a card Done with its issue open, or an issue closed with its card not Done"},
     {"id": "hand-off-not-assigned",
@@ -187,6 +191,13 @@ def board_cases(s):
             out.append(_problem("pr-ready-not-in-review", "PR #%d is ready for review and closes card #%d, but the "
                                 "card is in %s. Move it: python3 <apb plugin folder>/scripts/board-move.py pr-ready %d"
                                 % (ready[0]["number"], n, status.title() or "no column", ready[0]["number"]), n))
+            continue
+        drafts = [p for p in prs if n in p.get("closes", []) and p.get("draft")]
+        if not ready and drafts and status == "in review":
+            out.append(_problem("in-review-with-draft-pr", "card #%d is in In review, but its PR #%d is still a "
+                                "draft. A card goes to In review only when its PR is marked ready (gh pr ready); "
+                                "until then it stays In progress. Move it back: python3 <apb plugin folder>/"
+                                "scripts/board-move.py pr-draft %d" % (n, drafts[0]["number"], drafts[0]["number"]), n))
             continue
         if status == "todo":
             builds = ["worktree on %s" % w for w in s.get("worktrees") or [] if _named_for(n, w)]

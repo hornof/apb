@@ -95,7 +95,13 @@ def card(n, status, state="OPEN", blocked=(), prs=(), title=None):
             "content": {"number": n, "title": title or "Card %d" % n, "state": state,
                         "url": "https://github.com/o/r/issues/%d" % n,
                         "blockedBy": {"nodes": [{"number": b, "state": s} for b, s in blocked]},
-                        "closedByPullRequestsReferences": {"nodes": [{"number": p, "state": "OPEN"} for p in prs]}}}
+                        "closedByPullRequestsReferences": {"nodes": [pr_node(p) for p in prs]}}}
+
+
+def pr_node(p):
+    """An open PR that closes a card: a number is a draft (a build under way); (number, False) is ready."""
+    number, draft = p if isinstance(p, tuple) else (p, True)
+    return {"number": number, "state": "OPEN", "isDraft": draft}
 
 
 def board(items):
@@ -222,6 +228,16 @@ class World:
         self.cfg["board"] = board([card(7, "In progress"), card(8, "In progress"), card(130, "Todo")])
         self.write_gh()
 
+    def break_board_draft_in_review(self):
+        # 2026-11-21: #153 went to In review while its PR #154 was still a draft (#156).
+        self.cfg["board"] = board([card(7, "In progress"), card(153, "In review", prs=[154]), card(130, "Todo")])
+        self.write_gh()
+
+    def break_board_ready_in_progress(self):
+        self.cfg["board"] = board([card(7, "In progress"), card(8, "In progress", prs=[(141, False)]),
+                                   card(130, "Todo")])
+        self.write_gh()
+
     def break_stop_hook(self):
         self.hooks["hooks"].pop("Stop")
         self.write_hooks()
@@ -288,7 +304,8 @@ def check_lines(text):
 BREAKS = {
     "Watcher": ["break_watcher", "break_owner"],
     "GitHub account": ["break_login"],
-    "Board": ["break_board_blocked", "break_board_closed", "break_board_branch"],
+    "Board": ["break_board_blocked", "break_board_closed", "break_board_branch", "break_board_draft_in_review",
+              "break_board_ready_in_progress"],
     "Hooks": ["break_stop_hook", "break_hooks_disabled", "break_plugin_off"],
     "Version": ["break_version"],
 }
@@ -380,6 +397,14 @@ class Healthy(unittest.TestCase):
         w.write_gh()
         self.assertTrue(lines_of(w.context())["Board"][0])
 
+    def test_each_card_in_the_column_its_pr_says(self):
+        # #156: In progress while the PR is a draft, In review once it is ready.
+        w = World()
+        w.cfg["board"] = board([card(8, "In progress", prs=[140]), card(9, "In review", prs=[(141, False)]),
+                                card(130, "Todo")])
+        w.write_gh()
+        self.assertTrue(lines_of(w.context())["Board"][0])
+
     def test_a_card_blocked_only_by_closed_issues_is_free(self):
         w = World()
         w.cfg["board"] = board([card(7, "In progress"), card(130, "Todo", blocked=[(120, "CLOSED")])])
@@ -438,6 +463,19 @@ class Broken(unittest.TestCase):
         rest = self.one("Board", "break_board_branch")
         self.assertIn("#8", rest)
         self.assertNotIn("#7 ", rest)
+
+    def test_in_review_with_a_draft_pr(self):
+        rest = self.one("Board", "break_board_draft_in_review")
+        self.assertIn("#153", rest)
+        self.assertIn("#154", rest)
+        self.assertIn("draft", rest)
+        self.assertIn("pr-draft 154", rest)
+
+    def test_in_progress_with_a_ready_pr(self):
+        rest = self.one("Board", "break_board_ready_in_progress")
+        self.assertIn("#8", rest)
+        self.assertIn("#141", rest)
+        self.assertIn("pr-ready 141", rest)
 
     def test_no_stop_hook(self):
         self.assertIn("Stop", self.one("Hooks", "break_stop_hook"))

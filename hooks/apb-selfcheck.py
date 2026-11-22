@@ -23,7 +23,8 @@ The lines, in order (CHECKS):
    without GH_TOKEN / GITHUB_TOKEN; if gh has no login of its own, the repo's owner).
 3. Board: on the repo's project board, the top card of Todo is open and not blocked by an open issue;
    every card In progress has a branch (a local or remote branch whose name holds its number) or an
-   open PR that closes it.
+   open PR that closes it; and each card's column matches its PRs' state (#156): a card whose PR is
+   ready for review is In review, and a card In review has a PR ready for review, not only drafts.
 4. Hooks: the folder is one where apb's hooks act (hooks/apb_folder.py, #132); the installed plugin's
    hooks.json registers the watcher on session start, prompts and tool calls, and the Stop hook; no
    settings file turns hooks off (disableAllHooks) or turns the apb plugin off (enabledPlugins).
@@ -228,7 +229,7 @@ BOARD = """query($owner: String!, $name: String!, $after: String) {
       nodes { fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         content { ... on Issue { number title state url
           blockedBy(first: 20) { nodes { number state } }
-          closedByPullRequestsReferences(first: 10, includeClosedPrs: false) { nodes { number state } } } } } } } } } }"""
+          closedByPullRequestsReferences(first: 10, includeClosedPrs: false) { nodes { number state isDraft } } } } } } } } } }"""
 
 
 def board_cards(ctx, repo):
@@ -274,6 +275,28 @@ def branch_of(number, names):
     return hit[0] if hit else None
 
 
+def column_vs_pr(cards):
+    """What's wrong with each open card whose column doesn't match its PRs' state (#156): a card with a
+    PR ready for review belongs In review; a card In review whose open PRs are all drafts belongs In
+    progress. A card with no open PR is left to the other checks."""
+    move = "python3 <apb plugin folder>/scripts/board-move.py"
+    problems = []
+    for status, c in cards:
+        if c.get("state") != "OPEN" or status not in ("todo", "in progress", "in review"):
+            continue
+        prs = [p for p in (c.get("closedByPullRequestsReferences") or {}).get("nodes") or []
+               if p.get("state") == "OPEN"]
+        ready = [p["number"] for p in prs if not p.get("isDraft")]
+        drafts = [p["number"] for p in prs if p.get("isDraft")]
+        if ready and status != "in review":
+            problems.append("#%d is in %s, but its PR #%d is ready for review: %s pr-ready %d"
+                            % (c["number"], "Todo" if status == "todo" else "In progress", ready[0], move, ready[0]))
+        elif drafts and not ready and status == "in review":
+            problems.append("#%d is In review, but its PR #%d is still a draft (it goes to In review when marked "
+                            "ready): %s pr-draft %d" % (c["number"], drafts[0], move, drafts[0]))
+    return problems
+
+
 def check_board(ctx):
     repo = own_repo(ctx)
     if not repo:
@@ -307,6 +330,7 @@ def check_board(ctx):
             held.append("#%d (PR #%d)" % (c["number"], prs[0]))
         else:
             problems.append("#%d is In progress with no branch or open PR" % c["number"])
+    problems += column_vs_pr(cards)
     if problems:
         return False, "; ".join(problems) + "."
     said.append("In progress: %s" % (", ".join(held) if held else "none"))

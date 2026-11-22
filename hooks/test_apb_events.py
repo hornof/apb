@@ -348,10 +348,12 @@ class HooksFile(unittest.TestCase):
 
     # The only hooks Claude Code waits for, named one by one: (event, matcher, script). The Stop hook can
     # send a message back; the brief check refuses an agent launch (PreToolUse) and records a departure
-    # before the orchestrator reads the report (SubagentStop). The watcher starter runs in the background
-    # and wakes Claude when it has news. Every other hook is the events logger.
+    # before the orchestrator reads the report (SubagentStop). The card mover (#156) runs after a Bash
+    # call, waited for so its note reaches the session that ran gh pr ready; it does nothing unless the
+    # command was gh pr ready. The watcher starter runs in the background and wakes Claude when it has
+    # news. Every other hook is the events logger.
     WAITED_FOR = [("Stop", None, "apb-stop.py"), ("PreToolUse", "Agent|Task", "apb-brief.py"),
-                  ("SubagentStop", None, "apb-brief.py"),
+                  ("SubagentStop", None, "apb-brief.py"), ("PostToolUse", "Bash", "apb-pr-ready.py"),
                   ("PreToolUse", "AskUserQuestion|mcp__ccd_turn__wrap_up", "apb-popups.py"),
                   ("SessionStart", None, "apb-version.py"), ("SessionStart", None, "apb-selfcheck.py")]
 
