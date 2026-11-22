@@ -119,6 +119,19 @@ class StartBuild(unittest.TestCase):
             self.assertEqual([dict(i) for i in b.items], before)
             self.assertFalse(any("mutation" in q for q, _ in b.calls))
 
+    def test_each_refusal_says_how_to_rework_that_card(self):
+        # Review fix 2 on #168: a card in Done has no open PR to turn back into a draft (it merged), so
+        # its hint is the board move; a card In review turns its PR back into a draft.
+        hints = {"In review": "gh pr ready --undo", "Done": "move the card to Todo on the board, then run start-build 5"}
+        for column, hint in hints.items():
+            b = board((5, column))
+            with self.assertRaises(bm.Refused) as e:
+                bm.start_build("hum/proj", 5, b)
+            self.assertIn(hint, str(e.exception), column)
+            for other in hints.values():
+                if other != hint:
+                    self.assertNotIn(other, str(e.exception), column)
+
     def test_a_card_in_todo_or_in_progress_moves(self):
         for column in ("Todo", "In progress"):
             b = board((1, "In progress"), (5, column))

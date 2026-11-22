@@ -123,9 +123,15 @@ def start_build(repo, number, ask=gh_graphql):
     board, item, state, column = _item(ask, owner, name, number)
     if state != "OPEN":
         raise Refused("card #%d is closed: there is nothing to build" % number)
-    if column.lower() in ("in review", "done"):
-        raise Refused("card #%d is in %s: its build is already done, and start-build never moves a card back "
-                      "(to rework it, turn its PR back into a draft: gh pr ready --undo)" % (number, column))
+    if column.lower() == "in review":
+        raise Refused("card #%d is in In review: its build is already done, and start-build never moves a card "
+                      "back (to rework it, turn its PR back into a draft: gh pr ready --undo; the hook moves the "
+                      "card back to In progress)" % number)
+    if column.lower() == "done":
+        # Review fix 2 on #168: a Done card's PR has merged, so there is no draft to go back to. An open
+        # card in Done is mostly one reopened for rework.
+        raise Refused("card #%d is in Done, and start-build never moves a card back (to rebuild a reopened "
+                      "card, move the card to Todo on the board, then run start-build %d)" % (number, number))
     _option(board, "In progress")
     _move(ask, board, item, "In progress")
     return ("Card #%d is at the top of In progress. Now launch the builder on it (the plugin's builder agent, "
