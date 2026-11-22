@@ -87,13 +87,20 @@ def fake_watcher(mode, coordination=None):
     return path
 
 
+def write_whole(path, text):
+    """Write a file that another process may read at any moment: it sees the old text or the new,
+    never an empty or half-written file (#136: a read between open and write gave -1 for an rc)."""
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)
+
+
 def set_mode(fake, mode, coordination=None):
     """What the fake does; coordination, if given, is what the coordination watcher does instead."""
-    with open(os.path.join(os.path.dirname(fake), "mode"), "w") as f:
-        f.write(mode)
+    write_whole(os.path.join(os.path.dirname(fake), "mode"), mode)
     if coordination is not None:
-        with open(os.path.join(os.path.dirname(fake), "mode-coordination"), "w") as f:
-            f.write(coordination)
+        write_whole(os.path.join(os.path.dirname(fake), "mode-coordination"), coordination)
 
 
 def which(start):
@@ -106,7 +113,9 @@ def starts_of(fake):
     if not os.path.exists(path):
         return []
     with open(path) as f:
-        return [json.loads(line) for line in f.read().splitlines()]
+        text = f.read()
+    # A fake that is writing its line right now has not reached the newline: it hasn't started yet.
+    return [json.loads(line) for line in text.split("\n")[:-1]]
 
 
 def payload(event="PreToolUse", **extra):
@@ -184,9 +193,12 @@ def alive(pid):
         os.kill(pid, 0)
     except OSError:
         return False
-    # A finished child that nobody has collected yet still answers kill(pid, 0).
+    # A finished child that nobody has collected yet still answers kill(pid, 0). Any state that starts
+    # with Z is one, whatever flags follow: the hook's own rule (command_of), so the test and the hook
+    # never disagree on whether a process has exited (#136).
     out = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, timeout=10)
-    return out.stdout.strip() not in ("", "Z", "Z+")
+    stat = out.stdout.strip()
+    return bool(stat) and not stat.startswith("Z")
 
 
 class StartsOnce(unittest.TestCase):
@@ -928,8 +940,10 @@ while time.time() < end and not os.path.exists(os.path.join(here, "quit")):
         n += 1
     for k, p in list(running.items()):
         if p.poll() is not None:
-            with open(os.path.join(here, "rc-%d" % k), "w") as f:
+            # Written whole, then renamed: the test never reads an empty rc file (#136).
+            with open(os.path.join(here, "rc-%d.tmp" % k), "w") as f:
                 f.write(str(p.returncode))
+            os.replace(os.path.join(here, "rc-%d.tmp" % k), os.path.join(here, "rc-%d" % k))
             del running[k]
     time.sleep(0.05)
 for p in running.values():
@@ -958,8 +972,8 @@ class Session:
         """Run the hook once more; returns its number. With event, the payload is that event's, with
         extra (such as source="resume" at SessionStart); without, a tool call's."""
         p = payload(event or "PreToolUse", session_id=self.session_id, **extra)
-        with open(os.path.join(self.dir, "payload.json"), "w") as f:
-            json.dump(p, f)
+        # A new file, not the old one rewritten: a hook still reading its payload keeps its own (#136).
+        write_whole(os.path.join(self.dir, "payload.json"), json.dumps(p))
         self.runs += 1
         open(os.path.join(self.dir, "go-%d" % self.runs), "w").close()
         return self.runs
@@ -1008,8 +1022,15 @@ class NewestSessionTakesOver(unittest.TestCase):
             time.sleep(1.5)  # ps tells start times apart to the second
             new = Session(project, fake, "new")
             new.hook()
+            asked = time.time()
             self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 2, 15))
-            self.assertFalse(alive(old_hook), "the old hook has exited before the new watcher starts")
+            if alive(old_hook):
+                # #136: seen once on GitHub (Python 3.15), never here. Say what the old hook was doing,
+                # so a repeat shows whether it was slow to exit (the hook waits 10 s at most) or not stopped.
+                ps = subprocess.run(["ps", "-o", "pid=,ppid=,stat=,etime=,command=", "-ww", "-p", str(old_hook)],
+                                    capture_output=True, text=True, timeout=10).stdout.strip()
+                self.fail("the old hook has not exited %.1f s after the new hook started, yet the new watcher "
+                          "runs.\nold hook: %s\nevents: %s" % (time.time() - asked, ps, events(project)))
             # One hook run: the new session holds the pid file, and its watcher is the only one.
             held = self.held(project)
             self.assertEqual((held["parent"], held["session"]), (new.pid, "new"))
