@@ -128,6 +128,43 @@ class ReadyPrNotInReview(unittest.TestCase):
         self.assertEqual(cc.check(snap(board=[card(7, "in progress")], prs=[pr(20, closes=[7], draft=True)])), [])
 
 
+class InReviewWithDraftPr(unittest.TestCase):
+    """2026-11-21: #153 and #140 went to In review a minute after their draft PRs (#154, #155) opened (#156)."""
+
+    def test_a_card_in_review_with_only_a_draft_pr_is_named(self):
+        found = cc.check(snap(board=[card(153, "in review")], prs=[pr(154, closes=[153], draft=True)]))
+        self.assertEqual(cases(found), ["in-review-with-draft-pr"])
+        self.assertEqual(found[0]["card"], 153)
+        text = found[0]["problem"]
+        self.assertIn("#153", text)
+        self.assertIn("#154", text)
+        self.assertIn("draft", text)
+        self.assertIn("pr-draft 154", text)  # says how to put it right
+
+    def test_both_incident_cards_are_named(self):
+        found = cc.check(snap(board=[card(153, "in review"), card(140, "in review")],
+                              prs=[pr(154, closes=[153], draft=True), pr(155, closes=[140], draft=True)]))
+        self.assertEqual(sorted(p["card"] for p in found if p["case"] == "in-review-with-draft-pr"), [140, 153])
+
+    def test_moving_it_back_to_in_progress_clears_it(self):
+        self.assertEqual(cc.check(snap(board=[card(153, "in progress")], prs=[pr(154, closes=[153], draft=True)])), [])
+
+    def test_marking_the_pr_ready_clears_it(self):
+        self.assertEqual(cc.check(snap(board=[card(153, "in review")], prs=[pr(154, closes=[153])])), [])
+
+    def test_a_ready_pr_beside_a_draft_one_keeps_it_in_review(self):
+        s = snap(board=[card(153, "in review")], prs=[pr(154, closes=[153], draft=True), pr(157, closes=[153])])
+        self.assertEqual(cc.check(s), [])
+
+    def test_a_branch_named_for_the_card_without_closes_is_not_its_pr(self):
+        # Only a PR that closes the card says which column it belongs in.
+        s = snap(board=[card(153, "in review")], prs=[pr(154, closes=[], draft=True, head="issue-153-x")])
+        self.assertEqual(cc.check(s), [])
+
+    def test_in_review_with_no_open_pr_is_left_alone(self):
+        self.assertEqual(cc.check(snap(board=[card(153, "in review")])), [])
+
+
 class BoardAndIssue(unittest.TestCase):
     """Card #121's fourth case: a card is Done but its issue is open, or the other way round."""
 
@@ -331,6 +368,8 @@ def oracle_column(c, prs, worktrees):
     mine = [p for p in prs if c["number"] in p["closes"] or p["head"].split("-")[:2] == ["issue", str(c["number"])]]
     if any(c["number"] in p["closes"] and not p["draft"] for p in mine):
         return {"in review"}
+    if any(c["number"] in p["closes"] for p in mine):
+        return {"in progress"}  # its PRs are all drafts (#156)
     if mine or any(w.split("-")[:2] == ["issue", str(c["number"])] for w in worktrees):
         return {"in progress", "in review"}
     return {"todo", "in progress", "in review"}
@@ -354,7 +393,8 @@ class BoardProperties(unittest.TestCase):
                 elif roll < 0.45:
                     worktrees.append(rng.choice(["issue-%d-y" % n, "issue-%d" % n, "issue-%d9-z" % n]))
             found = cc.check(snap(board=board, prs=prs, worktrees=worktrees))
-            named = {p["card"] for p in found if p["case"] in ("build-in-todo", "pr-ready-not-in-review", "board-vs-issue")}
+            named = {p["card"] for p in found if p["case"] in ("build-in-todo", "pr-ready-not-in-review",
+                                                               "in-review-with-draft-pr", "board-vs-issue")}
             expected = {c["number"] for c in board if c["status"] not in oracle_column(c, prs, worktrees)}
             self.assertEqual(named, expected, (board, prs, worktrees, found))
 

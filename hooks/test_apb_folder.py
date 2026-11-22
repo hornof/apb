@@ -216,8 +216,8 @@ class EveryHookUsesTheRule(Clean):
             config = json.load(f)
         scripts = sorted({os.path.basename(arg) for groups in config["hooks"].values() for group in groups
                           for hook in group["hooks"] for arg in hook.get("args", []) if arg.endswith(".py")})
-        self.assertEqual(scripts, ["apb-brief.py", "apb-events.py", "apb-popups.py", "apb-selfcheck.py",
-                                   "apb-stop.py", "apb-version.py", "apb-watch-start.py"])
+        self.assertEqual(scripts, ["apb-brief.py", "apb-events.py", "apb-popups.py", "apb-pr-ready.py",
+                                   "apb-selfcheck.py", "apb-stop.py", "apb-version.py", "apb-watch-start.py"])
         for name in scripts:
             with open(os.path.join(HERE, name), encoding="utf-8") as f:
                 source = f.read()
