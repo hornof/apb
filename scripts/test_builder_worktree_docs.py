@@ -48,6 +48,11 @@ class Step3(unittest.TestCase):
         self.assertIn('isolation: "worktree"', self.step3)
         self.assertIn("its shell starts in the worktree", self.step3)
 
+    def test_an_isolated_builder_still_starts_from_fresh_main(self):
+        # Note 3 on PR #158: isolation may branch the worktree from the session checkout's commit.
+        self.assertIn("may start from the session checkout's current commit rather than fresh main", self.step3)
+        self.assertIn("still branches off freshly fetched `origin/main` itself", self.step3)
+
     def test_second_way_is_a_brief_that_pins_every_command(self):
         for words in ("git worktree add", "the brief", "every command names the worktree with a folder option or "
                       "an absolute path", "`git -C <worktree>`",
