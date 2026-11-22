@@ -534,6 +534,33 @@ class Reopened(unittest.TestCase):
         heads = [l for l in text.splitlines() if l.startswith("apb startup self-check")]
         self.assertEqual(heads[-1], "apb startup self-check", "the block's head names no session")
 
+    def test_a_session_first_active_before_the_open_holder_counts_as_reopened(self):
+        # Review Fix 1: no "resume" source, but its first line in the events file comes before the holder's.
+        w = World()
+        w.break_owner()  # session "s", open (pid 1), "apb orch 2 · 0.3.58 · Nov 20 9:00 AM", holds it
+        with open(os.path.join(w.apb, "events.jsonl"), "w") as f:
+            f.write(json.dumps({"event": "Stop", "session": "bf4e8d74"}) + "\n")
+            f.write(json.dumps({"event": "watcher-start", "session": "s"}) + "\n")
+        p = dict(resumed(w), source="startup")
+        ok, rest = lines_of(w.context(payload=p))["Watcher"]
+        self.assertTrue(ok, rest)
+        self.assertIn("reopened", rest)
+        self.assertNotIn("held by this session", rest)
+        self.assertIsNone(apb_session.session_name(w.apb, "bf4e8d74", "x", assign=False), "no number given")
+        self.assertFalse(os.path.exists(os.path.join(w.apb, apb_session.SESSIONS)), "sessions.json not written")
+
+    def test_a_session_first_active_after_the_holder_is_new(self):
+        w = World()
+        w.break_owner()
+        with open(os.path.join(w.apb, "events.jsonl"), "w") as f:
+            f.write(json.dumps({"event": "watcher-start", "session": "s"}) + "\n")
+            f.write(json.dumps({"event": "Stop", "session": "fresh"}) + "\n")
+        p = dict(resumed(w, "fresh"), source="startup")
+        ok, rest = lines_of(w.context(payload=p))["Watcher"]
+        self.assertFalse(ok, rest)
+        self.assertNotIn("reopened", rest)
+        self.assertIsNotNone(apb_session.session_name(w.apb, "fresh", "x", assign=False), "it got a number")
+
     def test_a_reopened_session_that_holds_the_watcher_says_so(self):
         # No open session held it, so the reopened one started it (the owner file names it).
         w = World()

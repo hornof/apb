@@ -33,7 +33,8 @@ To add a line: write a function check_x(ctx) that returns (ok, text) and add ("L
 CHECKS. The checks run side by side; one that raises shows ❌ with the error.
 
 The session's name (issue #133's comment, hooks/apb_session.py) heads the block. A reopened session
-(SessionStart's `source` is "resume") is given no number (#146): the block carries the name it had, or
+(SessionStart's `source` is "resume", or its first line in .apb/events.jsonl comes before the open
+holder's; reopened()) is given no number (#146): the block carries the name it had, or
 none. The hook can't rename
 the session itself (a hook can't call the app's tools), so it tells Claude to: with the desktop app's
 mcp__ccd_session_mgmt__set_session_title, or else by asking the human in one line.
@@ -453,6 +454,19 @@ def context(opts, project, hook, resumed=False):
                    wait=opts.wait, roots=roots, home=opts.home, hook=hook, resumed=resumed)
 
 
+def reopened(ctx, p):
+    """True if this session was reopened (#146), so it gets no number: SessionStart says so (`source`
+    "resume"), or the owner file names another open session and this session's first line in
+    .apb/events.jsonl comes before that one's (the watcher hook's rule; its .apb/resumed.json can't be
+    read here, since that hook writes it at this same moment)."""
+    if p.get("source") == "resume":
+        return True
+    owner = read_json(os.path.join(ctx.folder, "watcher-owner.json"))
+    if not isinstance(owner, dict) or owner.get("root") in ctx.roots or not alive(owner.get("root")):
+        return False
+    return apb_session.active_before(ctx.folder, p.get("session_id"), owner.get("session"))
+
+
 def main(argv):
     opts = parse_args(argv)
     if opts.print:
@@ -470,8 +484,9 @@ def main(argv):
         return 0
     if load("apb_watch_start", "apb-watch-start.py").linked_worktree(project):
         return 0  # a build or review session: only the orchestrator's checkout runs the check
-    resumed = p.get("source") == "resume"  # a reopened session gets no number (#146)
-    ctx = context(opts, project, True, resumed)
+    ctx = context(opts, project, True)
+    ctx.resumed = reopened(ctx, p)
+    resumed = ctx.resumed
     name = apb_session.session_name(ctx.folder, p.get("session_id"), installed_version(opts.plugin_root),
                                     assign=not resumed)
     results = run_checks(ctx)
