@@ -6,14 +6,17 @@ Usage, from the project's repo root:
     python3 <apb plugin folder>/scripts/card-times.py --collect [--repo owner/name]
 
 It works the times out from .apb/events.jsonl and GitHub, never by hand:
-- build: the builder's start to the PR opening. The builder is the earliest builder agent, started
+- build: the builder's start to the PR being ready for review: the last time it was marked ready, or
+  its opening for a PR that was never a draft. A builder opens a draft PR as soon as it starts and marks
+  it ready when the build is done (#131), so the opening alone would give a build of about 0. Below,
+  "the PR opening" means that ready time. The builder is the earliest builder agent, started
   before the PR opened, that named the PR's branch in a shell command (a push), or else the issue
   (#N, issue-N, issue view N, issues/N). An agent resumed later keeps its first start.
 - hand-offs: the Stop lines with holder "human" between the PR opening and the human's last action
   (below) that name the PR or the card (#N, /pull/N), or else all of them. Their number is in the
   comment. A card with a Decision usually has 2 ("answer the decision", then "merge"); more means the
   PR came back to Claude after a hand-off.
-- review: the PR opening to the first hand-off.
+- review: the PR opening (its ready time, above) to the first hand-off.
 - human: the sum of the human's waits. Each wait runs from a hand-off to the human's next action: a
   chat message in the orchestrator's session, or a comment on the PR or the card. The last wait runs
   to the human's last action on the PR: the merge, or the close, or for a PR still open, the human's
@@ -197,7 +200,7 @@ def card_times(events, data, claude_login=None):
         return r
     r["pr"] = p["number"]
     events = sorted((e for e in events if isinstance(e.get("time"), str)), key=lambda e: seconds(e["time"]))
-    opened = seconds(p["createdAt"])
+    opened = seconds(p.get("readyAt") or p["createdAt"])  # a draft's build ends when it is marked ready
     end, r["last_action"] = last_action(p, claude_login)
     start = builder_start(events, p.get("headRefName"), number, opened)
     r.update(build_start=start, opened=opened, end=end, build_min=minutes(start, opened))
@@ -292,6 +295,7 @@ QUERY = """query($owner: String!, $name: String!, $number: Int!) { repository(ow
   issue(number: $number) { number state comments(last: 100) { nodes { body createdAt author { login } } }
     closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes {
       number createdAt mergedAt closedAt headRefName
+      timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { createdAt } } }
       comments(first: 100) { nodes { body createdAt author { login } } }
       reviews(first: 100) { nodes { body submittedAt author { login } } }
       reviewThreads(first: 100) { nodes { comments(first: 100) { nodes { body createdAt author { login } } } } }
@@ -317,8 +321,9 @@ def flatten(got):
                      if (v.get("body") or "").strip() and v.get("submittedAt")]
         comments += [{"body": c["body"], "createdAt": c["createdAt"], "author": login(c)}
                      for t in p["reviewThreads"]["nodes"] for c in t["comments"]["nodes"]]
+        ready = [e["createdAt"] for e in (p.get("timelineItems") or {}).get("nodes", []) if e.get("createdAt")]
         prs.append({k: p[k] for k in ("number", "createdAt", "mergedAt", "closedAt", "headRefName")}
-                   | {"comments": comments})
+                   | {"comments": comments, "readyAt": max(ready, key=seconds) if ready else None})
     return {"number": i["number"], "state": i["state"], "comments": [c["body"] for c in i["comments"]["nodes"]],
             "card_comments": [{"body": c["body"], "createdAt": c.get("createdAt"), "author": login(c)}
                               for c in i["comments"]["nodes"]],

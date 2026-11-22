@@ -1,6 +1,6 @@
 # `<project>`: project map
 
-Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists. Claude checks every row after every merge, whenever a PR opens, at the end of each stage, and whenever the human asks where things stand. Claude fixes any row that is wrong. At the same moments, Claude checks the board: every issue is in the right column, and there is an issue for the current stage.
+Every piece of this project, where it lives, and when it's used. Claude adds each new piece as soon as it exists. Claude checks every row after every merge, whenever a PR is marked ready for review, at the end of each stage, and whenever the human asks where things stand. Claude fixes any row that is wrong. At the same moments, Claude checks the board: every issue is in the right column, and there is an issue for the current stage.
 
 The map lives in two places with the same content: `docs/MAP.md` in the GitHub repo, and the map artifact in Claude: `<map artifact link>`. Claude edits only `docs/MAP.md` and builds the map artifact from it with apb's `scripts/map-artifact.py`. Links to repo files point at the branch the map artifact was built from.
 
