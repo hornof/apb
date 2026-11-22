@@ -186,13 +186,17 @@ class FinalAsk(unittest.TestCase):
         for message in [ONE + "\n\nPR #44 (Card #41): in review.", NOTHING + "\nPR #40: checks running.",
                         MANY + "\n\nThe builder finished.", MANY + "\n3. C.", ONE + "\n> quoted",
                         ONE + "\nSee https://github.com/hornof/apb/pull/44.",  # words around the link
+                        ONE + "\nPreview: https://x.example/ is up.",  # words after the labelled link
+                        ONE + "\nThe preview for the new page: https://x.example/",  # a label of more than four words
                         ONE + "\n```\nnever closed", ONE + "\n" + ONE + "\nDone."]:
             self.assertIsNone(stop.final_ask(message), message)
 
     def test_links_and_fenced_blocks_belong_to_the_ask(self):
         link = "https://github.com/hornof/apb/pull/44"
         for tail in [link, "<%s>" % link, "[PR #44](%s)" % link, "- [PR #44](%s), %s." % (link, link),
-                     "```\ngh pr merge 44\n```", "%s\n\n```sh\nls\n```\n%s" % (link, link), "~~~\nx\n~~~"]:
+                     "```\ngh pr merge 44\n```", "%s\n\n```sh\nls\n```\n%s" % (link, link), "~~~\nx\n~~~",
+                     "Preview: https://sketch.example.pages.dev/", "PR: [PR #44](%s)" % link,
+                     "- Preview: <https://sketch.example.pages.dev/>"]:
             self.assertEqual(stop.final_ask(ONE + "\n\n" + tail), ("human", "merge PR #44"), tail)
             self.assertEqual(stop.final_ask(MANY + "\n" + tail), ("human", "2 things"), tail)
             self.assertEqual(stop.final_ask(NOTHING + "\n" + tail), ("claude", None), tail)
@@ -573,14 +577,16 @@ class AsksDecision(unittest.TestCase):
                         "**Your call** on the colors.", "It's your call.",
                         "The layout:\n(a) a grid\n(b) a list",
                         "The layout:\n- **(a)** a grid\n- **(b)** a list",
-                        "The layout:\na) a grid\nb) a list"]:
+                        "The layout:\na) a grid\nb) a list",
+                        # A "Nothing" line mid-message is not the ask: the question after it still asks.
+                        "Status:\nNothing for you to do right now. Waiting on CI, ETA 3:00 PM.\nWhich do you want: (a) squash or (b) merge?"]:
             self.assertTrue(stop.asks_decision(message), message)
 
     def test_not_decisions(self):
         for message in [None, "", ONE, NOTHING, MANY, ALL_CLEAR, "Done. The builder finished.",
                         "Nothing for you to do right now. Waiting on the reviewer to decide, ETA 7:10 PM.",
-                        "Nothing for you to do right now. Waiting on the reviewer, ETA 7:10 PM.\n"
-                        "There will likely be one decision for you. Which do you want?",
+                        "There will likely be one decision for you. Which do you want?\n"
+                        "Nothing for you to do right now. Waiting on the reviewer, ETA 7:10 PM.",
                         "1 thing for you to do right now: pick up the build after lunch.",
                         "1 thing for you to do right now: merge PR #72 (no decisions).",
                         "Indecisive tests, rerun.", "No decisions on PR #72; merge it.", "0 decisions on PR #72.",
@@ -632,7 +638,8 @@ class DecisionWithoutLink(unittest.TestCase):
                 "2 things for you to do right now:\n1. merge PR #72.\n2. 1 decision on PR #71 (no rush).",
                 "Still 1 thing for you to do right now: rule on the review of PR #45, including decision 7.",
                 "The builder is done. Which do you want, the grid or the list?",
-                "The layout:\n(a) a grid\n(b) a list\n\n> https://github.com/hornof/apb/pull/44"]:
+                "The layout:\n(a) a grid\n(b) a list\n\n> https://github.com/hornof/apb/pull/44",
+                "Status:\nNothing for you to do right now. Waiting on CI, ETA 3:00 PM.\nWhich do you want: (a) squash or (b) merge?"]:
             self.assertTrue(stop.decision_without_link(message), message)
 
     def test_passes(self):
@@ -1823,10 +1830,13 @@ class Properties(unittest.TestCase):
              ("The note said \"PR #7 is merged\".", False, False, False),  # a quoted fact isn't stated
              ("> https://github.com/o/r/pull/7 is merged.", False, False, False)]  # nor a quoted line or link
 
+    LINK_TAILS = {"Card: https://github.com/o/r/issues/7"}
+
     def message(self, rng):
         """A random message and, known by construction: whether it ends with a valid ask block,
         whether it states a GitHub fact, and whether it asks a decision with no GitHub link."""
         text, valid, fact, asks, link, item_unlinked, nothing = self.body(rng)
+        all_clear = text == ALL_CLEAR
         tail, tail_fact, tail_link, tail_asks = rng.choice(self.TAILS)
         if tail:
             # What happened goes above the ask (#153). Below it, the ask is no longer the last thing,
@@ -1834,8 +1844,12 @@ class Properties(unittest.TestCase):
             if rng.random() < 0.75:
                 text = tail + "\n\n" + text
             else:
-                text, valid = text + "\n\n" + tail, False
-        # Under "Nothing for you to do right now", nothing is asked.
+                # A link line (with or without a short label) belongs to the ask, except under All
+                # clear; any other tail ends the ask block.
+                text = text + "\n\n" + tail
+                valid = valid and tail in self.LINK_TAILS and not all_clear
+                nothing = nothing and valid
+        # A message whose ask block is "Nothing for you to do right now" asks nothing.
         asks = not nothing and (asks or tail_asks)
         return text, valid, fact or tail_fact, (asks and not (link or tail_link)) or item_unlinked
 

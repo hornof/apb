@@ -197,12 +197,12 @@ ALL_CLEAR = re.compile(r"All clear: .+ empty, no open PRs, as of .+")
 CLEAR = "all clear"  # the todo an All clear line logs; it starts no reminder
 ITEM = re.compile(r"(\d+)[.)]\s+\S")
 # What may follow the ask line and still belong to it: a line that is only links (a bare URL, <URL> or
-# [text](URL), separated by spaces or commas, maybe as a list item), and a fenced block.
+# [text](URL), separated by spaces or commas, maybe as a list item, maybe after a short label of up to
+# four words ending in ":", such as "Preview:" or "PR:"), and a fenced block.
 LINK_TOKEN = r"(?:<https?://[^\s<>]+>|https?://[^\s<>]+|\[[^\]\n]+\]\(https?://[^\s)]+\))"
-LINK_ONLY = re.compile(r"(?:[-*+]\s+)?%s(?:[\s,]+%s)*\.?" % (LINK_TOKEN, LINK_TOKEN))
+LINK_ONLY = re.compile(r"(?:[-*+]\s+)?(?:[\w#()-]+(?:\s+[\w#()-]+){0,3}:\s+)?%s(?:[\s,]+%s)*\.?"
+                       % (LINK_TOKEN, LINK_TOKEN))
 FENCE = re.compile(r"```|~~~")
-# The start of any of the four lines, valid or not: the last such line is where the ask is.
-ASK_START = re.compile(r"(?:Still\s+)?(?:Nothing|\d+\s+things?)\s+for you to do right now|All clear:")
 
 
 def clean(line):
@@ -286,11 +286,11 @@ def asks_decision(message):
     one, words that ask for one ("answer decision 3", "2 decisions for you", "which do you want",
     "your call"), a question that names one ("decide …?"), or a list of lettered options. A line that
     only mentions a decision, quotes one or talks about the check asks nothing, and a message whose ask
-    (its last line that starts like one of the four) is "Nothing for you to do right now" asks nothing."""
+    is "Nothing for you to do right now" (the ask block it ends with, see ask_block) asks nothing."""
     lines = [clean(l) for l in unquoted(message)]
     lines = [NO_DECISION.sub(" ", l) for l in lines if l]
-    asks = [l for l in lines if ASK_START.match(l)]
-    if not lines or (asks and asks[-1].startswith("Nothing for you to do right now")):
+    block = ask_block(message)
+    if not lines or (block and block["holder"] == "claude"):
         return False
     letters = set()
     for line in lines:

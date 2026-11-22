@@ -172,6 +172,15 @@ class AskGoesLast(unittest.TestCase):
         self.assertIn("so end the message with one of these lines", hook.REASON)
         self.assertNotIn("start the message with", hook.REASON)
 
+    def test_the_popup_check_says_end_the_message_with(self):
+        spec = importlib.util.spec_from_file_location("apb_popups", os.path.join(ROOT, "hooks", "apb-popups.py"))
+        popups = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(popups)
+        self.assertIn("end the message with", popups.HAND_OFF)
+        self.assertIn("The ask is the last thing in the message.", popups.HAND_OFF)
+        self.assertNotIn("start with", popups.HAND_OFF)
+        self.assertNotIn("start with", popups.__doc__)
+
     def test_the_status_lines_go_above_the_ask(self):
         self.assertIn("Above the ask, one line per card in In progress and In review",
                       flat(section(read("docs/playbook.md"), SECTION)))
