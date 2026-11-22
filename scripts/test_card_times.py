@@ -243,6 +243,88 @@ class HandOffs(unittest.TestCase):
         self.assertEqual(ct.card_times(events, issue([pr()]))["messages"], 2)
 
 
+def no_github(repo, number):
+    """A gh lookup that fails, as with no network: the Stop hook then lets its GitHub checks through."""
+    raise ct.subprocess.CalledProcessError(1, "gh")
+
+
+def minute_seconds(minute):
+    return calendar.timegm((2026, 11, 18, 12, 0, 0)) + minute * 60 + 0.5
+
+
+class HandOffAtTheEnd(unittest.TestCase):
+    """The hand-off is the last thing in the orchestrator's message (#153). The real Stop hook reads it
+    and writes the Stop line, and card times find it for every PR it names, "N things" included."""
+
+    def hook_stop(self, events, message, minute):
+        """The events with the Stop line hooks/apb-stop.py writes for message at minute."""
+        project = tempfile.mkdtemp()
+        os.makedirs(os.path.join(project, ".apb"))
+        with open(os.path.join(project, ".apb", "events.jsonl"), "w", encoding="utf-8") as f:
+            for e in events:
+                f.write(json.dumps(e) + "\n")
+        p = {"session_id": S, "hook_event_name": "Stop", "stop_hook_active": False, "last_assistant_message": message}
+        r = ct.stop_hook.handle(p, project, minute_seconds(minute), no_github, no_github)
+        self.assertFalse(r["send_back"], message)
+        return ct.read_events(os.path.join(project, ".apb", "events.jsonl"))
+
+    def builder(self, agent, number, branch, minute):
+        return [start(minute, agent), bash(minute + 1, agent, "gh issue view %d" % number),
+                bash(minute + 2, agent, "git push -u origin " + branch),
+                {"time": at(minute + 3), "event": "SubagentStop", "session": S, "agent_id": agent,
+                 "agent_type": "apb:builder"}]
+
+    def test_two_things_naming_two_prs(self):
+        events = (self.builder("b1", 54, "issue-54-brief-check", 2) + self.builder("b2", 60, "issue-60-x", 4)
+                  # an earlier hand-off for another PR: no part of either card's times
+                  + [stop(13, "human", "merge PR #57")])
+        message = ("Both reviews are done, and the reviewer found nothing to fix.\n\n"
+                   "2 things for you to do right now:\n"
+                   "1. merge [PR #58 (Card #54)](https://github.com/hornof/apb/pull/58)\n"
+                   "2. merge [PR #61 (Card #60)](https://github.com/hornof/apb/pull/61)")
+        events = self.hook_stop(events, message, 15)
+        self.assertEqual(events[-1]["holder"], "human")
+        r58 = ct.card_times(events, issue([pr(58, opened=10, merged=25)], number=54))
+        r61 = ct.card_times(events, issue([pr(61, opened=12, merged=30, branch="issue-60-x")], number=60))
+        # Oracle: review is the hand-off (15) less the opening; human is the merge less the hand-off.
+        self.assertEqual((r58["review_min"], r58["human_min"], r58["hand_offs"]), (5.0, 10.0, 1))
+        self.assertEqual((r61["review_min"], r61["human_min"], r61["hand_offs"]), (3.0, 15.0, 1))
+
+    def test_one_thing_at_the_end(self):
+        events = self.builder("b1", 54, "issue-54-brief-check", 2) + [stop(13, "human", "merge PR #57")]
+        events = self.hook_stop(events, "PR #58 (Card #54): reviewed.\n\n"
+                                "1 thing for you to do right now: merge PR #58.", 16)
+        r = ct.card_times(events, issue([pr(58, opened=10, merged=25)], number=54))
+        self.assertEqual((r["review_min"], r["human_min"], r["hand_offs"]), (6.0, 9.0, 1))
+
+    def test_random_n_things(self):
+        """Any number of PRs in one "N things" list, among other hand-offs: each PR gets the one that
+        names it. The oracle works the times out from the minutes the timeline was built from."""
+        rng = random.Random(153)
+        for _ in range(25):
+            n = rng.randint(2, 5)
+            numbers = rng.sample(range(100, 200), n)
+            opened = {k: rng.randint(10, 20) for k in numbers}
+            hand_off = 21 + rng.randint(0, 5)
+            merged = {k: hand_off + rng.randint(1, 30) for k in numbers}
+            events = []
+            for k in numbers:
+                events += self.builder("b%d" % k, k + 1000, "issue-%d-x" % (k + 1000), 1)
+            # other hand-offs, for other PRs, between the openings and the merges
+            events += [stop(m, "human", "merge PR #%d" % rng.randint(1, 99))
+                       for m in sorted(rng.sample(range(10, hand_off), rng.randint(0, 3)))]
+            prose = rng.choice(["", "The reviews are done.\n\n", "PR #7: checks running, ETA 7:10 PM.\n"])
+            message = prose + "%d things for you to do right now:\n" % n + "\n".join(
+                "%d. merge [PR #%d](https://github.com/o/r/pull/%d)" % (i, k, k) for i, k in enumerate(numbers, 1))
+            events = self.hook_stop(events, message, hand_off)
+            for k in numbers:
+                data = issue([pr(k, opened=opened[k], merged=merged[k], branch="issue-%d-x" % (k + 1000))],
+                             number=k + 1000)
+                r = ct.card_times(events, data)
+                self.assertEqual((r["review_min"], r["human_min"], r["hand_offs"]),
+                                 (float(hand_off - opened[k]), float(merged[k] - hand_off), 1), (message, k))
+
+
 class HumanWaits(unittest.TestCase):
     """Human = the sum of the human's waits: each hand-off to the human's next action (a chat message,
     a GitHub comment on the PR or the card, or the merge), and the last hand-off to the merge."""

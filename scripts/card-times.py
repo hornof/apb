@@ -13,7 +13,9 @@ It works the times out from .apb/events.jsonl and GitHub, never by hand:
   before the PR opened, that named the PR's branch in a shell command (a push), or else the issue
   (#N, issue-N, issue view N, issues/N). An agent resumed later keeps its first start.
 - hand-offs: the Stop lines with holder "human" between the PR opening and the human's last action
-  (below) that name the PR or the card (#N, /pull/N), or else all of them. Their number is in the
+  (below) that name the PR or the card (#N, /pull/N), or else all of them. A Stop line names what its
+  ask block names: the "1 thing" line, each item of an "N things" list and each link line under the
+  ask, so one "N things" hand-off counts for every PR it lists (#153). Their number is in the
   comment. A card with a Decision usually has 2 ("answer the decision", then "merge"); more means the
   PR came back to Claude after a hand-off.
 - review: the PR opening (its ready time, above) to the first hand-off.
@@ -117,12 +119,20 @@ def names(todo, pr, number):
     return bool(re.search(r"(?:#|/pull/|\bPR\s*)%d(?!\d)|#%d(?!\d)" % (pr, number), todo or ""))
 
 
+def said(stop):
+    """What a hand-off's Stop line says the human is to do: its todo, and the numbered items and link
+    lines of the ask block (hooks/apb-stop.py logs them), so each PR an "N things" list names is found."""
+    parts = [stop.get("todo")] + [x for key in ("items", "links") if isinstance(stop.get(key), list)
+                                  for x in stop[key]]
+    return "\n".join(x for x in parts if isinstance(x, str))
+
+
 def hand_offs(events, opened, end, pr, number):
     """The Stop lines handing over to the human between opened and end, in time order: the ones that
-    name the PR or the card, or else all of them. Empty if there is none."""
+    name the PR or the card (in the todo, an item or a link), or else all of them. Empty if there is none."""
     stops = [e for e in events if e.get("event") == "Stop" and e.get("holder") == "human"
              and opened <= seconds(e["time"]) <= end]
-    return [e for e in stops if names(e.get("todo"), pr, number)] or stops
+    return [e for e in stops if names(said(e), pr, number)] or stops
 
 
 def human_time(events, hands, end, data, p, claude_login=None):

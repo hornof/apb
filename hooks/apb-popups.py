@@ -5,8 +5,8 @@ apb project (one with docs/MAP.md) or in the apb repo itself (see hooks/apb_fold
 - AskUserQuestion, the multiple-choice card;
 - mcp__ccd_turn__wrap_up, the desktop app's end-of-turn box, when it has a question (`ask`) or buttons
   (`actions`). A recap-only wrap_up goes through.
-The refusal tells Claude to ask the same question in its message, in the hand-off format
-("1 thing for you to do right now: ..."), so the human answers in their own words.
+The refusal tells Claude to ask the same question in its message, in the hand-off format: the message
+ends with "1 thing for you to do right now: ...", so the human answers in their own words.
 
 During /apb-setup the cards are wanted (the public/private question). Setup marks itself:
 
@@ -34,9 +34,9 @@ WRAP = "mcp__ccd_turn__wrap_up"
 MARKER = os.path.join(".apb", "setup-running")
 UNCLAIMED_MAX = 2 * 3600  # seconds an unclaimed marker stays good
 
-HAND_OFF = ('Ask the same question in your message instead, in the hand-off format: start with '
+HAND_OFF = ('Ask the same question in your message instead, in the hand-off format: end the message with '
             '"1 thing for you to do right now: <the question>", or "N things for you to do right now:" and a '
-            'numbered list. The human answers in their own words. A decision still goes on GitHub, with its '
+            'numbered list. The ask is the last thing in the message. The human answers in their own words. A decision still goes on GitHub, with its '
             'link in the message. Pop-ups are only for /apb-setup.')
 
 
