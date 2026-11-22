@@ -12,7 +12,8 @@ import re
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RULE = "A PR that changes only docs runs no tests."
+# Not "runs no tests": GitHub's checks still run on every push in a project (review of PR #141, Fix 1).
+RULE = "A PR that changes only docs needs no test run on anyone's computer"
 HAND_OFF = '"no tests: docs only"'
 
 
@@ -60,6 +61,12 @@ class RuleText:
         self.assertIsNotNone(rule, "exactly one bullet starts with the rule")
         # The hand-off line, word for word.
         self.assertIn(HAND_OFF, rule)
+        # It covers the orchestrator too (it ran the tests in #130), and GitHub's checks still run.
+        self.assertIn("orchestrator's", rule)
+        self.assertIn("GitHub's checks still run as usual", rule)
+        self.assertNotIn("runs no tests", rule)
+        # How to find the test files that read a file.
+        self.assertIn("grep -rl", rule)
         # What counts as docs (flat() drops the `*` of `*.md`).
         self.assertIn("Docs are `.md` files people read", rule)
         # The edge cases: instructions the model runs are not docs.
@@ -82,7 +89,11 @@ class Builder(unittest.TestCase, RuleText):
 class Playbook(unittest.TestCase, RuleText):
     def test_run_each_test_only_where_needed_states_the_rule(self):
         testing = section(read("docs/playbook.md"), "Testing and models")
-        self.check(the_rule(bullets(testing, "  - ")))
+        rule = the_rule(bullets(testing, "  - "))
+        self.check(rule)
+        # Whose report: not "its report", which points at the PR (Fix 3); the orchestrator's hand-off (Fix 2).
+        self.assertIn("the builder's report and the hand-off", rule)
+        self.assertNotIn("its report", rule)
 
     def test_the_rule_is_stated_once(self):
         self.assertEqual(flat(read("docs/playbook.md")).count(RULE), 1)
