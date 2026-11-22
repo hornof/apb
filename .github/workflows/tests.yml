@@ -1,0 +1,36 @@
+# apb's tests run on GitHub on every PR and every push to main (#143).
+# Both unittest suites run on macOS, since apb's hooks assume a Mac. A test that can't run here
+# (it needs the network, `gh` or a Claude session) is skipped with a stated reason, never deleted.
+# The playbook's docs-only rule (#130) names this workflow as the GitHub check.
+# Its tests are scripts/test_tests_workflow.py.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+# A new push to a PR replaces that PR's older run. Each push to main gets a group of its own:
+# GitHub keeps only one pending run per group and cancels an older pending one, even without
+# cancel-in-progress, so a shared group would drop a run when several merges land close together.
+concurrency:
+  group: tests-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unittest:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python version
+        run: python3 --version
+      - name: Hook tests
+        run: python3 -m unittest discover -s hooks -t hooks
+      # Runs even when the hook tests failed, so one red run shows every broken test.
+      - name: Script tests
+        if: success() || failure()
+        run: python3 -m unittest discover -s scripts -t scripts
