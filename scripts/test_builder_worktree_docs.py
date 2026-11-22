@@ -52,7 +52,7 @@ class Step3(unittest.TestCase):
         for words in ("git worktree add", "the brief", "every command names the worktree with a folder option or "
                       "an absolute path", "`git -C <worktree>`",
                       "`python3 -m unittest discover -s <worktree>/scripts -t <worktree>/scripts`",
-                      "a script that changes folder itself", "`agents/builder.md`", "never the default folder"):
+                      "a script that changes folder itself", "`agents/builder.md`", "so no command runs in the main checkout"):
             self.assertIn(words, self.step3, words)
 
     def test_the_brief_never_offers_cd_into_the_worktree(self):
@@ -73,10 +73,14 @@ class Step3(unittest.TestCase):
     def test_step_3_never_offers_cd_into_the_worktree(self):
         self.assertNotIn("cd <worktree>", self.step3)
 
+    def test_it_names_the_main_checkout_not_an_undefined_default_folder(self):
+        # Fix 2 on PR #158.
+        self.assertNotIn("default folder", self.step3)
+
     def test_the_rule_is_only_in_step_3(self):
         # Steps 1 and 2 are edited by other cards; the rule stays in step 3 so the PRs merge cleanly.
         for n in (1, 2, 4):
-            self.assertNotIn("never the default folder", flat(step(self.text, n)), "step %d" % n)
+            self.assertNotIn("so no command runs in the main checkout", flat(step(self.text, n)), "step %d" % n)
 
 
 if __name__ == "__main__":
