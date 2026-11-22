@@ -125,7 +125,7 @@ def start_build(repo, number, ask=gh_graphql):
             "or a build session), with its own worktree from freshly fetched main." % number)
 
 
-def _move_pr_cards(ask, repo, number, draft, column):
+def move_pr_cards(ask, repo, number, draft, column):
     """Move each card PR number closes to the top of column, if the PR is open and is a draft exactly
     when draft is True. Returns the cards moved."""
     owner, name = repo.split("/", 1)
@@ -154,14 +154,14 @@ def _move_pr_cards(ask, repo, number, draft, column):
 
 def pr_ready(repo, number, ask=gh_graphql):
     """Move each card the PR closes to the top of In review. Returns what to say next."""
-    cards = _move_pr_cards(ask, repo, number, False, "In review")
+    cards = move_pr_cards(ask, repo, number, False, "In review")
     return "Moved %s to the top of In review. Now run apb-review on PR #%d." % (
         ", ".join("#%d" % c for c in cards), number)
 
 
 def pr_draft(repo, number, ask=gh_graphql):
     """Move each card a draft PR closes back to the top of In progress (#156). Returns what to say next."""
-    cards = _move_pr_cards(ask, repo, number, True, "In progress")
+    cards = move_pr_cards(ask, repo, number, True, "In progress")
     return ("Moved %s back to the top of In progress: PR #%d is a draft. It goes to In review when the "
             "builder marks it ready (gh pr ready)." % (", ".join("#%d" % c for c in cards), number))
 

@@ -243,12 +243,15 @@ class EndToEnd(unittest.TestCase):
         self.assertEqual(self.column("In progress"), [])
         self.assertIn("#156", said)
         self.assertIn("In review", said)
+        # The note usually lands in the builder's session, and a builder never reviews its own PR.
+        self.assertNotIn("apb-review", said)
         # ... and turning it back into a draft moves it back.
         self.set_draft(True)
         said = self.run_hook(payload("gh pr ready --undo", stderr=UNDO, cwd=self.project))
         self.assertEqual(self.column("In progress"), [156])
         self.assertEqual(self.column("In review"), [2])
         self.assertIn("In progress", said)
+        self.assertNotIn("apb-review", said)
         self.assertEqual(self.column("Todo"), [9])
 
     def test_a_refusal_moves_nothing_and_says_why(self):

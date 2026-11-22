@@ -80,8 +80,14 @@ def move(step, repo, number, gh="gh", budget=BUDGET):
     bm = load_board_move()
     ask = bm.asker(gh, budget, TIME_LIMIT)
     try:
-        said = (bm.pr_ready if step == "pr-ready" else bm.pr_draft)(repo, number, ask)
-        return "apb's hook (#156) moved the card: %s" % said
+        # The hook words its own note: board-move.py's pr-ready text tells the orchestrator to run
+        # apb-review, and this note usually lands in the builder's session (review fix 1 on #160).
+        draft = step == "pr-draft"
+        column = "In progress" if draft else "In review"
+        cards = bm.move_pr_cards(ask, repo, number, draft, column)
+        return ("apb's hook (#156) moved %s to the top of %s: PR #%d is %s."
+                % (", ".join("#%d" % c for c in cards), column, number,
+                   "a draft again" if draft else "marked ready for review"))
     except bm.Refused as e:
         return "apb's hook (#156) didn't move a card for PR #%d: %s." % (number, e)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as e:
