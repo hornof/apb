@@ -28,6 +28,8 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
   watcher-exit line with the reason: found, no change, error or timeout. Both name the watcher.
 - When either watcher reports something, this hook stops its other watcher, frees its pid files,
   prints the report on stderr and exits 2, which wakes the model. The next tool call starts both again.
+  When main's apb plugin is newer than this session's and the report has a merge (or main is at a
+  version this session hasn't been told), the report ends with a line saying so (apb-version.py, #128).
 - When a watcher reports no change, it is started again at once, until --budget runs out, so the
   watchers also run while the orchestrator waits with no tool calls.
 - The hook passes no --poll, so its watchers read GitHub at the watcher's own pace: every 2 minutes
@@ -79,6 +81,7 @@ def parse_args(argv):
     a.add_argument("--limit", type=float, default=LIMIT, help="minutes, the watcher's limit for one run")
     a.add_argument("--grace", type=float, default=GRACE, help="seconds a run may go past its limit")
     a.add_argument("--backoff", type=float, default=BACKOFF, help="seconds to wait after a failed run")
+    a.add_argument("--gh", default="gh", help="the gh command for the version check (tests use a fake)")
     return a.parse_args(argv)
 
 
@@ -226,6 +229,18 @@ def load_watch():
     return watch
 
 
+def version_note(opts, project, session, output):
+    """The plugin-version line for a wake (hooks/apb-version.py, issue #128), or ""."""
+    try:
+        spec = importlib.util.spec_from_file_location("apb_version", os.path.join(HERE, "apb-version.py"))
+        version = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(version)
+        note = version.wake_note(project, session, output, gh=opts.gh)
+    except Exception:
+        return ""
+    return "\n" + note + "\n" if note else ""
+
+
 def root_pid():
     """Claude Code's process, for the watcher's stuck-command check: the first ancestor of this hook
     that isn't a shell. None if it can't be found."""
@@ -362,8 +377,8 @@ def main(argv):
                 stopping.set()
                 stop_children()
                 sys.stderr.write("apb's %s watcher (started by the plugin's hook) found something. Act on it; "
-                                 "the hook starts the watchers again on your next tool call.\n%s\n"
-                                 % (w["name"], output))
+                                 "the hook starts the watchers again on your next tool call.\n%s\n%s"
+                                 % (w["name"], output, version_note(opts, project, session, output)))
                 return 2
             if reason == "error":
                 with open(w["failed"], "w") as f:

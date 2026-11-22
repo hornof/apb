@@ -352,7 +352,8 @@ class HooksFile(unittest.TestCase):
     # and wakes Claude when it has news. Every other hook is the events logger.
     WAITED_FOR = [("Stop", None, "apb-stop.py"), ("PreToolUse", "Agent|Task", "apb-brief.py"),
                   ("SubagentStop", None, "apb-brief.py"),
-                  ("PreToolUse", "AskUserQuestion|mcp__ccd_turn__wrap_up", "apb-popups.py")]
+                  ("PreToolUse", "AskUserQuestion|mcp__ccd_turn__wrap_up", "apb-popups.py"),
+                  ("SessionStart", None, "apb-version.py")]
 
     def entries(self):
         """(event, matcher, script file name, hook) for every hook in hooks.json."""

@@ -118,8 +118,9 @@ def payload(event="PreToolUse", **extra):
 
 
 def args(fake, budget=30, extra=()):
+    # --gh: no version check against GitHub here (test_apb_version.py covers it).
     return [sys.executable, SCRIPT, "--watch-script", fake, "--budget", str(budget), "--grace", "2",
-            "--backoff", "0"] + list(extra)
+            "--backoff", "0", "--gh", "/no/such/gh"] + list(extra)
 
 
 def env_for(project):
