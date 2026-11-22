@@ -76,8 +76,9 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   unchecked facts ("unchecked"), "decision-without-link", what was already done ("already-done") and the
   PRs missing their Projects line ("projects-line-missing") when those were why it sent the message back.
 - If the human holds the ball, other than after "All clear", it starts a reminder in the background: if the human has done
-  nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
-  new ask block ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
+  nothing after REMIND_AFTER seconds (no prompt of their own), one desktop alert. Only on a Mac. The
+  human's own prompt or a new ask block ends the wait. A watcher's wake or an agent's message (logged
+  as an automatic prompt) doesn't, and the stop that follows it starts no new wait (#135).
   The reminder outlives the hook, so it is given a deadline (the wait plus LIFETIME_MARGIN) and
   ends there, with any alert it started.
 
@@ -1053,10 +1054,11 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None, state_lookup=Non
         return {"send_back": True, "remind": None, "end": end, "note": "\n\n".join(notes), "warning": warning}
     if said:
         holder, todo = said
-    elif any(e["event"] == "UserPromptSubmit" for e in this_turn(events, session)):
-        holder, todo = holder_now(events, session)  # the prompt ended the last wait; start a new one
+    elif any(humans_prompt(e) for e in this_turn(events, session)):
+        holder, todo = holder_now(events, session)  # the human's prompt ended the last wait; start a new one
     else:
-        holder, todo = None, None  # woken with no new line: the running wait carries on
+        # Woken with no new line (a watcher, an agent's message): the running wait carries on (#135).
+        holder, todo = None, None
     # All clear got its one alert from the orchestrator; nothing more until the human writes.
     return {"send_back": False, "remind": todo if holder == "human" and todo != CLEAR else None, "end": end,
             "warning": warning}
@@ -1095,10 +1097,11 @@ def stop_at(deadline):
 
 
 def human_acted(project, session, start):
-    """True if, after byte start, this session has a prompt or a stop with a new ask block.
-    A stop with no ask block (Claude woken by a watcher or an agent) leaves the wait running."""
+    """True if, after byte start, this session has the human's own prompt or a stop with a new ask block.
+    A watcher's wake or an agent's message (an automatic prompt, see humans_prompt) and a stop with no
+    ask block leave the wait running (#135)."""
     return any(e.get("session") == session
-               and (e["event"] == "UserPromptSubmit" or (e["event"] == "Stop" and e.get("holder")))
+               and (humans_prompt(e) or (e["event"] == "Stop" and e.get("holder")))
                for e in read_events(project, start))
 
 

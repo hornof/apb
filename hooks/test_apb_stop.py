@@ -1721,6 +1721,26 @@ class Reminder(unittest.TestCase):
         write_events(self.project, [{"event": "SubagentStart", "agent_id": "r9"}])
         self.assertEqual(len(self.alerts(3.5)), 1)
 
+    def test_a_watcher_wake_logged_as_a_prompt_keeps_the_original_time(self):
+        # #135: Claude Code logs a watcher's wake as an automatic prompt. It is not the human acting,
+        # so it neither ends the wait nor starts a new one.
+        write_events(self.project, FINISHED_AGENT)
+        env = dict(self.env, APB_REMIND_AFTER_SECONDS="3")
+        start = time.time()
+        run(payload(ONE), self.project, env)
+        while time.time() < start + 1:
+            time.sleep(0.1)
+        write_events(self.project, [{"event": "UserPromptSubmit", "automatic": True},
+                                    {"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}])
+        tasks = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
+        r = run(payload("Checks still running.", background_tasks=tasks), self.project, env)
+        self.assertFalse(sent_back(r))
+        # The original wait fires about 3 s after the hand-off; a restarted one would fire at 4 s.
+        got = self.alerts(start + 3.6 - time.time())
+        self.assertEqual(len(got), 1)
+        self.assertIn("merge PR #44", got[0])
+        self.assertEqual(len(self.alerts(2)), 1)
+
     def test_the_text_cannot_break_out_of_the_alert(self):
         write_events(self.project, FINISHED_AGENT)
         thing = 'say "hi" & `rm -rf x` $(boom) \\ it'
@@ -1728,6 +1748,169 @@ class Reminder(unittest.TestCase):
         got = self.alerts(3.5)
         self.assertEqual(len(got), 1)
         self.assertIn("Reminder, your turn: " + thing, got[0])
+
+
+class ReminderWait(unittest.TestCase):
+    """#135: only the human's own prompt ends or restarts the reminder's wait. A watcher's wake, an
+    agent's message (both logged as automatic prompts) and another session's prompt do neither.
+    In-process: human_acted() is what the waiting reminder checks, handle() decides whether a stop
+    starts a new wait."""
+
+    WATCHER = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
+
+    def setUp(self):
+        self.project = apb_project()
+        write_events(self.project, FINISHED_AGENT)
+        r = stop.handle(payload(ONE), self.project, time.time(), no_github, no_github)
+        self.assertEqual(r["remind"], "merge PR #44")
+        self.start = r["end"]
+
+    def stop_after(self, events, message="Checks still running."):
+        write_events(self.project, events)
+        r = stop.handle(payload(message, background_tasks=self.WATCHER), self.project, time.time(),
+                        no_github, no_github)
+        self.assertFalse(r["send_back"], r.get("note"))
+        return r
+
+    # human_acted: what ends the running wait.
+
+    def test_a_watcher_wake_does_not_end_the_wait(self):
+        write_events(self.project, [{"event": "UserPromptSubmit", "automatic": True}])
+        self.assertFalse(stop.human_acted(self.project, "s1", self.start))
+
+    def test_another_sessions_prompt_does_not_end_the_wait(self):
+        write_events(self.project, [{"event": "UserPromptSubmit", "session": "s2"},
+                                    {"event": "Stop", "session": "s2", "holder": "human", "todo": "x"}])
+        self.assertFalse(stop.human_acted(self.project, "s1", self.start))
+
+    def test_the_humans_prompt_ends_the_wait(self):
+        write_events(self.project, [{"event": "UserPromptSubmit", "automatic": True},
+                                    {"event": "UserPromptSubmit"}])
+        self.assertTrue(stop.human_acted(self.project, "s1", self.start))
+
+    def test_a_new_ask_block_still_ends_the_wait(self):
+        write_events(self.project, [{"event": "UserPromptSubmit", "automatic": True},
+                                    {"event": "Stop", "holder": "claude"}])
+        self.assertTrue(stop.human_acted(self.project, "s1", self.start))
+
+    # handle: what starts a new wait.
+
+    def test_a_stop_after_a_watcher_wake_starts_no_new_wait(self):
+        r = self.stop_after([{"event": "UserPromptSubmit", "automatic": True},
+                             {"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}])
+        self.assertIsNone(r["remind"])
+
+    def test_a_quiet_stop_after_a_watcher_wake_starts_no_new_wait(self):
+        r = self.stop_after([{"event": "UserPromptSubmit", "automatic": True}], message="Noted.")
+        self.assertIsNone(r["remind"])
+
+    def test_a_stop_after_another_sessions_prompt_starts_no_new_wait(self):
+        r = self.stop_after([{"event": "UserPromptSubmit", "session": "s2"},
+                             {"event": "UserPromptSubmit", "automatic": True}])
+        self.assertIsNone(r["remind"])
+
+    def test_a_stop_after_the_humans_prompt_starts_a_new_wait(self):
+        r = self.stop_after([{"event": "UserPromptSubmit"}], message="The PR changes two files.")
+        self.assertEqual(r["remind"], "merge PR #44")
+
+    def test_the_humans_prompt_among_wakes_starts_a_new_wait(self):
+        r = self.stop_after([{"event": "UserPromptSubmit", "automatic": True}, {"event": "UserPromptSubmit"},
+                             {"event": "UserPromptSubmit", "automatic": True}], message="Noted, on it.")
+        self.assertEqual(r["remind"], "merge PR #44")
+
+
+class ReminderWaitProperties(unittest.TestCase):
+    """#135's invariant, on virtual time: after a hand-off, any interleaving of watcher wakes, agents'
+    messages and other sessions' prompts leaves exactly one reminder, due at hand-off + REMIND_AFTER.
+    With the human's prompts mixed in, the alerts match a separate oracle: each wait starts at the
+    hand-off or at the stop that ends a turn the human's prompt started, and fires REMIND_AFTER later
+    unless the human prompts again first.
+
+    The model runs the hook's own handle() for every stop and the reminder's own human_acted() at each
+    wait's due time, with the events file holding just what was written by then. human_acted only
+    grows true as lines are added, so checking at the due time is what remind()'s polling sees."""
+
+    WATCHER = ReminderWait.WATCHER
+    WAKES = [[{"event": "UserPromptSubmit", "automatic": True}],
+             [{"event": "UserPromptSubmit", "automatic": True},
+              {"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}],
+             # Another session's own human prompt and its stop happen in this session's wake too.
+             [{"event": "UserPromptSubmit", "session": "s2"},
+              {"event": "Stop", "session": "s2", "holder": "human", "todo": "merge PR #9"},
+              {"event": "UserPromptSubmit", "automatic": True}],
+             [{"event": "PostToolUse", "command": "ls", "exit": 0}]]
+    WAKE_MESSAGES = ["", "Noted.", "Checks still running.", "The reviewer is still working."]
+
+    def history(self, rng, humans):
+        """Run one random history. Returns (alerts the model fired, alerts the oracle expects, the
+        hand-off time, how many wakes came within REMIND_AFTER of the previous stop)."""
+        project = apb_project()
+        after = stop.REMIND_AFTER
+        t = 1_000_000.0 + rng.random()
+        write_events(project, [dict(e, time=stamp(t)) for e in FINISHED_AGENT])
+        r = stop.handle(payload(ONE), project, t, no_github, no_github)
+        hand_off = t
+        waits = [(t + after, r["end"])]  # the model's pending reminders: (due, the start byte)
+        fired = []
+        wait_starts, human_prompts = [hand_off], []  # for the oracle
+        busy = 0
+        end = hand_off + rng.uniform(1.2, 4) * after
+
+        def fire_due(now):
+            for due, start in sorted(waits):
+                if due <= now:
+                    waits.remove((due, start))
+                    if not stop.human_acted(project, "s1", start):
+                        fired.append(due)
+
+        while True:
+            gap = rng.uniform(30, 10 * 60)
+            busy += gap < after
+            t += gap
+            if t > end:
+                break
+            fire_due(t)
+            human = humans and rng.random() < 0.15
+            events = ([{"event": "UserPromptSubmit"}] if human else []) + rng.choice(self.WAKES)
+            if human:
+                rng.shuffle(events)
+                human_prompts.append(t)
+            write_events(project, [dict(e, time=stamp(t)) for e in events])
+            t += rng.uniform(1, 20)  # the turn's work, then its stop
+            fire_due(t)
+            message = "On it, checking." if human else rng.choice(self.WAKE_MESSAGES)
+            r = stop.handle(payload(message, background_tasks=self.WATCHER), project, t, no_github, no_github)
+            self.assertFalse(r["send_back"], r.get("note"))
+            if r["remind"]:
+                self.assertEqual(r["remind"], "merge PR #44")
+                waits.append((t + after, r["end"]))
+            if human:
+                wait_starts.append(t)
+        fire_due(float("inf"))
+        expected = [w + after for w in wait_starts
+                    if not any(w < p <= w + after for p in human_prompts)]
+        return fired, expected, hand_off, busy
+
+    def test_wakes_alone_leave_one_reminder_at_hand_off_plus_the_wait(self):
+        rng = random.Random(135)
+        busy = 0
+        for _ in range(60):
+            fired, expected, hand_off, b = self.history(rng, humans=False)
+            busy += b
+            self.assertEqual(fired, [hand_off + stop.REMIND_AFTER])
+            self.assertEqual(fired, expected)
+        self.assertGreater(busy, 100)  # watchers did wake well within the wait
+
+    def test_with_the_humans_prompts_the_alerts_match_the_oracle(self):
+        rng = random.Random(1350)
+        restarted = cancelled = 0
+        for _ in range(80):
+            fired, expected, hand_off, _ = self.history(rng, humans=True)
+            self.assertEqual(sorted(fired), sorted(expected))
+            restarted += any(f != hand_off + stop.REMIND_AFTER for f in fired)
+            cancelled += hand_off + stop.REMIND_AFTER not in fired
+        self.assertGreater(restarted, 0)  # the human's prompt did start new waits
+        self.assertGreater(cancelled, 0)  # and did end the running one
 
 
 class ReminderLifetime(unittest.TestCase):
