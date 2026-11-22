@@ -50,9 +50,9 @@ def pr(n, closes=(), draft=False, head=None, assignees=(), threads=(), comments=
             "comments": list(comments), "reviews": list(reviews), "commits": list(commits)}
 
 
-def snap(board=(), prs=(), worktrees=(), assigned=(), advisor=False, human=HUMAN, agents=None):
+def snap(board=(), prs=(), worktrees=(), assigned=(), human=HUMAN, agents=None):
     return {"repo": REPO, "human": human, "claude_login": CLAUDE, "board": list(board), "prs": list(prs),
-            "worktrees": list(worktrees), "assigned": list(assigned), "advisor": advisor, "agents": agents or {}}
+            "worktrees": list(worktrees), "assigned": list(assigned), "agents": agents or {}}
 
 
 # A full commit id on the PR; a Fix post gives its short form, abc1234.
@@ -348,9 +348,35 @@ class ReplyInDecision(unittest.TestCase):
         self.assertEqual(cases(found), ["reply-in-unanswered-decision"])
         self.assertIn("discussion_r7", found[0]["problem"])
 
-    def test_the_advisor_counts_as_claude(self):
-        t = thread(comment(DECISION), comment("Plain words." + ADVISOR, author=HUMAN))
+    def test_the_advisor_may_reply_before_the_human(self):
+        # #169: the advisor replies inside the Decision thread when it helps (this reverses #97).
+        t = thread(comment(DECISION), comment("Option b also changes the docs." + ADVISOR, author=HUMAN))
+        self.assertEqual(cc.check(snap(prs=[pr(120, threads=[t])])), [])
+
+    def test_the_advisors_reply_is_not_the_humans_answer(self):
+        t = thread(comment(DECISION), comment("b is safer." + ADVISOR, author=HUMAN),
+                   comment("On it.\n\n— Claude (orchestrator)"))
         self.assertEqual(cases(cc.check(snap(prs=[pr(120, threads=[t])]))), ["reply-in-unanswered-decision"])
+
+    def test_an_unsigned_reply_from_claudes_account_is_named(self):
+        t = thread(comment(DECISION), comment("b", author=CLAUDE))
+        self.assertEqual(cases(cc.check(snap(prs=[pr(120, threads=[t])]))), ["reply-in-unanswered-decision"])
+
+    def test_without_claudes_login_an_unsigned_claude_reply_is_not_the_humans(self):
+        # Review fix 2 on #176: as in decision-check.py, a reply is the human's only from the human's login.
+        t = thread(comment(DECISION + "\n\n— Claude (reviewer)"), comment("b", author="hornof-claude"))
+        s = snap(prs=[pr(120, threads=[t])], human="hornof")
+        s["claude_login"] = None
+        self.assertEqual(cases(cc.check(s)), ["reply-in-unanswered-decision"])
+        t = thread(comment(DECISION + "\n\n— Claude (reviewer)"), comment("b", author="hornof"),
+                   comment("On it.", author="hornof-claude"))
+        s["prs"] = [pr(120, threads=[t])]
+        self.assertEqual(cc.check(s), [])
+
+    def test_the_message_no_longer_sends_the_text_to_a_pr_level_comment(self):
+        t = thread(comment(DECISION), comment("In plain words.\n\n— Claude (orchestrator)"))
+        found = cc.check(snap(prs=[pr(120, threads=[t])]))
+        self.assertNotIn("PR-level", found[0]["problem"])
 
     def test_after_the_human_answers_anyone_may_reply(self):
         t = thread(comment(DECISION), comment("b", author=HUMAN), comment("On it.\n\n— Claude (orchestrator)"))
@@ -421,10 +447,12 @@ class MergeWithOpenRequest(unittest.TestCase):
                comments=[comment("Renamed, for %s.\n\n— Claude (orchestrator)" % url, at="2026-11-20T10:05:00Z")])
         self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [])
 
-    def test_a_plain_words_summary_is_no_request(self):
+    def test_an_advisor_comment_that_links_a_decision_is_a_request_like_any_other(self):
+        # #169 removes #97's PR-level plain-words summary, so a link to a thread no longer excuses a comment.
         p = pr(120, assignees=[HUMAN], comments=[comment(
-            "Decision 7 in plain words: https://github.com/hum/proj/pull/120#discussion_r7" + ADVISOR, author=HUMAN)])
-        self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [])
+            "Decision 7 needs a third option: https://github.com/hum/proj/pull/120#discussion_r7" + ADVISOR,
+            author=HUMAN)])
+        self.assertEqual(cases(cc.check(snap(prs=[p]), self.hand_off(120))), ["merge-with-open-request"])
 
     def test_a_fix_item_with_no_commit_holds_the_merge(self):
         review = "Index: 2 Fix.\n\n## Fix\n1. Rename the flag. abc1234\n2. Add the test.\n\n## Notes\n1. fine\n\n— Claude (reviewer)"
@@ -467,30 +495,18 @@ class MergeWithOpenRequest(unittest.TestCase):
         self.assertEqual(cc.check(snap(prs=[p])), [])
 
 
-class AdvisorComment(unittest.TestCase):
-    """2026-11-21: a new advisor session skipped the PR-level plain-words comment on a Decision."""
+class NoAdvisorSummaryCase(unittest.TestCase):
+    """#169 removes #97's rule: the advisor no longer posts a PR-level plain-words comment for each
+    Decision, so nothing checks for one."""
 
-    def hand_off(self):
-        return {"prs": [120], "merge": [], "issues": [], "decisions": [120]}
+    def test_the_case_is_gone(self):
+        self.assertNotIn("decision-without-advisor-comment", [c["id"] for c in cc.CASES])
 
-    def test_a_decision_hand_off_needs_the_advisors_comment(self):
-        p = pr(120, assignees=[HUMAN], threads=[thread(comment(DECISION, at="2026-11-21T10:00:00Z"))])
-        found = cc.check(snap(prs=[p], advisor=True), self.hand_off())
-        self.assertEqual(cases(found), ["decision-without-advisor-comment"])
-
-    def test_the_advisors_comment_after_the_decision_clears_it(self):
+    def test_a_decision_hand_off_needs_no_advisor_comment(self):
         p = pr(120, assignees=[HUMAN], threads=[thread(comment(DECISION, at="2026-11-21T10:00:00Z"))],
-               comments=[comment("Decision 6 is already plain." + ADVISOR, author=HUMAN, at="2026-11-21T10:10:00Z")])
-        self.assertEqual(cc.check(snap(prs=[p], advisor=True), self.hand_off()), [])
-
-    def test_an_advisor_comment_from_before_the_decision_does_not_count(self):
-        p = pr(120, assignees=[HUMAN], threads=[thread(comment(DECISION, at="2026-11-21T10:00:00Z"))],
-               comments=[comment("Looks fine." + ADVISOR, author=HUMAN, at="2026-11-21T09:00:00Z")])
-        self.assertIn("decision-without-advisor-comment", cases(cc.check(snap(prs=[p], advisor=True), self.hand_off())))
-
-    def test_a_project_without_an_advisor_is_not_checked(self):
-        p = pr(120, assignees=[HUMAN], threads=[thread(comment(DECISION))])
-        self.assertEqual(cc.check(snap(prs=[p], advisor=False), self.hand_off()), [])
+               comments=[comment("notes" + ADVISOR, author=HUMAN, at="2026-11-21T09:00:00Z")])
+        hand_off = {"prs": [120], "merge": [], "issues": [], "decisions": [120]}
+        self.assertEqual(cc.check(snap(prs=[p]), hand_off), [])
 
 
 def oracle_column(c, prs, worktrees):
@@ -593,14 +609,6 @@ class FromGitHub(unittest.TestCase):
         answer = graphql_answer([], [])
         answer["data"]["repository"]["projectsV2"]["nodes"] = []
         self.assertEqual(cc.from_answers([answer], REPO, CLAUDE, [])["board"], [])
-
-    def test_a_signed_advisor_comment_anywhere_shows_an_advisor(self):
-        p = gql_pr(5)
-        p["comments"]["nodes"] = [{"body": "x" + ADVISOR, "author": {"login": HUMAN},
-                                   "createdAt": "2026-11-20T10:00:00Z", "url": "u"}]
-        self.assertTrue(cc.from_answers([graphql_answer([], [p])], REPO, CLAUDE, [])["advisor"])
-        self.assertFalse(cc.from_answers([graphql_answer([], [gql_pr(5)])], REPO, CLAUDE, [])["advisor"])
-        self.assertTrue(cc.from_answers([graphql_answer([], [])], REPO, CLAUDE, [], ["notes" + ADVISOR])["advisor"])
 
     def test_worktree_branches(self):
         folder = tempfile.mkdtemp()

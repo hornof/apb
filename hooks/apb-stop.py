@@ -805,9 +805,9 @@ def consistency():
 
 def hand_off_refs(message, repo):
     """What the hand-off at the end of the message hands the human, in the project's repo:
-    {"prs": PRs it names, "merge": PRs it asks to merge, "issues": other numbers it names (cards),
-    "decisions": PRs whose Decision threads it links}."""
-    out = {"prs": [], "merge": [], "issues": [], "decisions": []}
+    {"prs": PRs it names, a Decision thread's PR included, "merge": PRs it asks to merge, "issues": other
+    numbers it names (cards)}."""
+    out = {"prs": [], "merge": [], "issues": []}
 
     def add(key, n):
         if n not in out[key]:
@@ -816,7 +816,6 @@ def hand_off_refs(message, repo):
         text = QUOTE.sub(" ", line)
         for m in THREAD_LINK.finditer(text):
             if m.group(1).lower() == (repo or "").lower():
-                add("decisions", int(m.group(2)))
                 add("prs", int(m.group(2)))
         rest = THREAD_LINK.sub(" ", text)
         links = list(PULL_LINK.finditer(rest))

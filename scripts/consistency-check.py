@@ -25,13 +25,12 @@ The cases:
   (human-turn.py's rule, #111).
 - resolved-decision-unconfirmed: a Decision thread on an open PR is resolved, and Claude hasn't replied
   in it "Resolved = <letter>: <what happens now>".
-- reply-in-unanswered-decision: someone other than the human (the orchestrator, the reviewer, the
-  advisor) replied in a Decision thread the human hasn't answered or resolved.
+- reply-in-unanswered-decision: someone other than the human or the advisor (the orchestrator, the
+  reviewer) replied in a Decision thread the human hasn't answered or resolved. The advisor may reply
+  there when it helps (#169).
 - merge-with-open-request: the turn asks the human to merge a PR while an advisor comment on it has no
   later reply from Claude that addresses it (links it or quotes it; the reviewer's posts don't count),
   or the reviewer's Fix post has an item with no commit on the PR and no reason it wasn't fixed (#159).
-- decision-without-advisor-comment: in a project with an advisor, the turn hands the human a Decision
-  on a PR that has no PR-level advisor comment posted after its Decisions.
 
 A Decision is a review thread whose first comment is Claude's and has lettered options or
 "Resolve with no reply". Claude's comments are told from the human's by comment-author.py.
@@ -89,8 +88,6 @@ CASES = [
      "incident": "2026-11-20: the orchestrator's summary went inside Decision 7's thread on PR #120 (#97, #121)"},
     {"id": "merge-with-open-request",
      "incident": "2026-11-20: PR #120 was called ready while the advisor's playbook comment was unapplied (#121)"},
-    {"id": "decision-without-advisor-comment",
-     "incident": "2026-11-21: an advisor session skipped the plain-words comment on a Decision (#97, #121)"},
 ]
 INCIDENT = {c["id"]: c["incident"] for c in CASES}
 
@@ -102,7 +99,6 @@ ADVISOR = re.compile(r"[—-]\s*Claude \(advisor\)")
 REVIEWER = re.compile(r"[—-]\s*Claude \(reviewer\)")
 SIGNATURE = re.compile(r"[—-]\s*Claude \([\w ]+\)\s*$")
 QUOTE_MIN = 15  # characters a quoted line needs to say which comment it answers
-THREAD_LINK = re.compile(r"#discussion_r\d+")
 # A word that may be a commit: 7 to 40 hex characters. It counts only if a commit on the PR starts with it.
 SHA = re.compile(r"(?i)(?<![0-9a-z])[0-9a-f]{7,40}(?![0-9a-z])")
 WHY_NOT = re.compile(r"(?i)\b(?:not fixed|won'?t fix|wontfix|why not|not doing|declined|no change|left as is|"
@@ -322,17 +318,19 @@ def decision_cases(s):
             if not is_decision(t, login):
                 continue
             replies = t["comments"][1:]
-            human = [r for r in replies if not is_claude(r, login)]
+            # Only the human's own replies, by login when it is known, as decision-check.py counts them (#169).
+            human = [r for r in replies if decisions.is_humans(r, login, s.get("human"))]
             if t.get("isResolved"):
                 if not any(is_claude(r, login) and CONFIRM.search(own_text(r.get("body"))) for r in replies):
                     out.append(_problem("resolved-decision-unconfirmed", "a Decision on PR #%d is resolved, and no reply "
                                         "in it says \"Resolved = <letter>: <what happens now>\": %s. Reply there, "
                                         "then do it." % (p["number"], thread_url(t))))
-            elif replies and not human:
+            elif not human and any(not is_advisor(r) for r in replies):
+                # The advisor may reply before the human, when it helps (#169); nobody else may.
                 out.append(_problem("reply-in-unanswered-decision", "someone other than the human replied in a "
-                                    "Decision thread on PR #%d before the human answered: %s. Delete that reply "
-                                    "(its text can go in a PR-level comment that links the thread)."
-                                    % (p["number"], thread_url(t))))
+                                    "Decision thread on PR #%d before the human answered: %s. Delete that reply, "
+                                    "so the Resolve button stays under the Decision; say it in chat or on the "
+                                    "card instead." % (p["number"], thread_url(t))))
     return out
 
 
@@ -350,7 +348,7 @@ def merge_cases(s, hand_off):
             continue
         posts = list(p.get("comments") or []) + list(p.get("reviews") or [])
         for c in posts:
-            if is_advisor(c) and not THREAD_LINK.search(c.get("body") or ""):
+            if is_advisor(c):
                 # Only a reply that addresses it, from Claude but not the advisor or the reviewer (#159).
                 answered = any(_later(r, c) and is_claude(r, login) and not is_advisor(r) and not is_reviewer(r)
                                and addresses(r, c) for r in posts)
@@ -368,36 +366,12 @@ def merge_cases(s, hand_off):
     return out
 
 
-def advisor_cases(s, hand_off):
-    if not s.get("advisor"):
-        return []
-    login = s.get("claude_login")
-    prs = {p["number"]: p for p in s.get("prs") or []}
-    out = []
-    for n in hand_off.get("decisions") or []:
-        p = prs.get(n)
-        if not p:
-            continue
-        open_ = [t["comments"][0] for t in p.get("threads") or [] if is_decision(t, login) and not t.get("isResolved")]
-        if not open_:
-            continue
-        newest = max(open_, key=lambda c: c.get("createdAt") or "")
-        comments = p.get("comments") or []
-        if not any(is_advisor(c) and not _later(newest, c) for c in comments):
-            out.append(_problem("decision-without-advisor-comment", "this turn hands the human a Decision on PR #%d, "
-                                "and the advisor hasn't posted its PR-level plain-words comment (linking each Decision "
-                                "thread, or saying it's already plain). Ask the advisor on the coordination issue, "
-                                "then hand off." % n))
-    return out
-
-
 def check(s, hand_off=None):
     """Every problem in the snapshot s (see from_answers), each {"case", "incident", "problem"} and, for a
-    board case, "card". hand_off: what this turn hands the human, {"prs", "merge", "issues",
-    "decisions"}: PR and card numbers it names, PRs it asks to merge, PRs whose Decision threads it links."""
+    board case, "card". hand_off: what this turn hands the human, {"prs", "merge", "issues"}:
+    PR and card numbers it names, and PRs it asks to merge."""
     hand_off = hand_off or {}
-    return (board_cases(s) + assignment_cases(s, hand_off) + decision_cases(s) + merge_cases(s, hand_off)
-            + advisor_cases(s, hand_off))
+    return (board_cases(s) + assignment_cases(s, hand_off) + decision_cases(s) + merge_cases(s, hand_off))
 
 
 # ---------------------------------------------------------------- reading GitHub
@@ -432,8 +406,6 @@ PAGE = """query($owner: String!, $name: String!, $after: String!) {
       pageInfo { hasNextPage endCursor }
       nodes { fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         content { ... on Issue { %s } } } } } } } }""" % CARD
-COORDINATION = """query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
-  issue(number: $number) { comments(last: 30) { nodes { body } } } } }"""
 
 
 def _nodes(x):
@@ -450,10 +422,9 @@ def _items(page):
     return projects[0]["items"] if projects else None
 
 
-def from_answers(answers, repo, claude_login, worktrees, coordination=None, agents=None):
+def from_answers(answers, repo, claude_login, worktrees, agents=None):
     """The snapshot check() reads, from GitHub's answers: the answer to QUERY first, then one answer to
-    PAGE per further board page. coordination: the bodies of the coordination issue's last comments.
-    agents: {agent id: the cards it was launched on} (agent_cards)."""
+    PAGE per further board page. agents: {agent id: the cards it was launched on} (agent_cards)."""
     first = answers[0]["data"]
     owner = first["repository"].get("owner") or {}
     board = []
@@ -481,12 +452,10 @@ def from_answers(answers, repo, claude_login, worktrees, coordination=None, agen
                     "comments": _comments(p.get("comments")), "reviews": _comments(p.get("reviews")),
                     "commits": [((c or {}).get("commit") or {}).get("oid") for c in _nodes(p.get("commits"))
                                 if ((c or {}).get("commit") or {}).get("oid")]})
-    everything = [c for p in prs for c in p["comments"] + p["reviews"] + [x for t in p["threads"] for x in t["comments"]]]
-    advisor = any(is_advisor(c) for c in everything) or any(is_advisor({"body": b}) for b in coordination or [])
     return {"repo": repo, "human": owner.get("login") if owner.get("__typename") == "User" else None,
             "claude_login": claude_login, "board": board, "prs": prs, "worktrees": list(worktrees),
             "assigned": human_turn.items({"data": {"search": first.get("assigned") or {"nodes": []}}}),
-            "advisor": advisor, "agents": dict(agents or {})}
+            "agents": dict(agents or {})}
 
 
 class OutOfTime(Exception):
@@ -525,17 +494,6 @@ def agent_cards(project):
     return found
 
 
-def coordination_issue(project):
-    """(repo or None, number) of the coordination issue named in the project's CLAUDE.md, or (None, None)."""
-    try:
-        with open(os.path.join(project, "CLAUDE.md"), encoding="utf-8") as f:
-            text = f.read()
-    except (OSError, UnicodeDecodeError):
-        return None, None
-    m = re.search(r"(?m)^\s*coordination:\s*(?:([\w.-]+/[\w.-]+))?#(\d+)", text)
-    return (m.group(1), int(m.group(2))) if m else (None, None)
-
-
 def fetch(repo, project, claude_login=None, human=None, gh="gh", budget=TIME_LIMIT * 3, time_limit=TIME_LIMIT):
     """The snapshot of the repo, from gh, within budget seconds in all. Raises OSError, ValueError,
     subprocess.SubprocessError or OutOfTime when it can't get one."""
@@ -562,20 +520,11 @@ def fetch(repo, project, claude_login=None, human=None, gh="gh", budget=TIME_LIM
         if not items or not items["pageInfo"].get("hasNextPage"):
             break
         answers.append(ask(PAGE, owner=owner, name=name, after=items["pageInfo"]["endCursor"]))
-    coordination = None
-    coord_repo, number = coordination_issue(project)
-    if number:
-        try:
-            c_owner, c_name = (coord_repo or repo).split("/", 1)
-            got = ask(COORDINATION, owner=c_owner, name=c_name, number=number)
-            coordination = [c.get("body") for c in _nodes(got["data"]["repository"]["issue"]["comments"])]
-        except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, OutOfTime):
-            coordination = None  # the advisor check alone goes without it
     # The worktrees come out of the same budget, so the check's whole run fits in it (review fix 2 on #157).
     left = end - time.time()
     if left <= 0:
         raise OutOfTime("no time left for git")
-    s = from_answers(answers, repo, claude_login, worktree_branches(project, min(time_limit, left)), coordination,
+    s = from_answers(answers, repo, claude_login, worktree_branches(project, min(time_limit, left)),
                      agent_cards(project))
     if human:
         s["human"] = human
