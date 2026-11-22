@@ -11,9 +11,12 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   playbook's "Helping the human keep track". What's running comes from the Stop input's
   background_tasks; without it, from the events file (agents started and not stopped, and background
   commands started in this turn).
-- Then the message must start with one of the four first lines. If it doesn't, the hook sends the
-  message back once, with a note to Claude (additionalContext) that starts "Say who holds the ball",
-  and Claude goes on to add the line. "All clear: ..." is logged as holder human, todo "all clear".
+- Then the message must end with an ask block (ask_block), as the playbook says: The ask is the last
+  thing in the message: one of the four lines, then only its numbered list and any link or fenced
+  block that belongs to it. What happened and the status lines go above it. If the message doesn't end that
+  way, the hook sends it back once, with a note to Claude (additionalContext) that starts "Say who
+  holds the ball", and Claude goes on to end it with the line. The hook never looks for the line
+  anywhere else in the message. "All clear: ..." is logged as holder human, todo "all clear".
   One exception: a wake-up that changed nothing for the human. When no prompt of the human's and no
   agent's stop started the turn (a watcher or a background command woke it; the SubagentStop with agent_type ""
   that Claude Code's own helper logs after each stop is not an agent's), an earlier stop in this session
@@ -28,7 +31,7 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   of scripts/map-artifact.py or scripts/progress-page.py, which call gh themselves. It checks only
   that some lookup ran in that turn, not which one, and not whether the fact is true. When both
   checks fail, one send-back carries both notes.
-- On any stop whose first line hands something to the human, if an agent's report said it departed
+- On any stop whose ask block hands something to the human, if an agent's report said it departed
   from its file (a Departure line, which hooks/apb-brief.py writes) and no DepartureResolved line came
   after it, the hook sends the message back, on a retry too, with a note that quotes the report and
   says how to resolve it. After MAX_DEPARTURE_SEND_BACKS in one turn it lets the stop through.
@@ -36,16 +39,16 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   one, "answer decision N", "N decisions for you", "which do you want", "your call", a question that
   names one, or lettered options) and has no link to a GitHub PR or issue outside a quoted line, the
   hook sends the message back once, with a note that starts "A decision was asked without a GitHub
-  link." A line that only mentions or quotes a decision asks nothing. Under an "N things" first line,
+  link." A line that only mentions or quotes a decision asks nothing. Under an "N things" line,
   each numbered item that names a decision needs the link on its own line. Every decision lives on
   GitHub; the hand-off only points at it.
-- On any stop whose first line hands something to the human, the hook looks up what the "1 thing" line,
+- On any stop whose ask block hands something to the human, the hook looks up what the "1 thing" line,
   or each numbered item under "N things", asks the human to act on: each decision thread it links
   (…/pull/N#discussion_rM), and, when the line says "merge", each PR it links, or else each "PR #N" it
   names, in the project's own repo. If a thread is already resolved, or a PR to merge is already merged
   or closed, it sends the message back once, with a note that starts "A hand-off asks the human for
   something that is already done." It looks up at most MAX_DONE of them.
-- On any stop whose first line hands something to the human, if the message links an open PR in the
+- On any stop whose ask block hands something to the human, if the message links an open PR in the
   apb repo (the repository in the plugin's manifest) that touches templates/, hooks/, agents/, a
   skill's SKILL.md or docs/playbook.md, and that PR's description has no "Projects:" line ("Projects: none",
   or "Projects:" with links to the projects' PRs that apply the change), the hook sends the message
@@ -53,12 +56,14 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   each PR up with gh (at most MAX_PRS).
 - Both checks share one gh time budget (PR_BUDGET seconds, at most PR_TIME_LIMIT for one call) and look
   each PR up once. Whatever can't be looked up in time is let through.
-- It appends a Stop line to the events file, with who holds the ball when the message says so, the
+- It appends a Stop line to the events file, with who holds the ball when the message's ask block
+  says so, and the block's numbered items ("items") and link lines ("links"), so scripts/card-times.py
+  finds each PR a hand-off names. When the message is sent back, it logs the
   unchecked facts ("unchecked"), "decision-without-link", what was already done ("already-done") and the
   PRs missing their Projects line ("projects-line-missing") when those were why it sent the message back.
 - If the human holds the ball, other than after "All clear", it starts a reminder in the background: if the human has done
   nothing after REMIND_AFTER seconds (no new prompt), one desktop alert. Only on a Mac. A prompt or a
-  new first line ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
+  new ask block ends the wait; a stop with neither (Claude woken by a watcher or an agent) doesn't.
   The reminder outlives the hook, so it is given a deadline (the wait plus LIFETIME_MARGIN) and
   ends there, with any alert it started.
 
@@ -81,8 +86,10 @@ REMIND_AFTER = 30 * 60  # seconds the human holds the ball, with no action, befo
 LIFETIME_MARGIN = 60  # seconds the reminder may run past its wait before its deadline ends it
 MAX = 300  # longest string kept in a line, in characters
 
-REASON = ("Say who holds the ball. Your work just ran out, so start the message with one of these "
-          "lines (playbook, \"Helping the human keep track\"):\n"
+REASON = ("Say who holds the ball. Your work just ran out, so end the message with one of these "
+          "lines, with nothing after it but its numbered list and any link or fenced block that belongs "
+          "to it. What happened and the status lines go above it (playbook, \"Helping the human keep "
+          "track\"):\n"
           "- Nothing for you to do right now. Waiting on <what>, ETA <time>. (A clock time, such as "
           "7:10 PM; run date first.)\n"
           "- 1 thing for you to do right now: <the thing>.\n"
@@ -189,6 +196,13 @@ MANY = re.compile(r"(\d+) things for you to do right now:$")
 ALL_CLEAR = re.compile(r"All clear: .+ empty, no open PRs, as of .+")
 CLEAR = "all clear"  # the todo an All clear line logs; it starts no reminder
 ITEM = re.compile(r"(\d+)[.)]\s+\S")
+# What may follow the ask line and still belong to it: a line that is only links (a bare URL, <URL> or
+# [text](URL), separated by spaces or commas, maybe as a list item), and a fenced block.
+LINK_TOKEN = r"(?:<https?://[^\s<>]+>|https?://[^\s<>]+|\[[^\]\n]+\]\(https?://[^\s)]+\))"
+LINK_ONLY = re.compile(r"(?:[-*+]\s+)?%s(?:[\s,]+%s)*\.?" % (LINK_TOKEN, LINK_TOKEN))
+FENCE = re.compile(r"```|~~~")
+# The start of any of the four lines, valid or not: the last such line is where the ask is.
+ASK_START = re.compile(r"(?:Still\s+)?(?:Nothing|\d+\s+things?)\s+for you to do right now|All clear:")
 
 
 def clean(line):
@@ -196,39 +210,68 @@ def clean(line):
     return line.strip().strip("*_").strip()
 
 
-def first_line(message):
-    """(holder, todo) if the message starts with one of the four lines, else None.
-    holder is "claude" or "human"; todo is what the human has to do, for the reminder, or CLEAR."""
+def ask_block(message):
+    """The ask block the message ends with, or None. It is one of the four lines, then (for "N things")
+    its numbered list of exactly N items, then only lines that belong to it: lines that are only links,
+    and fenced blocks. Blank lines may sit between them. Nothing else may follow, and "All clear" takes
+    nothing at all under it. Anything above the block (what happened, the status lines) is not read.
+    Returns {"holder": "claude" | "human", "todo": what the human has to do (for the reminder) or CLEAR
+    or None, "line": the ask line, "items": the numbered items, "links": the link lines after it}."""
     if not isinstance(message, str):
         return None
-    lines = [clean(l) for l in message.splitlines()]
-    while lines and not lines[0]:
-        lines.pop(0)
-    if not lines:
-        return None
-    head = lines[0]
+    raw = message.splitlines()
+    i = len(raw)  # raw[:i] is what is left to read, from the end
+    links = []
+    fenced = False
+    while True:
+        while i and not raw[i - 1].strip():
+            i -= 1
+        if not i:
+            return None
+        last = clean(raw[i - 1])
+        if FENCE.match(raw[i - 1].strip()):  # the end of a fenced block: find where it opens
+            j = i - 2
+            while j >= 0 and not FENCE.match(raw[j].strip()):
+                j -= 1
+            if j < 0:
+                return None
+            i, fenced = j, True
+        elif LINK_ONLY.fullmatch(last):
+            links.insert(0, last)
+            i -= 1
+        else:
+            break
+    head = clean(raw[i - 1])
     if NOTHING.match(head):
-        return ("claude", None)
+        return {"holder": "claude", "todo": None, "line": head, "items": [], "links": links}
     if ALL_CLEAR.fullmatch(head):
-        return ("human", CLEAR)
+        if links or fenced:
+            return None
+        return {"holder": "human", "todo": CLEAR, "line": head, "items": [], "links": []}
     m = ONE.match(head)
     if m:
-        return ("human", m.group(1).strip())
-    m = MANY.match(head)
+        return {"holder": "human", "todo": m.group(1).strip(), "line": head, "items": [], "links": links}
+    found = []
+    while i and ITEM.match(clean(raw[i - 1])):
+        found.insert(0, clean(raw[i - 1]))
+        i -= 1
+    while i and not raw[i - 1].strip():
+        i -= 1
+    m = MANY.match(clean(raw[i - 1])) if i and found else None
     if not m or int(m.group(1)) < 2:
         return None
     n = int(m.group(1))
-    numbers = []
-    for line in lines[1:]:
-        if not line and not numbers:
-            continue
-        item = ITEM.match(line)
-        if not item:
-            break
-        numbers.append(int(item.group(1)))
-    if numbers != list(range(1, n + 1)):
+    if [int(ITEM.match(l).group(1)) for l in found] != list(range(1, n + 1)):
         return None
-    return ("human", "%d things" % n)
+    return {"holder": "human", "todo": "%d things" % n, "line": clean(raw[i - 1]), "items": found,
+            "links": links}
+
+
+def final_ask(message):
+    """(holder, todo) if the message ends with an ask block (see ask_block), else None.
+    holder is "claude" or "human"; todo is what the human has to do, for the reminder, or CLEAR."""
+    block = ask_block(message)
+    return (block["holder"], block["todo"]) if block else None
 
 
 def unquoted(message):
@@ -242,11 +285,12 @@ def asks_decision(message):
     """True if the message asks the human for a decision: a "1 thing" or "N things" line that names
     one, words that ask for one ("answer decision 3", "2 decisions for you", "which do you want",
     "your call"), a question that names one ("decide …?"), or a list of lettered options. A line that
-    only mentions a decision, quotes one or talks about the check asks nothing, and "Nothing for you to
-    do right now" asks nothing, whatever follows it."""
+    only mentions a decision, quotes one or talks about the check asks nothing, and a message whose ask
+    (its last line that starts like one of the four) is "Nothing for you to do right now" asks nothing."""
     lines = [clean(l) for l in unquoted(message)]
     lines = [NO_DECISION.sub(" ", l) for l in lines if l]
-    if not lines or NOTHING.match(lines[0]) or lines[0].startswith("Nothing for you to do right now"):
+    asks = [l for l in lines if ASK_START.match(l)]
+    if not lines or (asks and asks[-1].startswith("Nothing for you to do right now")):
         return False
     letters = set()
     for line in lines:
@@ -273,16 +317,17 @@ def has_link(message):
 
 
 def items(message):
-    """The numbered lines under an "N things for you to do right now:" first line, else []."""
+    """The numbered lines under the message's last "N things for you to do right now:" line, else [].
+    It reads them whatever follows the list, so a decision in an item needs its link even in a message
+    that the ask check sends back."""
     if not isinstance(message, str):
         return []
     lines = [clean(l) for l in message.splitlines()]
-    while lines and not lines[0]:
-        lines.pop(0)
-    if not lines or not MANY.match(lines[0]):
+    heads = [k for k, l in enumerate(lines) if MANY.match(l)]
+    if not heads:
         return []
     found = []
-    for line in lines[1:]:
+    for line in lines[heads[-1] + 1:]:
         if not line and not found:
             continue
         if not ITEM.match(line):
@@ -292,7 +337,7 @@ def items(message):
 
 
 def decision_without_link(message):
-    """True if a decision is asked with no GitHub link: in the first line, with no link anywhere
+    """True if a decision is asked with no GitHub link: in the message, with no link anywhere
     outside a quoted line, or in a numbered item under "N things", with no link on that item's line."""
     if asks_decision(message) and not has_link(message):
         return True
@@ -416,12 +461,13 @@ class GitHub:
 
 
 def hand_off_lines(message):
-    """What the hand-off asks the human to do: the "1 thing" first line, or each numbered item under an
-    "N things" first line. Any other message hands off nothing."""
-    said = first_line(message)
-    if not said or said[0] != "human" or said[1] == CLEAR:
+    """What the hand-off asks the human to do: the "1 thing" line the message ends with (with the link
+    lines under it), or each numbered item of the "N things" list it ends with. Any other message hands
+    off nothing."""
+    block = ask_block(message)
+    if not block or block["holder"] != "human" or block["todo"] == CLEAR:
         return []
-    return items(message) or [clean(l) for l in message.splitlines() if l.strip()][:1]
+    return block["items"] or [" ".join([block["line"]] + block["links"])]
 
 
 def targets(message):
@@ -676,7 +722,8 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None):
         return {"send_back": False, "remind": None, "end": 0}
     events = read_events(project)
     message = last_message(p)
-    said = first_line(message)
+    block = ask_block(message)
+    said = (block["holder"], block["todo"]) if block else None
     retry = bool(p.get("stop_hook_active"))
     no_line = (said is None and not retry
                and work_ran_out(events, session, now, p.get("background_tasks"))
@@ -711,6 +758,12 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None):
         line["holder"] = said[0]
         if said[1]:
             line["todo"] = said[1][:MAX]
+        # What each "N things" item and each link under the ask names (a PR, a card), for
+        # scripts/card-times.py, which finds a card's hand-offs by them.
+        if block["items"]:
+            line["items"] = [l[:MAX] for l in block["items"]]
+        if block["links"]:
+            line["links"] = [l[:MAX] for l in block["links"]]
     end = append(project, line)
     if send_back:
         notes = ([REASON] if no_line else []) + ([UNCHECKED + ", ".join(unchecked) + "."] if unchecked else [])
@@ -768,8 +821,8 @@ def stop_at(deadline):
 
 
 def human_acted(project, session, start):
-    """True if, after byte start, this session has a prompt or a stop with a new first line.
-    A stop with no first line (Claude woken by a watcher or an agent) leaves the wait running."""
+    """True if, after byte start, this session has a prompt or a stop with a new ask block.
+    A stop with no ask block (Claude woken by a watcher or an agent) leaves the wait running."""
     return any(e.get("session") == session
                and (e["event"] == "UserPromptSubmit" or (e["event"] == "Stop" and e.get("holder")))
                for e in read_events(project, start))

@@ -1,7 +1,7 @@
 """Tests for apb-stop.py, the Stop hook. Run from the repo root: python3 -m unittest discover hooks
 
 The hook decides, when the orchestrator's turn ends, whether its work just ran out and, if so,
-whether the message starts with one of the playbook's four first lines. Example tests check each
+whether the message ends with an ask block: one of the playbook's four lines (#153). Example tests check each
 rule; property tests build random session histories and compare the hook's decision with a separate
 simulation that tracks the same state while it writes the events.
 """
@@ -147,47 +147,71 @@ FINISHED_AGENT = [{"event": "UserPromptSubmit"},
                   {"event": "PostToolUse", "command": "gh pr view 44", "exit": 0}]
 
 
-class FirstLine(unittest.TestCase):
+class FinalAsk(unittest.TestCase):
+    """A message that hands something to the human ends with its ask block (#153): one of the four
+    lines, the numbered list of "N things", and only the link lines or fenced blocks that belong to it."""
+
     def test_the_three_forms(self):
-        self.assertEqual(stop.first_line(NOTHING), ("claude", None))
-        self.assertEqual(stop.first_line(ONE), ("human", "merge PR #44"))
-        self.assertEqual(stop.first_line(MANY), ("human", "2 things"))
+        self.assertEqual(stop.final_ask(NOTHING), ("claude", None))
+        self.assertEqual(stop.final_ask(ONE), ("human", "merge PR #44"))
+        self.assertEqual(stop.final_ask(MANY), ("human", "2 things"))
 
     def test_all_clear(self):
-        self.assertEqual(stop.first_line(ALL_CLEAR), ("human", "all clear"))
-        self.assertEqual(stop.first_line("**All clear: the apb and project boards empty, no open PRs, as of "
-                                         "9:05 AM**"), ("human", "all clear"))
+        self.assertEqual(stop.final_ask(ALL_CLEAR), ("human", "all clear"))
+        self.assertEqual(stop.final_ask("**All clear: the apb and project boards empty, no open PRs, as of "
+                                        "9:05 AM**"), ("human", "all clear"))
+        self.assertEqual(stop.final_ask("Done.\n" + ALL_CLEAR), ("human", "all clear"))  # the last line
         for message in ["All clear.", "All clear: nothing open.",
                         "All clear: both boards empty, no open PRs.",  # no time
                         "All clear: both boards empty, as of 9:05 AM.",  # says nothing about PRs
                         "all clear: both boards empty, no open PRs, as of 9:05 AM.",
                         "ALL CLEAR: both boards empty, no open PRs, as of 9:05 AM.",
-                        "Done.\n" + ALL_CLEAR]:  # not the first line
-            self.assertIsNone(stop.first_line(message), message)
+                        ALL_CLEAR + "\nDone.",  # not the last line
+                        ALL_CLEAR + "\nhttps://github.com/hornof/apb/pulls",  # nothing under All clear
+                        ALL_CLEAR + "\n```\nx\n```"]:
+            self.assertIsNone(stop.final_ask(message), message)
 
     def test_nothing_takes_an_eta_as_a_clock_time(self):
         for eta in ["7:10 PM", "7:10 PM.", "7:10pm", "7:10 p.m.", "19:10", "9:05 AM"]:
             message = "Nothing for you to do right now. Waiting on the builder, ETA %s" % eta
-            self.assertEqual(stop.first_line(message), ("claude", None), message)
+            self.assertEqual(stop.final_ask(message), ("claude", None), message)
 
-    def test_text_after_the_first_line_is_allowed(self):
-        self.assertEqual(stop.first_line(ONE + "\n\nPR #44 (Card #41): in review.")[0], "human")
-        self.assertEqual(stop.first_line(NOTHING + "\nPR #40: checks running.")[0], "claude")
+    def test_what_happened_and_the_status_lines_go_above(self):
+        self.assertEqual(stop.final_ask("PR #44 (Card #41): in review.\n\n" + ONE), ("human", "merge PR #44"))
+        self.assertEqual(stop.final_ask("PR #40: checks running.\n" + NOTHING)[0], "claude")
+        self.assertEqual(stop.final_ask("Here is the summary.\n" + ONE), ("human", "merge PR #44"))
+        self.assertEqual(stop.final_ask("The builder finished.\n1. A.\n2. B.\n\n" + MANY), ("human", "2 things"))
 
-    def test_bold_and_leading_blank_lines_are_ignored(self):
-        self.assertEqual(stop.first_line("\n\n**" + ONE + "**")[0], "human")
+    def test_nothing_may_follow_the_ask(self):
+        for message in [ONE + "\n\nPR #44 (Card #41): in review.", NOTHING + "\nPR #40: checks running.",
+                        MANY + "\n\nThe builder finished.", MANY + "\n3. C.", ONE + "\n> quoted",
+                        ONE + "\nSee https://github.com/hornof/apb/pull/44.",  # words around the link
+                        ONE + "\n```\nnever closed", ONE + "\n" + ONE + "\nDone."]:
+            self.assertIsNone(stop.final_ask(message), message)
+
+    def test_links_and_fenced_blocks_belong_to_the_ask(self):
+        link = "https://github.com/hornof/apb/pull/44"
+        for tail in [link, "<%s>" % link, "[PR #44](%s)" % link, "- [PR #44](%s), %s." % (link, link),
+                     "```\ngh pr merge 44\n```", "%s\n\n```sh\nls\n```\n%s" % (link, link), "~~~\nx\n~~~"]:
+            self.assertEqual(stop.final_ask(ONE + "\n\n" + tail), ("human", "merge PR #44"), tail)
+            self.assertEqual(stop.final_ask(MANY + "\n" + tail), ("human", "2 things"), tail)
+            self.assertEqual(stop.final_ask(NOTHING + "\n" + tail), ("claude", None), tail)
+
+    def test_bold_and_blank_lines_are_ignored(self):
+        self.assertEqual(stop.final_ask("\n\n**" + ONE + "**\n\n")[0], "human")
 
     def test_any_count_with_a_matching_list(self):
         for n in [2, 3, 9, 10, 12]:
-            message = "%d things for you to do right now:\n" % n + "\n".join(
+            message = "Done.\n%d things for you to do right now:\n" % n + "\n".join(
                 "%d. Thing %d." % (i, i) for i in range(1, n + 1))
-            self.assertEqual(stop.first_line(message), ("human", "%d things" % n))
+            self.assertEqual(stop.final_ask(message), ("human", "%d things" % n))
 
     def test_the_count_must_match_the_list(self):
-        self.assertIsNone(stop.first_line("3 things for you to do right now:\n1. A.\n2. B."))
-        self.assertIsNone(stop.first_line("2 things for you to do right now:\n1. A.\n2. B.\n3. C."))
-        self.assertIsNone(stop.first_line("2 things for you to do right now:"))
-        self.assertIsNone(stop.first_line("2 things for you to do right now:\n1. A.\n3. B."))
+        self.assertIsNone(stop.final_ask("3 things for you to do right now:\n1. A.\n2. B."))
+        self.assertIsNone(stop.final_ask("2 things for you to do right now:\n1. A.\n2. B.\n3. C."))
+        self.assertIsNone(stop.final_ask("2 things for you to do right now:"))
+        self.assertIsNone(stop.final_ask("2 things for you to do right now:\n1. A.\n3. B."))
+        self.assertIsNone(stop.final_ask("1. A.\n2. B."))
 
     def test_wrong_forms(self):
         for message in [None, "", "PR #37: nothing for you to decide, merge-ready.",
@@ -203,9 +227,143 @@ class FirstLine(unittest.TestCase):
                         "0 things for you to do right now:",
                         "1 thing for you to do right now:",
                         "NOTHING FOR YOU TO DO RIGHT NOW. Waiting on CI, ETA 7:10 PM.",
-                        "Here is the summary.\n" + ONE,  # not the first line
+                        ONE + "\nHere is the summary.",  # the ask first, prose after: not the last block
                         "2 things for you to do right now: merge and answer."]:
-            self.assertIsNone(stop.first_line(message), message)
+            self.assertIsNone(stop.final_ask(message), message)
+
+
+class FinalAskProperties(unittest.TestCase):
+    """Random messages, built from parts whose answer is known by construction (the oracle): any prose
+    above an ask block leaves the answer as the block alone gives it, and any prose after it, or prose
+    alone, is no hand-off."""
+
+    WORDS = ["the", "builder", "PR", "#44", "merged", "1.", "2)", "ETA", "7:10", "PM", "thing", "decide",
+             "things", "for", "you", "to", "do", "right", "now", "Nothing", "All", "clear:", "**", ">", "-",
+             "see", "https://github.com/o/r/pull/4", "`x`", "(a)", "waiting", "Card", "In", "review"]
+
+    def prose_line(self, rng):
+        """A line that is no ask line, no numbered item, no link line and no fence: it starts with a word
+        no ask line starts with."""
+        return rng.choice(["Done:", "PR #44:", "Status", "The", "Card #41:", "Then"]) + " " + " ".join(
+            rng.choice(self.WORDS) for _ in range(rng.randint(0, 8)))
+
+    def prose(self, rng):
+        """Some lines of prose, or a numbered list with prose, or a fenced block in prose: never a block."""
+        lines = [self.prose_line(rng) for _ in range(rng.randint(1, 4))]
+        if rng.random() < 0.3:
+            lines.insert(rng.randrange(len(lines) + 1), "\n".join("%d. %s" % (i, self.prose_line(rng))
+                                                                   for i in range(1, rng.randint(2, 4))))
+        if rng.random() < 0.2:
+            lines.insert(0, "```\n%s\n```" % self.prose_line(rng))
+        return "\n".join(lines)
+
+    def block(self, rng):
+        """(an ask block, the (holder, todo) it says), built so the answer is known."""
+        kind = rng.randrange(4)
+        bold = rng.random() < 0.2
+        wrap = (lambda s: "**%s**" % s) if bold else (lambda s: s)
+        tail = rng.choice(["", "", "\nhttps://github.com/o/r/pull/7", "\n\n[PR #7](https://github.com/o/r/pull/7)",
+                           "\n```\ngh pr merge 7\n```"])
+        if kind == 0:
+            return wrap("Nothing for you to do right now. Waiting on CI, ETA 7:%02d PM." % rng.randrange(60)) \
+                + tail, ("claude", None)
+        if kind == 1:
+            thing = "merge PR #%d" % rng.randrange(1, 999)
+            return wrap("1 thing for you to do right now: %s." % thing) + tail, ("human", thing)
+        if kind == 2:
+            return wrap(ALL_CLEAR), ("human", "all clear")
+        n = rng.randint(2, 6)
+        return (wrap("%d things for you to do right now:" % n) + rng.choice(["\n", "\n\n"])
+                + "\n".join("%d. merge PR #%d." % (i, i) for i in range(1, n + 1)) + tail), ("human", "%d things" % n)
+
+    def test_prose_above_the_block_changes_nothing(self):
+        rng = random.Random(153)
+        for _ in range(400):
+            block, want = self.block(rng)
+            above = self.prose(rng)
+            self.assertEqual(stop.final_ask(block), want, block)
+            self.assertEqual(stop.final_ask(above + rng.choice(["\n", "\n\n"]) + block), want, (above, block))
+
+    def test_prose_after_the_block_is_no_hand_off(self):
+        rng = random.Random(1530)
+        for _ in range(400):
+            block, _want = self.block(rng)
+            after = self.prose(rng)
+            message = block + rng.choice(["\n", "\n\n"]) + after
+            self.assertIsNone(stop.final_ask(message), message)
+            self.assertIsNone(stop.final_ask(after), after)
+
+    def test_the_hook_logs_the_same_holder_and_todo_with_prose_above(self):
+        rng = random.Random(15300)
+        for _ in range(30):
+            block, want = self.block(rng)
+            project = apb_project()
+            write_events(project, FINISHED_AGENT)
+            r = stop.handle(payload(self.prose(rng) + "\n\n" + block), project, time.time(), no_github, no_github)
+            self.assertFalse(r["send_back"], block)
+            last = read_events(project)[-1]
+            self.assertEqual((last.get("holder"), last.get("todo")), want, block)
+
+    def test_the_hook_sends_back_prose_after_the_block(self):
+        rng = random.Random(153000)
+        for _ in range(30):
+            block, _want = self.block(rng)
+            project = apb_project()
+            write_events(project, FINISHED_AGENT)
+            r = stop.handle(payload(block + "\n\n" + self.prose(rng)), project, time.time(), no_github, no_github)
+            self.assertTrue(r["send_back"], block)
+            self.assertTrue(r["note"].startswith("Say who holds the ball"), r["note"])
+            self.assertNotIn("holder", read_events(project)[-1])
+
+
+class HandOffLog(unittest.TestCase):
+    """What the Stop line logs from the ask block, for scripts/card-times.py (#153)."""
+
+    def setUp(self):
+        self.project = apb_project()
+        write_events(self.project, FINISHED_AGENT)
+
+    def stop_line(self, message):
+        r = stop.handle(payload(message), self.project, time.time(), no_github, no_github)
+        return r, read_events(self.project)[-1]
+
+    def test_a_one_pr_hand_off_at_the_end(self):
+        r, last = self.stop_line("The reviewer found nothing.\nPR #44 (Card #41): in review.\n\n" + ONE)
+        self.assertFalse(r["send_back"])
+        self.assertEqual((last["holder"], last["todo"]), ("human", "merge PR #44"))
+        self.assertNotIn("items", last)
+
+    def test_an_n_things_hand_off_logs_each_item(self):
+        message = ("Both reviews are done.\n\n2 things for you to do right now:\n"
+                   "1. merge [PR #58 (Card #54)](https://github.com/hornof/apb/pull/58)\n"
+                   "2. merge [PR #61 (Card #60)](https://github.com/hornof/apb/pull/61)")
+        r, last = self.stop_line(message)
+        self.assertFalse(r["send_back"])
+        self.assertEqual((last["holder"], last["todo"]), ("human", "2 things"))
+        self.assertEqual(last["items"], ["1. merge [PR #58 (Card #54)](https://github.com/hornof/apb/pull/58)",
+                                         "2. merge [PR #61 (Card #60)](https://github.com/hornof/apb/pull/61)"])
+
+    def test_link_lines_under_the_ask_are_logged(self):
+        r, last = self.stop_line("1 thing for you to do right now: merge it.\nhttps://github.com/hornof/apb/pull/58")
+        self.assertFalse(r["send_back"])
+        self.assertEqual(last["links"], ["https://github.com/hornof/apb/pull/58"])
+
+    def test_an_answer_with_no_hand_off_logs_no_holder(self):
+        project = apb_project()
+        write_events(project, [{"event": "UserPromptSubmit"}])  # the human asked; the work didn't run out
+        r = stop.handle(payload("The PR changes two files."), project, time.time(), no_github, no_github)
+        self.assertFalse(r["send_back"])
+        last = read_events(project)[-1]
+        self.assertEqual(last["event"], "Stop")
+        for key in ("holder", "todo", "items", "links"):
+            self.assertNotIn(key, last)
+
+    def test_the_ask_first_with_prose_after_is_sent_back(self):
+        r, last = self.stop_line(ONE + "\n\nPR #44 (Card #41): in review. The reviewer found nothing.")
+        self.assertTrue(r["send_back"])
+        self.assertTrue(r["note"].startswith("Say who holds the ball. Your work just ran out, so end the message"))
+        self.assertTrue(last["sent_back"])
+        self.assertNotIn("holder", last)
 
 
 class StatedFacts(unittest.TestCase):
@@ -379,16 +537,16 @@ class CheckFirst(unittest.TestCase):
         self.assertFalse(sent_back(run(payload("PR #44 is merged."), self.project)))
 
     def test_both_notes_in_one_send_back(self):
-        # The work ran out, the first line is missing, and a fact is unchecked: one send-back says both.
+        # The work ran out, the ask is missing, and a fact is unchecked: one send-back says both.
         write_events(self.project, FINISHED_AGENT[:-1])
         r = run(payload("PR #44 is merged."), self.project)
         context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertTrue(context.startswith("Say who holds the ball"))
         self.assertIn("You stated a GitHub fact without checking it this turn.", context)
 
-    def test_a_valid_first_line_with_an_unchecked_fact_is_sent_back_and_starts_no_reminder(self):
+    def test_a_valid_ask_with_an_unchecked_fact_is_sent_back_and_starts_no_reminder(self):
         write_events(self.project, FINISHED_AGENT[:-1])
-        r = run(payload(ONE + "\nPR #43 is merged."), self.project)
+        r = run(payload("PR #43 is merged.\n" + ONE), self.project)
         self.assertTrue(sent_back(r))
         context = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
         self.assertFalse(context.startswith("Say who holds the ball"))
@@ -458,7 +616,7 @@ class HasLink(unittest.TestCase):
 
 
 class DecisionWithoutLink(unittest.TestCase):
-    """A decision in the first line, or in a numbered item under "N things", needs its GitHub link."""
+    """A decision asked in the message, or in a numbered item under "N things", needs its GitHub link."""
     PR71 = "https://github.com/hornof/apb/pull/71"
 
     def test_sent_back(self):
@@ -494,8 +652,8 @@ class DecisionWithoutLink(unittest.TestCase):
 
 
 with open(os.path.join(HERE, "test_apb_stop_cases.json"), encoding="utf-8") as f:
-    # Messages the hook sent back on one evening, each trimmed to its first line and the lines that set
-    # the check off. "sent_back_for" is what the old checks said; "still_caught" is what a person reading
+    # Messages the hook sent back on one evening, written when the ask came first (before #153), each
+    # trimmed to its first line and the lines that set the check off. "sent_back_for" is what the old checks said; "still_caught" is what a person reading
     # the message says: only a real unchecked fact or a decision handed off without its link.
     REPLAYED = json.load(f)
 
@@ -1353,7 +1511,7 @@ class Hook(unittest.TestCase):
         self.assertTrue(sent_back(run(payload("Done.", background_tasks=[]), self.project)))
 
     def woken(self, earlier_line=True, helper=False):
-        """A session where, after the human's prompt, the orchestrator stopped (with a first line, or
+        """A session where, after the human's prompt, the orchestrator stopped (with an ask line, or
         without one), and then a watcher woke it: a turn with no prompt and no agent. With helper, the
         turn starts with the SubagentStop that Claude Code's own helper logs after each stop."""
         write_events(self.project, [{"event": "UserPromptSubmit"}])
@@ -1379,7 +1537,7 @@ class Hook(unittest.TestCase):
         r = run(payload("That alert was my own reply on the card.", background_tasks=[]), self.project)
         self.assertTrue(sent_back(r))
 
-    def test_a_quiet_ending_needs_an_earlier_first_line(self):
+    def test_a_quiet_ending_needs_an_earlier_ask(self):
         self.woken(earlier_line=False)
         self.assertTrue(sent_back(run(payload("", background_tasks=[]), self.project)))
 
@@ -1507,7 +1665,7 @@ class Reminder(unittest.TestCase):
         run(payload(ONE), self.project, env)
         while time.time() < start + 1:
             time.sleep(0.1)
-        # A watcher check-in wakes Claude; no prompt, no first line, the watcher still runs.
+        # A watcher check-in wakes Claude; no prompt, no ask, the watcher still runs.
         write_events(self.project, [{"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}])
         tasks = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
         r = run(payload("PR #44: checks still running.", background_tasks=tasks), self.project, env)
@@ -1518,7 +1676,7 @@ class Reminder(unittest.TestCase):
         self.assertIn("merge PR #44", got[0])
         self.assertEqual(len(self.alerts(2)), 1)
 
-    def test_a_new_first_line_ends_the_wait(self):
+    def test_a_new_ask_ends_the_wait(self):
         write_events(self.project, FINISHED_AGENT)
         env = dict(self.env, APB_REMIND_AFTER_SECONDS="2")
         run(payload(ONE), self.project, env)
@@ -1666,18 +1824,23 @@ class Properties(unittest.TestCase):
              ("> https://github.com/o/r/pull/7 is merged.", False, False, False)]  # nor a quoted line or link
 
     def message(self, rng):
-        """A random message and, known by construction: whether it starts with a valid first line,
+        """A random message and, known by construction: whether it ends with a valid ask block,
         whether it states a GitHub fact, and whether it asks a decision with no GitHub link."""
         text, valid, fact, asks, link, item_unlinked, nothing = self.body(rng)
         tail, tail_fact, tail_link, tail_asks = rng.choice(self.TAILS)
         if tail:
-            text += "\n\n" + tail
+            # What happened goes above the ask (#153). Below it, the ask is no longer the last thing,
+            # so the message has no valid ask block.
+            if rng.random() < 0.75:
+                text = tail + "\n\n" + text
+            else:
+                text, valid = text + "\n\n" + tail, False
         # Under "Nothing for you to do right now", nothing is asked.
         asks = not nothing and (asks or tail_asks)
         return text, valid, fact or tail_fact, (asks and not (link or tail_link)) or item_unlinked
 
     def body(self, rng):
-        """(text, valid first line, states a fact, asks a decision, holds a link, a numbered item under
+        """(text, a valid ask block, states a fact, asks a decision, holds a link, a numbered item under
         "N things" asks a decision with no link on its own line, starts with "Nothing for you")."""
         kind = rng.randrange(7)
         thing, fact, names, asks, link = rng.choice(self.THINGS)
