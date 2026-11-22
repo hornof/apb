@@ -47,7 +47,8 @@
       "Bash(ls *)",
       "Bash(mkdir *)",
       "Bash(sips *)",
-      "Bash(file *)"
+      "Bash(file *)",
+      "Bash(python3 */scripts/plugin-update.py *)"
     ],
     "deny": [
       "Bash(gh pr merge *)",
