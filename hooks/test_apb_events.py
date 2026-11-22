@@ -353,7 +353,7 @@ class HooksFile(unittest.TestCase):
     WAITED_FOR = [("Stop", None, "apb-stop.py"), ("PreToolUse", "Agent|Task", "apb-brief.py"),
                   ("SubagentStop", None, "apb-brief.py"),
                   ("PreToolUse", "AskUserQuestion|mcp__ccd_turn__wrap_up", "apb-popups.py"),
-                  ("SessionStart", None, "apb-version.py")]
+                  ("SessionStart", None, "apb-version.py"), ("SessionStart", None, "apb-selfcheck.py")]
 
     def entries(self):
         """(event, matcher, script file name, hook) for every hook in hooks.json."""

@@ -27,7 +27,9 @@ Usage (from the project folder, in the background):
   python3 <apb plugin>/scripts/apb-watch.py --state <scratch folder>/watch.json [--repo owner/name]
       [--issue N ...] [--check-in 5] [--limit 60] [--stuck-minutes 10] [--quiet-minutes 15] [--poll S]
   python3 <apb plugin>/scripts/apb-watch.py --list
-      lists the watchers running on this machine, and the account's GraphQL budget
+      lists the watchers running on this machine, each with the session that holds it (its name,
+      `apb orch N · <version> · <start time PT>`, from .apb/watcher-owner.json), and the account's
+      GraphQL budget
 """
 import argparse
 import calendar
@@ -632,6 +634,17 @@ def budget_line(budget, now):
     return line + "."
 
 
+def owner_name(record):
+    """The name of the session holding this watcher (issue #133): from .apb/watcher-owner.json next to
+    its state file, which hooks/apb-watch-start.py writes. None if there is none."""
+    try:
+        with open(os.path.join(os.path.dirname(record["state"]), "watcher-owner.json"), encoding="utf-8") as f:
+            name = json.load(f).get("name")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return None
+    return name if isinstance(name, str) and name else None
+
+
 def listing(records, budget, now, mine=None):
     """Lines that list the running watchers, then the account's GraphQL budget. With mine (a test on a
     record), only the watchers it accepts are listed, and the others are only counted."""
@@ -642,8 +655,9 @@ def listing(records, budget, now, mine=None):
              ("No watchers for this project." if mine else "No apb watchers running on this machine.")]
     for r in shown:
         issues = "".join(" #%d" % i for i in r.get("issues") or [])
-        lines.append("  %s%s: %s, running %s (pid %d)" % (r["repo"], issues, every(r["poll"]),
-                                                          span(now - r["started"]), r["pid"]))
+        held = ', held by "%s"' % r["owner"] if r.get("owner") else ""
+        lines.append("  %s%s: %s, running %s (pid %d)%s" % (r["repo"], issues, every(r["poll"]),
+                                                            span(now - r["started"]), r["pid"], held))
     if mine:
         others = len(records) - n
         lines.append("%d other watcher%s on this machine." % (others, "" if others == 1 else "s"))
@@ -832,7 +846,7 @@ def notice(state, registry, reset):
 def main(argv):
     opts = parse_args(argv)
     if opts.list:
-        records = live_watchers(registry_dir(), parse_ps(read_ps()))
+        records = [dict(r, owner=owner_name(r)) for r in live_watchers(registry_dir(), parse_ps(read_ps()))]
         now = time.time()
         print("\n".join(listing(records, account_budget(records, now, rate_budget), now)), flush=True)
         return

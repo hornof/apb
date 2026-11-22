@@ -27,8 +27,9 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
 - The newest session in a folder takes the watchers over. After a plugin update the human opens a new
   orchestrator session while the old one is often still open. A hook whose Claude Code started later
   than the holder's stops the holder's hook (and so its watchers), waits for it to exit, and takes the
-  pid file. It also writes .apb/watcher-owner.json, naming its Claude Code process and when that
-  started. An older session's hook starts nothing while that process is open, even after the newer
+  pid file. It also writes .apb/watcher-owner.json, naming its Claude Code process, when that
+  started, and the session's name, `apb orch N · <version> · <start time PT>` (hooks/apb_session.py,
+  #133), which `apb-watch.py --list` shows. An older session's hook starts nothing while that process is open, even after the newer
   hook has exited (after a wake, a failure or the budget) and freed the pid files, so it never takes
   the watchers back. Once the newer session is closed, the older one may run them again. Hooks of the same session never take over from each other (same Claude Code process).
   Start times come from one ps snapshot, to the second; a tie takes nothing over.
@@ -72,6 +73,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from apb_folder import is_apb_folder, is_apb_repo  # noqa: E402,F401  (tests call is_apb_repo here)
+import apb_session  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WATCH = os.path.join(os.path.dirname(HERE), "scripts", "apb-watch.py")
@@ -243,14 +245,27 @@ def newer_owner(path, root):
     return root not in times or times[root] <= times[pid] + 0.5
 
 
+def plugin_version():
+    try:
+        with open(os.path.join(os.path.dirname(HERE), ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+            return json.load(f).get("version")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def own(path, root, session):
-    """Write the owner file: this session now runs the watchers."""
+    """Write the owner file: this session now runs the watchers. It carries the session's name
+    (hooks/apb_session.py, #133), so `apb-watch.py --list` can say which session holds them."""
     started = start_times().get(root)
     if started is None:
         return
+    try:
+        name = apb_session.session_name(os.path.dirname(path), session, plugin_version())
+    except Exception:
+        name = None
     tmp = "%s.%d" % (path, os.getpid())
     with open(tmp, "w") as f:
-        json.dump({"root": root, "started": started, "session": session}, f)
+        json.dump({"root": root, "started": started, "session": session, "name": name}, f, ensure_ascii=False)
     os.replace(tmp, path)
 
 
