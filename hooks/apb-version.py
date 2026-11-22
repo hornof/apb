@@ -319,7 +319,7 @@ def wake_note(project, session, report, gh="gh", root=ROOT, timeout=TIMEOUT):
         record_said(project, session, main)
         return ("apb version check: this session runs apb plugin %s; main is at %s. Update the plugin "
                 "yourself now (#162), from the project's root: `python3 %s --next <the card the new session "
-                "should build>`. It runs both update commands and checks the installed version against "
+                "should build>`, with the Bash tool's `timeout` set to 600000 (the update can take minutes; the default 2 minutes would stop it before it prints anything). It runs both update commands and checks the installed version against "
                 "main's. Its output is the hand-off: say its first line, and end your message with its last "
                 "line, the one thing for the human to do. Don't hand the human the update commands yourself; "
                 "the script does that only when the update fails."

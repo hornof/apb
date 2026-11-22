@@ -794,6 +794,8 @@ class AtAWake(Clean):
         note = version.wake_note(project, "s1", report(merge=True), gh=gh, root=root, timeout=10)
         self.assertIn("python3 %s" % os.path.join(root, "scripts", "plugin-update.py"), note)
         self.assertIn("yourself", note)
+        # Review fix 1 on #163: the Bash tool's default 2 minutes would stop a slow update.
+        self.assertIn("`timeout` set to 600000", note)
         self.assertIn("last line", note)
         # The human isn't handed the commands: the script hands them over only when the update fails.
         self.assertNotIn(UPDATE, note)

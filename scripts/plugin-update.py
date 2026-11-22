@@ -19,7 +19,10 @@ It prints the hand-off: a line on what happened, then the one ask on the last li
   read, or they differ. The line says what went wrong and the versions it saw; the ask hands the human
   both commands, then the new session. The human is never left on an old version without knowing it.
 
-Every child process has a time limit (--timeout, per command). The startup self-check's Version line
+Every child process has a time limit: --timeout for each claude command (150 s), GH_TIMEOUT for the
+GitHub read (30 s). The worst case, three claude commands and the read, is 480 s, under the 600 s
+(600000 ms) Bash timeout the orchestrator runs the script with; the Bash tool's default of 2 minutes
+would stop a slow run before it printed any hand-off. The startup self-check's Version line
 stays the backstop for an update that was missed.
 """
 import argparse
@@ -35,7 +38,9 @@ PLUGIN = "apb@apb"
 MARKETPLACE = ["plugin", "marketplace", "update", "apb"]
 UPDATE = ["plugin", "update", PLUGIN]
 LIST = ["plugin", "list", "--json"]
-TIMEOUT = 180  # seconds for each claude command; the marketplace refresh alone may take 120
+TIMEOUT = 150  # seconds for each claude command
+GH_TIMEOUT = 30  # seconds for the GitHub read of main's version
+BASH_TIMEOUT_MS = 600000  # the Bash timeout the orchestrator runs this script with (the tool's maximum)
 ASK = "1 thing for you to do right now: "
 
 
@@ -100,7 +105,7 @@ def update(opts, seen):
     """(ok, what happened) for one update run. seen gets the versions read: running and main."""
     session = version.read_manifest(opts.plugin_root)
     seen["running"] = session.get("version") or "unknown"
-    seen["main"] = main = version.main_version(version.repo_of_manifest(session), opts.gh, opts.timeout)
+    seen["main"] = main = version.main_version(version.repo_of_manifest(session), opts.gh, min(opts.timeout, GH_TIMEOUT))
     for args in (MARKETPLACE, UPDATE):
         _, why = run(opts.claude, args, opts.timeout)
         if why:

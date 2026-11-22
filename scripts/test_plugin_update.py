@@ -280,6 +280,33 @@ class RandomVersions(Clean):
                     self.assertIn(main, out[0])
 
 
+class FitsTheBashTimeout(Clean):
+    """Review fix 1 on #163: the Bash tool stops a command after 2 minutes unless told otherwise. The
+    orchestrator runs the script with a 600000 ms timeout (the tool's maximum), and the script's worst
+    case, three claude commands and the GitHub read, each at its limit, fits under it with room to print."""
+
+    def load(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("plugin_update_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_worst_case_fits(self):
+        m = self.load()
+        self.assertEqual(m.BASH_TIMEOUT_MS, 600000)  # the Bash tool's maximum
+        worst = 3 * m.TIMEOUT + m.GH_TIMEOUT
+        self.assertLessEqual(worst + 60, m.BASH_TIMEOUT_MS / 1000, worst)
+        # The marketplace refresh gives itself 120 s inside claude; the script's limit leaves it that.
+        self.assertGreater(m.TIMEOUT, 120)
+
+    def test_the_build_skill_names_the_bash_timeout(self):
+        with open(os.path.join(os.path.dirname(HERE), "skills", "apb-build", "SKILL.md"), encoding="utf-8") as f:
+            step = [l for l in f.read().splitlines() if "plugin-update.py" in l]
+        self.assertEqual(len(step), 1, step)
+        self.assertIn("`timeout` set to %d" % self.load().BASH_TIMEOUT_MS, step[0])
+
+
 class Allowed(Clean):
     def test_new_projects_allow_the_script_without_a_prompt(self):
         # The wake names the script by its path in the installed plugin; the rule matches any folder.
