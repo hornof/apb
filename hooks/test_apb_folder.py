@@ -186,7 +186,7 @@ class Rule(Clean):
                 shutil.rmtree(d, ignore_errors=True)
 
     def test_this_checkout_is_the_apb_repo(self):
-        self.assertTrue(folder_rule.is_apb_repo(ROOT))
+        self.assertFalse(folder_rule.is_apb_repo(ROOT))  # deliberately broken (#143 red-check demo)
         self.assertTrue(folder_rule.is_apb_folder(ROOT))
 
     def test_bad_input_is_no_folder(self):
