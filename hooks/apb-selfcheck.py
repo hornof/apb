@@ -14,7 +14,8 @@ first message starts with this block, and each ❌ comes up before other work:
 The lines, in order (CHECKS):
 1. Watcher: the watchers hooks/apb-watch-start.py keeps for this folder are running (the same records
    `scripts/apb-watch.py --list` shows, matched by their state file in this folder's .apb), and
-   .apb/watcher-owner.json names this session's Claude Code (one of this process's ancestors). The watcher hook runs at the same session
+   .apb/watcher-owner.json names this session's Claude Code (one of this process's ancestors). With no
+   owner file, or no ancestors to compare, the line is ✅ and says which session holds it is unknown. The watcher hook runs at the same session
    start, so this line waits up to --wait seconds for it.
 2. GitHub account: `gh api user` with the session's environment is not the human's own login (gh
    without GH_TOKEN / GITHUB_TOKEN; if gh has no login of its own, the repo's owner).
@@ -126,7 +127,9 @@ def own_repo(ctx):
 # ---------------------------------------------------------------- 1. the watcher
 
 def watcher_state(ctx, watch, expected):
-    """(ok, text) for the watchers now."""
+    """(ok, text, settled) for the watchers now. settled is False while the holder is unknown (no owner
+    file, or this process's ancestors can't be read): the line is ✅, since the watchers run, but the
+    check waits a while longer for the owner file."""
     try:
         procs = watch.parse_ps(watch.read_ps())
     except Exception:
@@ -144,13 +147,18 @@ def watcher_state(ctx, watch, expected):
     if missing:
         return False, ("no watcher for %s is running (`apb-watch.py --list`). The plugin's hook starts it on "
                        "the next tool call; if it still isn't running, look for watcher-exit lines in "
-                       ".apb/events.jsonl." % " or ".join(missing))
+                       ".apb/events.jsonl." % " or ".join(missing)), True
     owner = read_json(os.path.join(ctx.folder, "watcher-owner.json"))
-    if ctx.roots and isinstance(owner, dict) and owner.get("root") not in ctx.roots:
+    if not isinstance(owner, dict) or "root" not in owner:
+        return True, "%s running; no owner file, so which session holds it is unknown" % " and ".join(running), False
+    if not ctx.roots:
+        return True, ("%s running; this session's processes can't be read, so which session holds it is unknown"
+                      % " and ".join(running)), False
+    if owner.get("root") not in ctx.roots:
         who = owner.get("name") or "session %s" % owner.get("session")
         return False, ("%s runs, but another session holds it: \"%s\". Only the newest orchestrator session "
-                       "holds the watcher; if this is the newest, close the other one." % (" and ".join(running), who))
-    return True, "%s, held by this session" % " and ".join(running)
+                       "holds the watcher; if this is the newest, close the other one." % (" and ".join(running), who)), True
+    return True, "%s, held by this session" % " and ".join(running), True
 
 
 def check_watcher(ctx):
@@ -162,8 +170,8 @@ def check_watcher(ctx):
     expected = start.watchers(ctx.folder, repo, issue)
     deadline = time.time() + ctx.wait
     while True:
-        ok, text = watcher_state(ctx, watch, expected)
-        if ok or time.time() >= deadline:
+        ok, text, settled = watcher_state(ctx, watch, expected)
+        if (ok and settled) or time.time() >= deadline:
             return ok, text
         time.sleep(0.5)
 

@@ -346,6 +346,34 @@ class Healthy(unittest.TestCase):
                            capture_output=True, text=True, timeout=60, env=w.env(), stdin=subprocess.DEVNULL)
         self.assertFalse(lines_of(r.stdout)["Watcher"][0], r.stdout)
 
+    def test_with_no_owner_file_the_holder_is_unknown(self):
+        # Review Fix 1: "held by this session" only when the owner file names one of this session's processes.
+        w = World()
+        os.remove(os.path.join(w.apb, "watcher-owner.json"))
+        ok, rest = lines_of(w.context())["Watcher"]
+        self.assertTrue(ok, "the watcher runs")
+        self.assertIn("unknown", rest)
+        self.assertNotIn("held by this session", rest)
+        self.assertLess(w.took, 15, "waits at most --wait for the owner file")
+
+    def test_with_no_ancestors_to_compare_the_holder_is_unknown(self):
+        w = World()
+        m = load()
+        saved = os.environ.get("APB_WATCHERS_DIR")
+        os.environ["APB_WATCHERS_DIR"] = w.registry
+        try:
+            ctx = m.Context(project=w.project, plugin_root=w.plugin, gh=w.gh, timeout=5, wait=0.5, roots=[],
+                            home=w.home, hook=False)
+            (label, ok, rest), = m.run_checks(ctx, [("Watcher", m.check_watcher)])
+        finally:
+            if saved is None:
+                os.environ.pop("APB_WATCHERS_DIR")
+            else:
+                os.environ["APB_WATCHERS_DIR"] = saved
+        self.assertTrue(ok, rest)
+        self.assertIn("unknown", rest)
+        self.assertNotIn("held by this session", rest)
+
     def test_an_in_progress_card_with_an_open_pr_has_a_branch(self):
         w = World()
         w.cfg["board"] = board([card(8, "In progress", prs=[140]), card(130, "Todo")])
