@@ -556,7 +556,7 @@ class Resolve(unittest.TestCase):
 
 
 HAND_OFF = "1 thing for you to do right now: merge PR #57."
-WAITING = "Nothing for you to do right now. Waiting on the reviewer, ETA 7:10 PM."
+WAITING = "Nothing for you to do right now. Waiting on GitHub checks, ETA 7:10 PM."  # #121: nothing runs here
 
 
 def stop_payload(message, **extra):
