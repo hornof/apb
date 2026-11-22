@@ -7,8 +7,9 @@ made for them is the plugin's hook moving a card when `gh pr ready` succeeds (#1
 Usage, from the project's repo root:
     python3 <apb plugin folder>/scripts/board-move.py start-build <issue> [--repo owner/name]
         The first half of starting a build: moves the card to the top of In progress, then says to
-        launch the builder (an agent or a separate session). It refuses a closed card or one not on
-        the board. Run it before every build; there is no other way to start one.
+        launch the builder (an agent or a separate session). It refuses a closed card, one not on
+        the board, and one already In review or Done (#159: a card never moves back by start-build).
+        Run it before every build; there is no other way to start one.
     python3 <apb plugin folder>/scripts/board-move.py pr-ready <PR> [--repo owner/name]
         When a builder marks its PR ready for review: moves each card the PR closes to the top of In
         review. It refuses a draft (#156: a draft's card stays In progress), a PR that isn't open, and
@@ -36,7 +37,8 @@ BOARD = """projectsV2(first: 1) { nodes { id field(name: "Status") {
       ... on ProjectV2SingleSelectField { id options { id name } } } } }"""
 ISSUE = """query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
   %s
-  issue(number: $number) { state projectItems(first: 20) { nodes { id project { id } } } } } }""" % BOARD
+  issue(number: $number) { state projectItems(first: 20) { nodes { id project { id }
+    fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } } } } } } }""" % BOARD
 PR = """query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
   %s
   pullRequest(number: $number) { state isDraft closingIssuesReferences(first: 10) { nodes { number } } } } }""" % BOARD
@@ -100,25 +102,30 @@ def _move(ask, board, item, column):
 
 
 def _item(ask, owner, name, number, project_id=None):
-    """(board, the card's item id on it). Refused when the issue is closed or not on the board."""
+    """(board, the card's item id on it, the issue's state, the card's column on the board or "").
+    Refused when the issue isn't in the repo or the card isn't on the board."""
     repo = ask(ISSUE, owner=owner, name=name, number=number)["data"]["repository"]
     issue = repo.get("issue")
     if not issue:
         raise Refused("#%d is not an issue in this repo" % number)
     board = _board(repo)
-    items = [i["id"] for i in ((issue.get("projectItems") or {}).get("nodes") or [])
-             if (i.get("project") or {}).get("id") == board["id"]]
+    items = [i for i in ((issue.get("projectItems") or {}).get("nodes") or [])
+             if i and (i.get("project") or {}).get("id") == board["id"]]
     if not items:
         raise Refused("card #%d is not on the board" % number)
-    return board, items[0], issue.get("state")
+    column = ((items[0].get("fieldValueByName") or {}).get("name")) or ""
+    return board, items[0]["id"], issue.get("state"), column
 
 
 def start_build(repo, number, ask=gh_graphql):
     """Move the card to the top of In progress. Returns what to say next."""
     owner, name = repo.split("/", 1)
-    board, item, state = _item(ask, owner, name, number)
+    board, item, state, column = _item(ask, owner, name, number)
     if state != "OPEN":
         raise Refused("card #%d is closed: there is nothing to build" % number)
+    if column.lower() in ("in review", "done"):
+        raise Refused("card #%d is in %s: its build is already done, and start-build never moves a card back "
+                      "(to rework it, turn its PR back into a draft: gh pr ready --undo)" % (number, column))
     _option(board, "In progress")
     _move(ask, board, item, "In progress")
     return ("Card #%d is at the top of In progress. Now launch the builder on it (the plugin's builder agent, "
@@ -145,9 +152,9 @@ def move_pr_cards(ask, repo, number, draft, column):
     if not cards:
         raise Refused("PR #%d closes no card: add \"Closes #N\" to its description first" % number)
     moves = [_item(ask, owner, name, c) for c in cards]  # every card found before any moves
-    for board, item, _ in moves:
+    for board, item, _, _ in moves:
         _option(board, column)
-    for board, item, _ in moves:
+    for board, item, _, _ in moves:
         _move(ask, board, item, column)
     return cards
 

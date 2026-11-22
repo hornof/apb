@@ -60,6 +60,13 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   written since the last stop that handed them something, and this message hands them the same thing
   (the same words, or the same PRs and cards; All clear again), it sends it back once, to end with one
   word instead ("repeated-ask").
+- An ask line not in its form (#159), on any stop but a retry, whether or not work is running: if the
+  message's last ask-shaped line (ASK_LINE) is followed only by what may belong to it, but the message
+  doesn't end with an ask block (a bare "Nothing for you to do.", "1 thing for you to do:" without
+  "right now", an "N things" line with the wrong count), it sends the message back once, quoting the
+  line and the four forms ("malformed-ask"). When the work ran out, the "Say who holds the ball" note
+  says it instead, and prose after the line gets the one-ask note instead. With no events file yet, it
+  lets the stop through, like the rest of the hook.
 - Nothing running (#121): if the message ends "Nothing for you to do right now. Waiting on …" while
   nothing runs (nothing_running) and the Waiting on line names nothing outside the session (OUTSIDE:
   checks, CI, a build session, …), it sends it back once: the ball is the human's ("nothing-running").
@@ -114,6 +121,8 @@ CASES = [
                                        "ask about #130 (#121)"},
     {"id": "nothing-running", "incident": "2026-11-21 ~4:58 PM: \"Nothing for you to do right now. Waiting on a new "
                                           "comment on #25\" with nothing running (#121)"},
+    {"id": "malformed-ask", "incident": "2026-11-22 8:22 and 8:23 AM, apb orch 13, and ~10:32 AM, apb orch 14: a bare "
+                                        "\"Nothing for you to do.\" with a builder running (#159)"},
 ]
 
 ONE_ASK = ("One ask per turn: say it once, as the turn's last line (playbook, \"Helping the human keep track\"): "
@@ -134,16 +143,21 @@ OUTSIDE = re.compile(r"(?i)\b(?:checks?|CI|tests?|actions|workflows?|deploy\w*|p
                      r"other|separate)\s+sessions?)\b")
 REFS = re.compile(r"(?<![\w/])#(\d+)\b|/(?:pull|issues)/(\d+)\b")
 
+# The four forms of the ask line, as the playbook gives them.
+FORMS = ("- Nothing for you to do right now. Waiting on <what>, ETA <time>. (A clock time, such as "
+         "7:10 PM; run date first.)\n"
+         "- 1 thing for you to do right now: <the thing>.\n"
+         "- N things for you to do right now: followed by a numbered list of exactly N things.\n"
+         "- All clear: <boards> empty, no open PRs, as of <time>. (Once, when nothing is open on any "
+         "board or repo you watch; nothing under it.)")
 REASON = ("Say who holds the ball. Your work just ran out, so end the message with one of these "
           "lines, with nothing after it but its numbered list and any link or fenced block that belongs "
           "to it. What happened and the status lines go above it (playbook, \"Helping the human keep "
-          "track\"):\n"
-          "- Nothing for you to do right now. Waiting on <what>, ETA <time>. (A clock time, such as "
-          "7:10 PM; run date first.)\n"
-          "- 1 thing for you to do right now: <the thing>.\n"
-          "- N things for you to do right now: followed by a numbered list of exactly N things.\n"
-          "- All clear: <boards> empty, no open PRs, as of <time>. (Once, when nothing is open on any "
-          "board or repo you watch; nothing under it.)")
+          "track\"):\n" + FORMS)
+MALFORMED = ("Your ask line isn't in one of the forms: \"%s\". Whether or not work is still running, end the "
+             "message with one of these lines, word for word up to its placeholders, with nothing after it but "
+             "its numbered list and any link or fenced block that belongs to it (playbook, \"Helping the "
+             "human keep track\"):\n" + FORMS)
 
 DEPARTED = ("An agent's report says it departed from its file, and that isn't resolved: %s. Put it right "
             "before the human sees anything (for example, launch the agent again with the task only). Then "
@@ -988,12 +1002,17 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None, state_lookup=Non
         asks = [a for t in turn_texts(p, message) for a in ask_lines(t)]
         not_last = block is None and not no_line and text_after_ask(message)
     one_ask = len(asks) > 1 or not_last
+    # The ask line the message ends with isn't in its form, work running or not (#159).
+    # With no events file yet (a fresh clone of the apb repo) the stop goes through, as the docstring says.
+    last_ask = (ask_lines(message)[-1:] if events and not retry and block is None and not no_line and not one_ask
+                else [])
+    malformed = last_ask[0] if last_ask else None
     repeat = None if retry or one_ask else repeated_ask(events, session, block)
     idle = not retry and idle_nothing(events, session, now, p.get("background_tasks"), block)
     # The board and GitHub agree with what's happening (#121).
     problems, error = check_state(p, project, events, session, block, message, state_lookup)
     send_back = (no_line or bool(unchecked) or departed or unlinked or bool(done) or bool(no_projects)
-                 or one_ask or bool(repeat) or idle or bool(problems))
+                 or one_ask or bool(malformed) or bool(repeat) or idle or bool(problems))
     line = {"time": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(now)) + ".%03dZ" % (now % 1 * 1000),
             "event": "Stop", "session": session[:MAX]}
     if send_back:
@@ -1010,6 +1029,8 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None, state_lookup=Non
             line["projects-line-missing"] = no_projects
         if one_ask:
             line["one-ask"] = True
+        if malformed:
+            line["malformed-ask"] = True
         if repeat:
             line["repeated-ask"] = repeat[:MAX]
         if idle:
@@ -1045,6 +1066,8 @@ def handle(p, project, now, pr_lookup=None, thread_lookup=None, state_lookup=Non
         if one_ask:
             many = len(asks) > 1
             notes.append(ONE_ASK % ("%d ask lines" % len(asks) if many else "an ask that isn't its last line"))
+        if malformed:
+            notes.append(MALFORMED % malformed[:MAX])
         if repeat:
             notes.append(REPEATED % repeat)
         if idle:

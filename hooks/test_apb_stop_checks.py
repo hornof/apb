@@ -6,6 +6,8 @@ Each test is built from the incident that added its case (#121's comments):
   replies in a row each with the same ask (~8:14 PM, "apb orch 5"), and the same ask in two text blocks
   of one turn (2026-11-22 ~5:08 AM, "apb orch 11", after PR #155 merged);
 - a "Nothing for you to do" line with nothing running (2026-11-21 ~4:58 PM, after the watcher handover);
+- an ask line not in one of the forms, with a builder running: a bare "Nothing for you to do." (2026-11-22
+  8:22 and 8:23 AM, "apb orch 13", and ~10:32 AM, "apb orch 14"; #159);
 - the board and GitHub disagreeing (scripts/consistency-check.py; its own tests cover each case): the
   hook runs it when a turn hands something over or starts an agent, sends the turn back once with what
   to fix, and never blocks on a GitHub error.
@@ -229,6 +231,99 @@ class NothingWithNothingRunning(unittest.TestCase):
             self.assertFalse(handle(line, project)["send_back"], line)
 
 
+class MalformedAsk(unittest.TestCase):
+    """#159: 2026-11-22 8:22 and 8:23 AM in "apb orch 13" (the #156 builder running) and ~10:32 AM in
+    "apb orch 14" (the #136 builder running): turns ended with a bare "Nothing for you to do." and went
+    through, because the strict ask (#153) was checked only when nothing was running."""
+
+    BUILDER = [{"id": "a1", "type": "local_agent", "status": "running", "description": "Build issue #156"}]
+
+    def events(self):
+        return [{"event": "UserPromptSubmit"}, {"event": "PostToolUse", "command": "gh pr view 157", "exit": 0},
+                {"event": "SubagentStart", "agent_id": "b1", "agent_type": "apb:builder"}]
+
+    def stop_with(self, message, project=None, **extra):
+        project = project or apb_project()
+        if not os.path.exists(os.path.join(project, ".apb")):
+            write_events(project, self.events())
+        extra.setdefault("background_tasks", self.BUILDER)
+        return handle(message, project, extra=extra), project
+
+    def test_the_bare_line_with_a_builder_running_is_sent_back_once(self):
+        r, project = self.stop_with("The #156 builder is writing its tests.\n\nNothing for you to do.")
+        self.assertTrue(r["send_back"])
+        self.assertIn('"Nothing for you to do."', r["note"])  # quotes the line it got
+        # ... and the forms it should have used.
+        self.assertIn("Nothing for you to do right now. Waiting on <what>, ETA <time>.", r["note"])
+        self.assertIn("1 thing for you to do right now: <the thing>.", r["note"])
+        self.assertIn("N things for you to do right now:", r["note"])
+        self.assertIn("All clear: <boards> empty", r["note"])
+        self.assertNotIn("Your work just ran out", r["note"])  # it didn't: the builder runs
+        self.assertTrue(last_event(project).get("malformed-ask"))
+        self.assertNotIn("holder", last_event(project))
+        retry = handle("Nothing for you to do.", project, extra={"stop_hook_active": True,
+                                                                  "background_tasks": self.BUILDER})
+        self.assertFalse(retry["send_back"])
+
+    def test_with_the_builder_known_only_from_the_events_file(self):
+        project = apb_project()
+        write_events(project, self.events())
+        p = {k: v for k, v in payload("Nothing for you to do.").items() if k != "background_tasks"}
+        r = stop.handle(p, project, time.time(), no_github, no_github)
+        self.assertTrue(r["send_back"])
+        self.assertTrue(last_event(project).get("malformed-ask"))
+
+    def test_the_line_in_its_form_goes_through(self):
+        for line in ["Nothing for you to do right now. Waiting on the #156 builder, ETA 8:40 AM.",
+                     "1 thing for you to do right now: merge PR #44.",
+                     "2 things for you to do right now:\n1. merge PR #44.\n2. answer decision 3 on PR #45: "
+                     "https://github.com/hum/proj/pull/45#discussion_r3"]:
+            r, _ = self.stop_with("Status.\n\n" + line)
+            self.assertFalse(r["send_back"], (line, r.get("note")))
+
+    def test_every_other_ask_shaped_line_is_sent_back(self):
+        # Both directions: each of these is an ask line (ASK_LINE matches) that ask_block doesn't take.
+        for line in ["Nothing for you to do right now.",
+                     "Nothing for you to do right now. Waiting on the builder.",
+                     "nothing for you to do; the builder is on it",
+                     "**Nothing for you to do.**",
+                     "1 thing for you to do: merge PR #44.",
+                     "1 things for you to do right now: merge PR #44.",
+                     "3 things for you to do right now:\n1. merge PR #44.\n2. merge PR #45.",
+                     "All clear: nothing open."]:
+            self.assertTrue(stop.ASK_LINE.match(stop.clean(line.splitlines()[0])), line)
+            self.assertIsNone(stop.ask_block(line), line)
+            r, project = self.stop_with("Status.\n\n" + line)
+            self.assertTrue(r["send_back"], line)
+            self.assertTrue(last_event(project).get("malformed-ask"), line)
+
+    def test_no_ask_line_at_all_still_goes_through_while_work_runs(self):
+        # A builder is running and the turn ends mid-work with no ask: the hook asks for one only when
+        # the work has run out (REASON), as before.
+        r, _ = self.stop_with("Started the builder; reading its first commits.")
+        self.assertFalse(r["send_back"], r.get("note"))
+
+    def test_a_quoted_bare_line_is_no_ask(self):
+        r, _ = self.stop_with('The advisor wrote:\n> Nothing for you to do.\n\n'
+                              'Nothing for you to do right now. Waiting on the #156 builder, ETA 8:40 AM.')
+        self.assertFalse(r["send_back"], r.get("note"))
+
+    def test_with_nothing_running_the_work_ran_out_note_says_it_once(self):
+        project = apb_project()
+        write_events(project, [{"event": "UserPromptSubmit", "automatic": True},
+                               {"event": "PostToolUse", "command": "gh pr view 157", "exit": 0}])
+        r = handle("Nothing for you to do.", project)
+        self.assertTrue(r["send_back"])
+        self.assertIn("Say who holds the ball", r["note"])
+        self.assertEqual(r["note"].count("1 thing for you to do right now: <the thing>."), 1)
+
+    def test_prose_after_it_is_the_one_ask_note_alone(self):
+        r, project = self.stop_with("Nothing for you to do.\n\nThe builder is on step 3.")
+        self.assertTrue(r["send_back"])
+        self.assertIn("One ask per turn", r["note"])
+        self.assertFalse(last_event(project).get("malformed-ask"))
+
+
 # ---------------------------------------------------------------- the consistency check
 
 REMOTE = "https://github.com/hum/proj.git"
@@ -398,7 +493,7 @@ class TimeBudget(unittest.TestCase):
 class Cases(unittest.TestCase):
     def test_the_hooks_own_cases_name_their_incidents(self):
         ids = [c["id"] for c in stop.CASES]
-        self.assertEqual(sorted(ids), ["nothing-running", "one-ask", "repeated-ask"])
+        self.assertEqual(sorted(ids), ["malformed-ask", "nothing-running", "one-ask", "repeated-ask"])
         for c in stop.CASES:
             self.assertRegex(c["incident"], r"20\d\d-\d\d-\d\d")
 

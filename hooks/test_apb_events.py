@@ -118,6 +118,53 @@ class Writes(unittest.TestCase):
         self.assertLessEqual(len(line["command"]), 300)
         self.assertTrue(line["command"].startswith("echo yyy"))
 
+    # #159: the Agent tool's answer, as Claude Code gave it for this card's own builder on 2026-11-22.
+    LAUNCH = {"isAsync": True, "status": "async_launched", "agentId": "aa4609599f80f78b1",
+              "description": "Build issue #159", "prompt": "Build hornof/apb#159 (...)"}
+
+    def test_an_agent_launch_names_the_agent_and_its_card(self):
+        line = self.one(base("PostToolUse", tool_name="Agent",
+                             tool_input={"description": "Build issue #159", "subagent_type": "apb:builder",
+                                         "isolation": "worktree", "prompt": "Build hornof/apb#159 (\"x\")." * 300},
+                             tool_response=self.LAUNCH))
+        self.assertEqual(line["event"], "AgentLaunch")
+        self.assertEqual(line["launched"], "aa4609599f80f78b1")
+        self.assertEqual(line["cards"], [159])
+        self.assertEqual(line["launched_type"], "apb:builder")
+        self.assertNotIn("agent_id", line)  # the orchestrator launched it; nothing ran inside an agent
+        self.assertNotIn("Build hornof", json.dumps(line))  # the brief itself is never logged
+        self.assertLess(len(json.dumps(line)), 400)
+
+    def test_the_brief_names_the_card_when_the_description_doesnt(self):
+        line = self.one(base("PostToolUse", tool_name="Task",
+                             tool_input={"description": "Build the popups card",
+                                         "prompt": "Build hornof/apb#117 (popups).\nSee also #121 and #5."},
+                             tool_response="Async agent launched successfully.\nagentId: a1b2c3 (internal ID)"))
+        self.assertEqual((line["launched"], line["cards"]), ("a1b2c3", [117]))
+
+    def test_the_description_wins_and_names_several(self):
+        self.assertEqual(self.cards({"description": "Review #20 and #21, #20 again", "prompt": "#9"}), [20, 21])
+        self.assertEqual(self.cards({"description": "Fix it", "prompt": "Nothing here\n#9 on line two"}), [])
+        self.assertEqual(self.cards({"description": "&#123; entity", "prompt": None}), [])
+        self.assertEqual(len(self.cards({"description": " ".join("#%d" % n for n in range(1, 20))})), 5)
+
+    def cards(self, tool_input):
+        spec = importlib.util.spec_from_file_location("apb_events", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.cards(tool_input)
+
+    def test_an_agent_answer_with_no_id_is_not_logged(self):
+        for response in [None, {}, "Error: no such agent type", {"content": [{"type": "text", "text": "done"}]}, 5]:
+            run(base("PostToolUse", tool_name="Agent", tool_input={"description": "Build #3"},
+                     tool_response=response), self.project)
+        self.assertEqual(lines(self.project), [])
+
+    def test_a_synchronous_agents_text_answer(self):
+        line = self.one(base("PostToolUse", tool_name="Agent", tool_input={"description": "Build #3"},
+                             tool_response={"content": [{"type": "text", "text": "report\nagentId: f00d"}]}))
+        self.assertEqual((line["launched"], line["cards"]), ("f00d", [3]))
+
     def test_other_tools_are_not_logged(self):
         r = run(base("PostToolUse", tool_name="Edit", tool_input={"file_path": "/a"}), self.project)
         self.assertEqual(r.returncode, 0)
@@ -369,13 +416,16 @@ class HooksFile(unittest.TestCase):
         return out
 
     def test_every_event_is_registered_once(self):
-        logged = [event for event, _, script, _ in self.entries() if script == "apb-events.py"]
-        self.assertEqual(sorted(logged), sorted(e for e in EVENTS if e != "Stop"))
+        logged = [(event, matcher) for event, matcher, script, _ in self.entries() if script == "apb-events.py"]
+        expected = [(e, "Bash" if e.startswith("PostToolUse") else None) for e in EVENTS if e != "Stop"]
+        # #159: and once more after an agent launch, for the card its isolated worktree builds.
+        self.assertEqual(sorted(logged, key=str), sorted(expected + [("PostToolUse", "Agent|Task")], key=str))
         self.assertEqual(sorted(self.hooks), sorted(EVENTS + ["PreToolUse", "SessionStart"]))
 
     def test_bash_only_for_tool_events(self):
         for event in ["PostToolUse", "PostToolUseFailure"]:
             self.assertEqual(self.hooks[event][0]["matcher"], "Bash")
+        self.assertEqual([g["matcher"] for g in self.hooks["PostToolUse"]], ["Bash", "Bash", "Agent|Task"])
 
     def test_every_hook_runs_the_script_in_the_background(self):
         waited = []

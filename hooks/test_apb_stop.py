@@ -697,7 +697,7 @@ class Replay(unittest.TestCase):
                    for l in lines[starts[-1] + 1:])
 
     def test_the_hook_sends_back_only_the_real_ones(self):
-        caught_by_121 = 0
+        caught_by_121 = caught_by_159 = 0
         for c in REPLAYED:
             project = apb_project()
             # A turn the human started, with no lookup in it, while the builder ran (as it did that
@@ -706,15 +706,40 @@ class Replay(unittest.TestCase):
             running = [{"id": "b1", "type": "subagent", "status": "running"}]
             r = stop.handle(payload(c["message"], background_tasks=running), project, time.time(), no_github, no_github)
             after = self.prose_after_ask(c["message"])
+            malformed = not after and self.ask_not_in_form(c["message"])
             caught_by_121 += after and not c["still_caught"]
-            self.assertEqual(r["send_back"], bool(c["still_caught"]) or after, (c["time"], c["message"]))
-            if not c["still_caught"] and not after:
+            caught_by_159 += malformed and not c["still_caught"]
+            self.assertEqual(r["send_back"], bool(c["still_caught"]) or after or malformed, (c["time"], c["message"]))
+            if not c["still_caught"] and not after and not malformed:
                 self.assertNotIn("sent_back", read_events(project)[-1])
             last = read_events(project)[-1]
             self.assertEqual("unchecked" in last, "github-fact" in c["still_caught"], c["time"])
             self.assertEqual("decision-without-link" in last, "decision-without-link" in c["still_caught"],
                              c["time"])
         self.assertGreater(caught_by_121, 0)  # the ask written first, as on Nov 18, is caught now
+        # #159: an ask line with words after its ETA, as on Nov 18 at 3:02 PM, is caught now too.
+        self.assertGreater(caught_by_159, 0)
+
+    @staticmethod
+    def ask_not_in_form(message):
+        """#159's case, worked out separately: the last line that starts with an ask form, followed only by
+        blank, quoted, numbered or link lines, isn't one of the four forms with its list."""
+        lines = [l.strip().strip("*_").strip() for l in message.splitlines()]
+        lines = [l for l in lines if not l.startswith(">")]
+        starts = [k for k, l in enumerate(lines)
+                  if re.match(r"(?i)(nothing for you to do|\d+ things? for you to do|all clear:)", l)]
+        if not starts:
+            return False
+        head, rest = lines[starts[-1]], [l for l in lines[starts[-1] + 1:] if l]
+        if re.fullmatch(r"Nothing for you to do right now\. Waiting on .+, ETA \d{1,2}:\d{2}(\s*[AaPp]\.?[Mm]\.?)?\.?", head):
+            return False
+        if re.match(r"1 thing for you to do right now: .+", head):
+            return False
+        m = re.fullmatch(r"(\d+) things for you to do right now:", head)
+        if m and int(m.group(1)) >= 2:
+            items = [l for l in rest if re.match(r"\d+[.)]\s", l)]
+            return [int(re.match(r"\d+", l).group(0)) for l in items] != list(range(1, int(m.group(1)) + 1))
+        return not (re.fullmatch(r"All clear: .+ empty, no open PRs, as of .+", head) and not rest)
 
 
 class DecisionLink(unittest.TestCase):
@@ -2073,7 +2098,9 @@ class Properties(unittest.TestCase):
             joined = " ".join(parts + below)
             ask = (" ".join(re.findall(r"[a-z0-9]+", joined.lower())),
                    {int(x or y) for x, y in re.findall(r"(?<![\w/])#(\d+)\b|/(?:pull|issues)/(\d+)\b", joined)})
-        info = {"after": after, "ask": ask}
+        # #159: an ask line not in its form (a wrong count, or something under it that isn't its own),
+        # with no prose under it, is sent back whether or not work is running.
+        info = {"after": after, "ask": ask, "malformed": has_ask and not valid and not after}
         return text, valid, fact or tail_fact, (asks and not (link or tail_link)) or item_unlinked, info
 
     def body(self, rng):
@@ -2106,7 +2133,7 @@ class Properties(unittest.TestCase):
         rng = random.Random(41)
         quiet_stops = 0  # quiet wake-ups the histories reached, so the exception is really tested
         quiet_after_helper = 0  # those whose turn starts with the helper's SubagentStop
-        new_cases = {"after": 0, "repeat": 0}  # #121's cases the histories reached
+        new_cases = {"after": 0, "repeat": 0, "malformed": 0}  # #121's and #159's cases the histories reached
         for history in range(40):
             project = apb_project()
             last_ask = None  # what the last stop that went through with an ask block handed over
@@ -2185,7 +2212,7 @@ class Properties(unittest.TestCase):
                 message, valid, fact, unlinked, info = self.message(rng)
                 if not by_prompt and rng.random() < 0.5:  # a wake-up often ends quietly
                     message, valid, fact, unlinked = rng.choice(["", "Noted.", "  "]), False, False, False
-                    info = {"after": False, "ask": None}
+                    info = {"after": False, "ask": None, "malformed": False}
                 # A turn that no prompt started counts only once prompts are known to be logged.
                 # The hook's work-ran-out check counts the helper's SubagentStop like any other.
                 ran_out = (not sim_running and not background_bash
@@ -2209,10 +2236,12 @@ class Properties(unittest.TestCase):
                     repeat = (not hook_active and not after and info["ask"] is not None
                               and not (by_prompt and prompts_logged) and last_ask not in (None, "claude")
                               and self.same_ask(last_ask, info["ask"]))
+                    malformed = not hook_active and info["malformed"] and not no_line and not after
                     new_cases["after"] += after
                     new_cases["repeat"] += repeat
+                    new_cases["malformed"] += malformed
                     want_send_back = not hook_active and (no_line or (fact and not checked) or unlinked
-                                                          or after or repeat)
+                                                          or after or repeat or malformed)
                     r = stop.handle(payload(message, stop_hook_active=hook_active, **extra), project, time.time(),
                                     no_github, no_github)
                     checks += 1
@@ -2229,6 +2258,7 @@ class Properties(unittest.TestCase):
         self.assertGreater(quiet_after_helper, 0)
         self.assertGreater(new_cases["after"], 0)
         self.assertGreater(new_cases["repeat"], 0)
+        self.assertGreater(new_cases["malformed"], 0)
 
     @staticmethod
     def same_ask(before, now):

@@ -69,7 +69,8 @@ class FakeBoard:
         else:
             mine = [i for i in self.items if i["issue"] == n] if self.on_board else []
             repo["issue"] = {"state": self.issues[n], "projectItems": {"nodes": [
-                {"id": "OTHER", "project": {"id": "P9"}}] + [{"id": i["id"], "project": {"id": "P1"}} for i in mine]}}
+                {"id": "OTHER", "project": {"id": "P9"}, "fieldValueByName": {"name": "Done"}}]
+                + [{"id": i["id"], "project": {"id": "P1"}, "fieldValueByName": {"name": i["status"]}} for i in mine]}}
         return {"data": {"repository": repo}}
 
 
@@ -104,6 +105,31 @@ class StartBuild(unittest.TestCase):
             bm.start_build("hum/proj", 5, b)
         with self.assertRaises(bm.Refused):
             bm.start_build("hum/proj", 99, b)
+
+    def test_a_card_in_review_or_done_is_refused_and_nothing_moves(self):
+        # #159: start-build refused only a closed card, so a card already In review went back to In
+        # progress. A card past In progress never goes back by start-build.
+        for column in ("In review", "Done"):
+            b = board((1, "In progress"), (5, column), (6, column))
+            before = [dict(i) for i in b.items]
+            with self.assertRaises(bm.Refused) as e:
+                bm.start_build("hum/proj", 5, b)
+            self.assertIn("#5", str(e.exception))
+            self.assertIn(column, str(e.exception))
+            self.assertEqual([dict(i) for i in b.items], before)
+            self.assertFalse(any("mutation" in q for q, _ in b.calls))
+
+    def test_a_card_in_todo_or_in_progress_moves(self):
+        for column in ("Todo", "In progress"):
+            b = board((1, "In progress"), (5, column))
+            bm.start_build("hum/proj", 5, b)
+            self.assertEqual(b.column("In progress"), [5, 1])
+
+    def test_the_card_on_another_board_doesnt_decide(self):
+        # The card's column on this board decides, not its column on another board (Done in the fake).
+        b = board((5, "Todo"))
+        bm.start_build("hum/proj", 5, b)
+        self.assertEqual(b.status(5), "In progress")
 
     def test_a_card_on_another_board_too_moves_only_here(self):
         b = board((5, "Todo"))
@@ -221,6 +247,13 @@ class Properties(unittest.TestCase):
             b = board(*[(n, rng.choice(COLUMNS)) for n in numbers])
             target = rng.choice(numbers)
             before = [(i["issue"], i["status"]) for i in b.items if i["issue"] != target]
+            if b.status(target) in ("In review", "Done"):
+                # #159: start-build never moves a card back from In review or Done.
+                whole = [(i["issue"], i["status"]) for i in b.items]
+                with self.assertRaises(bm.Refused):
+                    bm.start_build("hum/proj", target, b)
+                self.assertEqual([(i["issue"], i["status"]) for i in b.items], whole)
+                continue
             bm.start_build("hum/proj", target, b)
             self.assertEqual(b.column("In progress")[0], target)
             self.assertEqual([(i["issue"], i["status"]) for i in b.items if i["issue"] != target], before)

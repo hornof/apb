@@ -44,15 +44,19 @@ def thread(*comments, resolved=False):
     return {"isResolved": resolved, "comments": list(comments)}
 
 
-def pr(n, closes=(), draft=False, head=None, assignees=(), threads=(), comments=(), reviews=()):
+def pr(n, closes=(), draft=False, head=None, assignees=(), threads=(), comments=(), reviews=(), commits=()):
     return {"number": n, "draft": draft, "head": head or "issue-%d-x" % (closes[0] if closes else n),
             "assignees": list(assignees), "closes": list(closes), "threads": list(threads),
-            "comments": list(comments), "reviews": list(reviews)}
+            "comments": list(comments), "reviews": list(reviews), "commits": list(commits)}
 
 
-def snap(board=(), prs=(), worktrees=(), assigned=(), advisor=False, human=HUMAN):
+def snap(board=(), prs=(), worktrees=(), assigned=(), advisor=False, human=HUMAN, agents=None):
     return {"repo": REPO, "human": human, "claude_login": CLAUDE, "board": list(board), "prs": list(prs),
-            "worktrees": list(worktrees), "assigned": list(assigned), "advisor": advisor}
+            "worktrees": list(worktrees), "assigned": list(assigned), "advisor": advisor, "agents": agents or {}}
+
+
+# A full commit id on the PR; a Fix post gives its short form, abc1234.
+OID = "abc1234" + "5" * 33
 
 
 def cases(found):
@@ -109,6 +113,68 @@ class BuildInTodo(unittest.TestCase):
     def test_a_closed_card_is_not_a_build(self):
         found = cc.check(snap(board=[card(5, "done", "CLOSED")], worktrees=["issue-5-old"]))
         self.assertEqual(found, [])
+
+
+class BuildInIsolatedWorktree(unittest.TestCase):
+    """#159: a builder launched with the Agent tool's worktree isolation (#142) works on the branch Claude
+    Code gives its worktree, worktree-agent-<agent id>, until it makes its own. The events file says which
+    card each agent was launched on (hooks/apb-events.py, an AgentLaunch line)."""
+
+    # The branch Claude Code gave this card's own builder, 2026-11-22, and the agent id it logged.
+    BRANCH, AGENT = "worktree-agent-aa4609599f80f78b1", "aa4609599f80f78b1"
+
+    def test_an_isolated_worktree_for_a_todo_card_is_named(self):
+        found = cc.check(snap(board=[card(159), card(160)], worktrees=["main", self.BRANCH],
+                              agents={self.AGENT: [159]}))
+        self.assertEqual(cases(found), ["build-in-todo"])
+        self.assertEqual([p["card"] for p in found], [159])
+        self.assertIn(self.BRANCH, found[0]["problem"])
+        self.assertIn("start-build 159", found[0]["problem"])
+
+    def test_moving_the_card_clears_it(self):
+        self.assertEqual(cc.check(snap(board=[card(159, "in progress")], worktrees=[self.BRANCH],
+                                       agents={self.AGENT: [159]})), [])
+
+    def test_an_agent_with_no_launch_line_names_no_card(self):
+        self.assertEqual(cc.check(snap(board=[card(159)], worktrees=[self.BRANCH])), [])
+        self.assertEqual(cc.check(snap(board=[card(159)], worktrees=[self.BRANCH], agents={"a0": [159]})), [])
+
+    def test_only_the_card_the_agent_was_launched_on(self):
+        found = cc.check(snap(board=[card(159), card(15)], worktrees=[self.BRANCH], agents={self.AGENT: [15]}))
+        self.assertEqual([p["card"] for p in found], [15])
+
+    def test_a_branch_that_only_contains_the_id_is_not_the_agents(self):
+        s = snap(board=[card(159)], worktrees=["my-worktree-agent-aa4609599f80f78b1-x", "x" + self.AGENT],
+                 agents={self.AGENT: [159]})
+        self.assertEqual(cc.check(s), [])
+
+    def test_agent_cards_from_the_events_file(self):
+        project = tempfile.mkdtemp()
+        os.makedirs(os.path.join(project, ".apb"))
+        with open(os.path.join(project, ".apb", "events.jsonl"), "w") as f:
+            for line in [{"event": "SubagentStart", "agent_id": self.AGENT},
+                         {"event": "AgentLaunch", "launched": self.AGENT, "cards": [159]},
+                         {"event": "AgentLaunch", "launched": "b2", "cards": []},
+                         {"event": "AgentLaunch", "launched": 7, "cards": [3]},
+                         {"event": "AgentLaunch", "launched": "c3", "cards": ["x", 4, True]}]:
+                f.write(json.dumps(line) + "\n")
+            f.write("not json\n")
+        self.assertEqual(cc.agent_cards(project), {self.AGENT: [159], "b2": [], "c3": [4]})
+        self.assertEqual(cc.agent_cards(os.path.join(project, "missing")), {})
+
+    def test_a_real_isolated_worktree_end_to_end(self):
+        # git's own answer for a worktree on Claude Code's branch name, through to the check.
+        folder = tempfile.mkdtemp()
+        subprocess.run(["git", "init", "-q", "-b", "main", folder], check=True, timeout=30)
+        subprocess.run(["git", "-C", folder, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q",
+                        "--allow-empty", "-m", "x"], check=True, timeout=30)
+        wt = os.path.join(folder, ".claude", "worktrees", "agent-" + self.AGENT)
+        subprocess.run(["git", "-C", folder, "worktree", "add", "-q", "-b", self.BRANCH, wt], check=True, timeout=30)
+        os.makedirs(os.path.join(folder, ".apb"))
+        with open(os.path.join(folder, ".apb", "events.jsonl"), "w") as f:
+            f.write(json.dumps({"event": "AgentLaunch", "launched": self.AGENT, "cards": [159]}) + "\n")
+        s = snap(board=[card(159)], worktrees=cc.worktree_branches(folder), agents=cc.agent_cards(folder))
+        self.assertEqual(cases(cc.check(s)), ["build-in-todo"])
 
 
 class ReadyPrNotInReview(unittest.TestCase):
@@ -306,10 +372,53 @@ class MergeWithOpenRequest(unittest.TestCase):
         found = cc.check(snap(board=[], prs=[p]), self.hand_off(120))
         self.assertEqual(cases(found), ["merge-with-open-request"])
 
-    def test_a_later_reply_from_claude_answers_it(self):
+    ASK_URL = "https://github.com/hum/proj/pull/120#issuecomment-901"
+
+    def advisor_ask(self):
+        return comment("Please add the rule to the playbook." + ADVISOR, author=HUMAN, at="2026-11-20T10:00:00Z",
+                       url=self.ASK_URL)
+
+    def test_a_later_reply_that_links_it_answers_it(self):
         p = pr(120, assignees=[HUMAN], comments=[
-            comment("Please add the rule to the playbook." + ADVISOR, author=HUMAN, at="2026-11-20T10:00:00Z"),
-            comment("Done in abc1234.\n\n— Claude (orchestrator)", at="2026-11-20T10:05:00Z")])
+            self.advisor_ask(),
+            comment("Done in abc1234, for %s.\n\n— Claude (orchestrator)" % self.ASK_URL, at="2026-11-20T10:05:00Z")])
+        self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [])
+
+    def test_a_later_reply_that_quotes_it_answers_it(self):
+        p = pr(120, assignees=[HUMAN], comments=[
+            self.advisor_ask(),
+            comment("> Please add the rule to the playbook.\n\nNot doing it: the rule is in the skill.\n\n"
+                    "— Claude (orchestrator)", at="2026-11-20T10:05:00Z")])
+        self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [])
+
+    def test_a_reply_that_doesnt_address_it_doesnt_answer_it(self):
+        # #159: any later Claude comment counted, the reviewer's index post included.
+        others = [
+            "Index: 0 Fix, 2 Notes.\n\n## Notes\n1. fine\n2. fine\n\n— Claude (reviewer)",
+            "Rebased on main.\n\n— Claude (orchestrator)",
+            "> — Claude (advisor)\n\nSeen.\n\n— Claude (orchestrator)",  # quotes only the signature
+            "> the\n\nSeen.\n\n— Claude (orchestrator)",  # a quote too short to say which comment
+            "See https://github.com/hum/proj/pull/120#issuecomment-9012.\n\n— Claude (orchestrator)",
+        ]
+        for body in others:
+            p = pr(120, assignees=[HUMAN], comments=[self.advisor_ask(), comment(body, at="2026-11-20T10:05:00Z")])
+            self.assertEqual(cases(cc.check(snap(prs=[p]), self.hand_off(120))), ["merge-with-open-request"], body)
+
+    def test_the_reviewer_linking_it_doesnt_answer_it(self):
+        index = "Index: the advisor asked %s.\n\n— Claude (reviewer)" % self.ASK_URL
+        p = pr(120, assignees=[HUMAN], comments=[self.advisor_ask(), comment(index, at="2026-11-20T10:05:00Z")])
+        self.assertEqual(cases(cc.check(snap(prs=[p]), self.hand_off(120))), ["merge-with-open-request"])
+
+    def test_a_reply_before_it_doesnt_answer_it(self):
+        p = pr(120, assignees=[HUMAN], comments=[
+            comment("> Please add the rule to the playbook.\n\nDone.\n\n— Claude (orchestrator)", at="2026-11-20T09:05:00Z"),
+            self.advisor_ask()])
+        self.assertEqual(cases(cc.check(snap(prs=[p]), self.hand_off(120))), ["merge-with-open-request"])
+
+    def test_a_review_of_the_advisor_is_answered_by_its_link(self):
+        url = "https://github.com/hum/proj/pull/120#pullrequestreview-77"
+        p = pr(120, assignees=[HUMAN], reviews=[comment("Please rename it." + ADVISOR, author=HUMAN, url=url)],
+               comments=[comment("Renamed, for %s.\n\n— Claude (orchestrator)" % url, at="2026-11-20T10:05:00Z")])
         self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [])
 
     def test_a_plain_words_summary_is_no_request(self):
@@ -319,7 +428,7 @@ class MergeWithOpenRequest(unittest.TestCase):
 
     def test_a_fix_item_with_no_commit_holds_the_merge(self):
         review = "Index: 2 Fix.\n\n## Fix\n1. Rename the flag. abc1234\n2. Add the test.\n\n## Notes\n1. fine\n\n— Claude (reviewer)"
-        p = pr(120, assignees=[HUMAN], comments=[comment(review)])
+        p = pr(120, assignees=[HUMAN], comments=[comment(review)], commits=[OID])
         found = cc.check(snap(prs=[p]), self.hand_off(120))
         self.assertEqual(cases(found), ["merge-with-open-request"])
         self.assertIn("Fix item 2", found[0]["problem"])
@@ -327,7 +436,30 @@ class MergeWithOpenRequest(unittest.TestCase):
     def test_every_fix_item_answered_is_fine(self):
         review = ("**Fix**\n1. Rename the flag. Fixed in abc1234.\n2. Add the test: not fixed, because the "
                   "hook has none.\n\n**Notes**\n1. fine\n\n— Claude (reviewer)")
-        p = pr(120, assignees=[HUMAN], reviews=[comment(review)])
+        p = pr(120, assignees=[HUMAN], reviews=[comment(review)], commits=[OID])
+        self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [])
+
+    def fix_post(self, item):
+        return "## Fix\n1. %s\n\n## Notes\n1. fine\n\n— Claude (reviewer)" % item
+
+    def test_a_fix_item_sha_must_be_a_commit_on_the_pr(self):
+        # #159: any hex or digit word of 7 or more characters passed as the commit.
+        for item in ["Rename the flag. Fixed in 1234567.", "Rename the flag, issue 20261122.",
+                     "Rename the flag. Fixed in abc1235.", "Fixed in https://github.com/hum/proj/commit/fff0000"]:
+            p = pr(120, assignees=[HUMAN], comments=[comment(self.fix_post(item))], commits=[OID])
+            found = cc.check(snap(prs=[p]), self.hand_off(120))
+            self.assertEqual(cases(found), ["merge-with-open-request"], item)
+            self.assertIn("Fix item 1", found[0]["problem"])
+
+    def test_a_commit_on_the_pr_in_any_form_answers_the_item(self):
+        for item in ["Fixed in abc1234.", "Fixed in `%s`." % OID, "Fixed: %s" % OID[:12],
+                     "Fixed in ABC1234.", "Fixed in https://github.com/hum/proj/commit/%s" % OID,
+                     "Fixed in https://github.com/hum/proj/pull/120/commits/abc12345"]:
+            p = pr(120, assignees=[HUMAN], comments=[comment(self.fix_post(item))], commits=["0" * 40, OID])
+            self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [], item)
+
+    def test_a_reason_still_answers_the_item_with_no_commit(self):
+        p = pr(120, assignees=[HUMAN], comments=[comment(self.fix_post("Add the test: won't fix, no hook."))])
         self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [])
 
     def test_only_a_merge_hand_off_is_checked(self):
@@ -416,8 +548,9 @@ def gql_item(n, status, state="OPEN", assignees=()):
             "content": {"number": n, "state": state, "assignees": {"nodes": [{"login": a} for a in assignees]}}}
 
 
-def gql_pr(n, closes=(), draft=False, head="issue-1-x"):
+def gql_pr(n, closes=(), draft=False, head="issue-1-x", commits=()):
     return {"number": n, "isDraft": draft, "headRefName": head, "assignees": {"nodes": []},
+            "commits": {"nodes": [{"commit": {"oid": c}} for c in commits]},
             "closingIssuesReferences": {"nodes": [{"number": c} for c in closes]},
             "reviewThreads": {"nodes": [{"isResolved": True, "comments": {"nodes": [
                 {"body": DECISION, "author": {"login": CLAUDE}, "createdAt": "2026-11-20T10:00:00Z",
@@ -436,8 +569,20 @@ class FromGitHub(unittest.TestCase):
         self.assertEqual(s["prs"][0]["closes"], [2])
         self.assertTrue(s["prs"][0]["draft"])
         self.assertEqual(s["prs"][0]["threads"][0]["comments"][0]["author"], CLAUDE)
+        self.assertEqual(s["prs"][0]["commits"], [])
+        self.assertEqual(s["agents"], {})
         # The resolved Decision with no confirmation is found from GitHub's answer too.
         self.assertEqual(cases(cc.check(s)), ["resolved-decision-unconfirmed"])
+
+    def test_commits_and_agents(self):
+        answer = graphql_answer([], [gql_pr(5, commits=[OID])])
+        s = cc.from_answers([answer], REPO, CLAUDE, [], agents={"a1": [3]})
+        self.assertEqual(s["prs"][0]["commits"], [OID])
+        self.assertEqual(s["agents"], {"a1": [3]})
+
+    def test_the_query_asks_for_each_prs_commits(self):
+        self.assertIn("commits(", cc.QUERY)
+        self.assertIn("oid", cc.QUERY)
 
     def test_an_organization_has_no_human(self):
         answer = graphql_answer([], [])
