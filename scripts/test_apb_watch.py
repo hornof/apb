@@ -1016,6 +1016,158 @@ class IssueComments(Loop):
         self.assertTrue(self.run_watch("--issue", "1", "--limit", "1")[1].startswith("No change"))
 
 
+def load_hook():
+    spec = importlib.util.spec_from_file_location("apb_watch_start", os.path.join(REPO, "hooks", "apb-watch-start.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class OneWakePerEvent(Loop):
+    """Issue #165: one GitHub event wakes the orchestrator's session at most once. The session runs the
+    hook's watchers only; a card's issue and its check-in go in the follow file (--follow), not in a
+    second watcher of the session's own, which read every PR again and woke the session twice."""
+
+    def world(self):
+        """A fake GitHub: PR #9 on the project's repo o/n, issue #7 (the card) there, and the
+        coordination issue #25 on o/n and on x/c. A read gets only the issues it asks for, as the real
+        query does."""
+        pr = {"title": "Card 7", "checks": "PENDING", "threads": 0, "open_threads": 0, "comments": 0,
+              "replies": 0, "reviews": 0}
+        self.github = {"o/n": {"open": {"9": pr}, "merged": {}, "closed": {}, "issues": {"25": card(3), "7": card(1)},
+                               "max": 9},
+                       "x/c": {"open": {}, "merged": {}, "closed": {}, "issues": {"25": card(3)}, "max": 0}}
+
+        old = self.clock.t - 10000
+        self.posted = {"o/n": {"25": [old] * 3, "7": [old]}, "x/c": {"25": [old] * 3}}
+
+        def snapshot(repo, issues, prs=(), **kw):
+            s = json.loads(json.dumps(self.github[repo]))
+            s["issues"] = {n: i for n, i in s["issues"].items() if int(n) in issues}
+            s["meta"] = {"issue_times": {n: list(self.posted[repo][n]) for n in s["issues"]}}
+            return s
+        return snapshot
+
+    def comment(self, repo, n):
+        self.github[repo]["issues"][n]["comments"] += 1
+        self.posted[repo][n].append(self.clock.t)
+
+    def hook_setup(self, coordination):
+        """The argument lists the hook gives its watchers (as run_once builds them), for a CLAUDE.md
+        line "coordination: <coordination>", each with its own state in a fresh .apb folder."""
+        hook = load_hook()
+        folder = tempfile.mkdtemp()
+        repo, issue = hook.coordination(coordination)
+        out = []
+        for one in hook.watchers(folder, repo, issue):
+            argv = hook.watcher_argv(one, folder, None, 60)[2:]
+            if "--repo" not in argv:
+                argv += ["--repo", "o/n"]  # the hook's project watcher finds it from git
+            out.append((argv, one))
+        return out, folder
+
+    def old_setup(self):
+        """Before #165: the hook's watcher plus the orchestrator's own, per card."""
+        mine = os.path.join(tempfile.mkdtemp(), "watch.json")
+        hooks, folder = self.hook_setup("#25")
+        return [a for a, _ in hooks] + [["--repo", "o/n", "--state", mine, "--check-in", "5", "--issue", "7"]], folder
+
+    def wakes(self, setup, extra=()):
+        """Run each watcher once to take its baseline, finish PR #9's checks, then run each again.
+        Returns every line the watchers report."""
+        snapshot = self.world()
+        events = os.path.join(self.dir, "none.jsonl")
+        go = lambda argv, *more: w.watch(w.parse_args(list(argv) + ["--events", events] + list(more)),
+                                         snapshot=snapshot, ps_text=lambda: "", now=self.clock.now,
+                                         sleep=self.clock.sleep, me=999)
+        for argv in setup:
+            go(argv, "--limit", "1")
+        self.github["o/n"]["open"]["9"]["checks"] = "SUCCESS"
+        self.comment("o/n", "7")
+        lines = []
+        for argv in setup:
+            lines += go(argv, "--limit", "10")[1:]
+        return lines
+
+    def test_the_old_setup_woke_the_session_twice(self):
+        # Why a card no longer gets its own watcher: this is what the test below rules out.
+        setup, _ = self.old_setup()
+        self.assertEqual(sum("PR #9" in l for l in self.wakes(setup)), 2)
+
+    def test_one_pr_event_wakes_the_session_once_in_both_hook_setups(self):
+        for coordination in ("#25", "x/c#25"):  # one watcher, or a second on the coordination repo
+            setup, folder = self.hook_setup(coordination)
+            for _, one in setup:
+                self.assertEqual("follow" in one, one["name"] == "project", "only the project watcher follows")
+            follow = [o["follow"] for _, o in setup if "follow" in o][0]
+            self.assertEqual(os.path.dirname(follow), folder)
+            w.main(["--follow-file", follow, "--follow", "7", "--check-in", "5"])
+            lines = self.wakes([a for a, _ in setup])
+            self.assertEqual(sum("PR #9" in l for l in lines), 1, (coordination, lines))
+            self.assertEqual(lines.count("GitHub: PR #9 checks finished: SUCCESS"), 1, lines)
+            self.assertEqual(lines.count("GitHub: Issue #7: 1 new comment (Card)"), 1, lines)
+
+    def test_a_card_followed_while_the_watcher_runs_is_read_from_then_on(self):
+        snapshot = self.world()
+        follow = os.path.join(self.dir, "follow.json")
+        opts = w.parse_args(["--repo", "o/n", "--state", self.state, "--events", os.path.join(self.dir, "none.jsonl"),
+                             "--issue", "25", "--follow-file", follow, "--limit", "1"])
+        asked = []
+
+        def reading(repo, issues, prs=(), **kw):
+            asked.append(sorted(issues))
+            return snapshot(repo, issues, prs, **kw)
+        w.watch(opts, snapshot=reading, ps_text=lambda: "", now=self.clock.now, sleep=self.clock.sleep, me=999)
+        w.main(["--follow-file", follow, "--follow", "7"])
+        self.clock.t += 3600
+        self.comment("o/n", "7")
+        opts.limit = 10
+        out = w.watch(opts, snapshot=reading, ps_text=lambda: "", now=self.clock.now, sleep=self.clock.sleep, me=999)
+        self.assertEqual(asked[0], [25])
+        self.assertEqual(asked[-1], [7, 25])
+        self.assertIn("GitHub: Issue #7: 1 new comment (Card)", out)
+
+    def test_follow_adds_and_unfollow_removes_one_card(self):
+        follow = os.path.join(self.dir, "follow.json")
+        w.main(["--follow-file", follow, "--follow", "7", "--check-in", "5"])
+        w.main(["--follow-file", follow, "--follow", "8"])
+        self.assertEqual(w.read_follow(follow), {"issues": [7, 8], "check_in": 5.0})
+        w.main(["--follow-file", follow, "--unfollow", "7"])
+        self.assertEqual(w.read_follow(follow)["issues"], [8])
+        w.main(["--follow-file", follow, "--unfollow", "8"])
+        self.assertFalse(os.path.exists(follow), "no card left: no file")
+        self.assertEqual(w.read_follow(follow), {"issues": [], "check_in": 0})
+        with open(follow, "w") as f:
+            f.write("not json")
+        self.assertEqual(w.read_follow(follow), {"issues": [], "check_in": 0})
+
+    def test_the_default_follow_file_is_the_one_the_hook_reads(self):
+        hook = load_hook()
+        project = hook.watchers(".apb", None, 25)[0]
+        self.assertEqual(os.path.normpath(project["follow"]), os.path.normpath(w.FOLLOW))
+
+    def test_the_followed_check_in_comes_only_while_an_agent_runs(self):
+        self.world()
+        follow = os.path.join(self.dir, "follow.json")
+        w.main(["--follow-file", follow, "--follow", "7", "--check-in", "5"])
+        events = os.path.join(self.dir, "events.jsonl")
+        go = lambda: w.watch(w.parse_args(["--repo", "o/n", "--state", self.state, "--events", events,
+                                           "--follow-file", follow, "--limit", "30"]),
+                             snapshot=lambda repo, issues, prs=(), **kw: empty(), ps_text=lambda: "",
+                             now=self.clock.now, sleep=self.clock.sleep, me=999)
+        start = self.clock.t
+        self.assertTrue(go()[1].startswith("No change"), "no agent: no check-in")
+        self.assertGreaterEqual(self.clock.t - start, 30 * 60)
+        with open(events, "w") as f:
+            f.write(json.dumps({"time": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(self.clock.t)),
+                                "event": "SubagentStart", "agent_id": "a1",
+                                "agent_type": "builder"}) + "\n")
+        start = self.clock.t
+        out = go()
+        self.assertTrue(out[1].startswith("Check-in: 5 min"), out)
+        self.assertLess(self.clock.t - start, 6 * 60)
+
+
 class Ceiling(unittest.TestCase):
     """github_interval against a second way of working out the same rule."""
 

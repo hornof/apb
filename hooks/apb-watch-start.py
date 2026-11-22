@@ -19,6 +19,8 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
     and the issue. A line that names the project's own repo (its git origin) counts as "#N". It leaves stuck commands and quiet agents to the project watcher, so they wake
     the orchestrator once.
   With no coordination line, the project watcher runs without an issue.
+  The project watcher also follows the cards in .apb/follow.json (`apb-watch.py --follow N`, #165), so
+  the orchestrator never runs a second watcher of its own, and one PR event wakes it once.
 - Only the orchestrator's session (#123). Build and review sessions run in linked git worktrees (apb-build
   gives each builder its own; Claude Code's own isolation makes them under .claude/worktrees/), while
   the orchestrator works in the repo's main checkout. So a session whose folder is a linked worktree
@@ -26,8 +28,9 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
   name: a worktree anywhere counts, and a main checkout counts as one wherever it sits.
 - The newest session in a folder takes the watchers over. After a plugin update the human opens a new
   orchestrator session while the old one is often still open. A hook whose Claude Code started later
-  than the holder's stops the holder's hook (and so its watchers), waits for it to exit, and takes the
-  pid file. It also writes .apb/watcher-owner.json, naming its Claude Code process, when that
+  than the holder's stops the holder's hook (and so its watchers), waits up to TAKEOVER_WAIT seconds
+  for it to exit, and takes the pid file. If it hasn't exited, the hook takes nothing and logs a
+  watcher-takeover-refused line (#170); the next hook tries again. A failed ps never counts as "exited". It also writes .apb/watcher-owner.json, naming its Claude Code process, when that
   started, and the session's name, `apb orch N · <version> · <start time PT>` (hooks/apb_session.py,
   #133), which `apb-watch.py --list` shows. An older session's hook starts nothing while that process is open, even after the newer
   hook has exited (after a wake, a failure or the budget) and freed the pid files, so it never takes
@@ -91,6 +94,8 @@ BACKOFF = 60  # seconds after a failed run before a hook tries that watcher agai
 NAME = "apb-watch-start.py"
 MAX = 300  # longest string kept in an events line, in characters
 OWNER_SLACK = 3  # seconds two readings of one process's start time may differ by
+TAKEOVER_WAIT = 10  # seconds to wait for a replaced hook to exit before refusing the takeover (#170)
+PS = "ps"  # the ps command (tests use a broken one)
 NO_EVENTS = "no-events-file"  # given to the coordination watcher, so it checks no agents
 COORDINATION = re.compile(r"^[\s>*+-]*\**coordination:?\**:?\s*(?:([\w.-]+/[\w.-]+))?#(\d+)",
                           re.IGNORECASE | re.MULTILINE)
@@ -136,10 +141,13 @@ def own_repo(project):
 def watchers(folder, repo, issue):
     """The watchers to keep running, from the coordination issue's repo and number."""
     def one(name, suffix, repo, issue, agents):
-        return {"name": name, "repo": repo, "issue": issue, "agents": agents,
-                "pid": os.path.join(folder, "watcher%s.pid" % suffix),
-                "state": os.path.join(folder, "watch%s.json" % suffix),
-                "failed": os.path.join(folder, "watcher%s.failed" % suffix)}
+        w = {"name": name, "repo": repo, "issue": issue, "agents": agents,
+             "pid": os.path.join(folder, "watcher%s.pid" % suffix),
+             "state": os.path.join(folder, "watch%s.json" % suffix),
+             "failed": os.path.join(folder, "watcher%s.failed" % suffix)}
+        if agents:  # the project watcher also follows the cards (#165)
+            w["follow"] = os.path.join(folder, "follow.json")
+        return w
     if repo and issue:
         return [one("project", "", None, None, True), one("coordination", "-coordination", repo, issue, False)]
     return [one("project", "", None, issue, True)]
@@ -183,12 +191,20 @@ def alive(pid):
 
 
 def command_of(pid):
-    out = subprocess.run(["ps", "-p", str(pid), "-o", "stat=,command=", "-ww"], capture_output=True,
-                         text=True, timeout=10)
+    """The process's command line; "" if ps says it has exited (no such process, or a zombie); None if
+    ps itself failed, so nobody can tell (#170)."""
+    try:
+        out = subprocess.run([PS, "-p", str(pid), "-o", "stat=,command=", "-ww"], capture_output=True,
+                             text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
     parts = out.stdout.strip().split(None, 1)
-    if len(parts) < 2 or parts[0].startswith("Z"):
+    if len(parts) >= 2 and not parts[0].startswith("Z"):
+        return parts[1]
+    if parts and parts[0].startswith("Z"):
         return ""
-    return parts[1]
+    # ps -p exits 1, saying nothing, when no process has that pid; anything else is ps failing.
+    return "" if out.returncode == 1 and not out.stderr.strip() else None
 
 
 def holder(path):
@@ -198,7 +214,10 @@ def holder(path):
             held = json.load(f)
     except (OSError, ValueError):
         return None
-    if not isinstance(held, dict) or not alive(held.get("pid")) or NAME not in command_of(held["pid"]):
+    if not isinstance(held, dict) or not alive(held.get("pid")):
+        return None
+    command = command_of(held["pid"])
+    if command is not None and NAME not in command:  # ps can't tell: it still holds the file
         return None
     return held
 
@@ -281,7 +300,7 @@ def own(path, root, session, assign=True):
 def gone(pid, seconds):
     end = time.time() + seconds
     while time.time() < end:
-        if not alive(pid) or not command_of(pid):
+        if not alive(pid) or command_of(pid) == "":
             return True
         time.sleep(0.05)
     return False
@@ -304,7 +323,10 @@ def claim(path, me, takes_over=lambda held: False):
                 os.kill(held["pid"], signal.SIGTERM)
             except OSError:
                 pass
-            gone(held["pid"], 10)  # it stops its watchers and frees its own pid file first
+            if not gone(held["pid"], TAKEOVER_WAIT):  # it stops its watchers and frees its pid file first
+                log(os.path.dirname(path), {"event": "watcher-takeover-refused", "pid": os.getpid(),
+                                            "from": held.get("session"), "holder": held["pid"]})
+                return False  # two watchers must never run at once; the next hook tries again
         tmp = "%s.%d" % (path, os.getpid())
         with open(tmp, "w") as f:
             json.dump(me(), f)
@@ -383,17 +405,25 @@ def on_term(signum, frame):
     raise Stopped()
 
 
-def run_once(opts, project, folder, w, root, minutes, session):
-    """Run watcher w once. Returns (reason, output)."""
-    cmd = [sys.executable, opts.watch_script, "--state", w["state"], "--limit", "%g" % minutes]
+def watcher_argv(w, folder, root, minutes, script=WATCH):
+    """The command that runs watcher w once."""
+    cmd = [sys.executable, script, "--state", w["state"], "--limit", "%g" % minutes]
     if w["repo"]:
         cmd += ["--repo", w["repo"]]
     if w["issue"]:
         cmd += ["--issue", str(w["issue"])]
+    if w.get("follow"):
+        cmd += ["--follow-file", w["follow"]]
     if not w["agents"]:
         cmd += ["--events", os.path.join(folder, NO_EVENTS)]
     elif root:
         cmd += ["--root-pid", str(root)]
+    return cmd
+
+
+def run_once(opts, project, folder, w, root, minutes, session):
+    """Run watcher w once. Returns (reason, output)."""
+    cmd = watcher_argv(w, folder, root, minutes, opts.watch_script)
     log(folder, {"event": "watcher-start", "watcher": w["name"], "session": session, "pid": os.getpid(),
                  "repo": w["repo"], "issue": w["issue"]})
     try:

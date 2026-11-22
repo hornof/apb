@@ -1120,6 +1120,74 @@ class NewestSessionTakesOver(unittest.TestCase):
                 slow.kill()
             slow.wait(timeout=10)
 
+    def stubborn(self):
+        """A process that looks like the hook and doesn't exit on SIGTERM."""
+        p = subprocess.Popen([sys.executable, "-c", "import signal, time\n"
+                              "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                              "open(__import__('sys').argv[1], 'w').close()\n"
+                              "time.sleep(60)", os.path.join(tempfile.mkdtemp(), "ready"), "apb-watch-start.py"])
+        self.assertTrue(wait_for(lambda: os.path.exists(p.args[3])))  # its SIGTERM handler is set
+        return p
+
+    def test_a_takeover_is_refused_and_logged_while_the_old_hook_still_runs(self):
+        # Issue #170: the hook used to give up waiting after 10 s and start a second watcher anyway.
+        hook = load_hook()
+        hook.TAKEOVER_WAIT = 1
+        old = self.stubborn()
+        try:
+            folder = tempfile.mkdtemp()
+            path = os.path.join(folder, "watcher.pid")
+            with open(path, "w") as f:
+                json.dump({"pid": old.pid, "parent": os.getpid(), "session": "old"}, f)
+            t = time.time()
+            self.assertFalse(hook.claim(path, lambda: {"pid": os.getpid(), "parent": 1, "session": "new"},
+                                        lambda held: True))
+            self.assertGreaterEqual(time.time() - t, 1, "it waited for the old hook first")
+            self.assertIsNone(old.poll(), "the old hook still runs")
+            with open(path) as f:
+                self.assertEqual(json.load(f)["session"], "old", "the pid file still names the old hook")
+            with open(os.path.join(folder, "events.jsonl")) as f:
+                refused = [json.loads(l) for l in f.read().splitlines()]
+            self.assertEqual([(e["event"], e["from"], e["holder"]) for e in refused],
+                             [("watcher-takeover-refused", "old", old.pid)])
+        finally:
+            old.kill()
+            old.wait(timeout=10)
+
+    def test_a_failed_ps_is_not_taken_for_an_exit(self):
+        # Issue #170, PR #164's Note 4: command_of gave "" when ps failed, and gone() took that as "exited".
+        hook = load_hook()
+        hook.TAKEOVER_WAIT = 1
+        fake_ps = os.path.join(tempfile.mkdtemp(), "ps")
+        with open(fake_ps, "w") as f:
+            f.write("#!/bin/sh\necho 'ps: cannot read the process table' >&2\nexit 1\n")
+        os.chmod(fake_ps, 0o755)
+        old = self.stubborn()
+        try:
+            self.assertIn("apb-watch-start.py", hook.command_of(old.pid))
+            for broken in (fake_ps, "/no/such/ps"):
+                hook.PS = broken
+                self.assertIsNone(hook.command_of(old.pid), broken)
+                self.assertFalse(hook.gone(old.pid, 0.3), broken)
+                folder = tempfile.mkdtemp()
+                path = os.path.join(folder, "watcher.pid")
+                with open(path, "w") as f:
+                    json.dump({"pid": old.pid, "parent": os.getpid(), "session": "old"}, f)
+                self.assertEqual(hook.holder(path)["pid"], old.pid, "a holder ps can't check still holds")
+                self.assertFalse(hook.claim(path, lambda: {"pid": os.getpid(), "parent": 1, "session": "new"},
+                                            lambda held: True), broken)
+            hook.PS = "ps"
+            dead = subprocess.Popen([sys.executable, "-c", "pass"])
+            dead.wait(timeout=10)
+            self.assertEqual(hook.command_of(dead.pid), "", "no such process: ps says it is gone")
+            old.kill()
+            old.wait(timeout=10)
+            self.assertTrue(hook.gone(old.pid, 1))
+        finally:
+            if old.poll() is None:
+                old.kill()
+            old.wait(timeout=10)
+
     def test_a_second_hook_in_the_same_session_takes_nothing_over(self):
         project, fake = apb_project(), fake_watcher("sleep 30")
         s = Session(project, fake, "one")
