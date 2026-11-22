@@ -8,7 +8,7 @@ first message starts with this block, and each ❌ comes up before other work:
   ✅ Watcher: hornof/apb #25 (pid 61155), held by this session
   ✅ GitHub account: gh posts as hornof-claude, not hornof
   ✅ Board: next to build: #130 ...; In progress: #133 (branch issue-133-startup-self-check)
-  ✅ Hooks: Stop, prompt, tool-call and session-start hooks registered; this check ran from one
+  ✅ Hooks: Stop, session-start, prompt, tool-call hooks registered; this check ran from the session-start hook
   ✅ Version: plugin 0.3.59, same as main; checkout on main, up to date
 
 The lines, in order (CHECKS):
