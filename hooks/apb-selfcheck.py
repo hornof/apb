@@ -356,7 +356,7 @@ def check_hooks(ctx):
 def check_version(ctx):
     version = load("apb_version", "apb-version.py")
     installed, main, note = version.plugin_check(ctx.plugin_root, ctx.gh, ctx.timeout)
-    ask, done = version.checkout_check(ctx.project, ctx.timeout, installed)  # pulls a clean, behind main
+    ask, done = version.checkout_check(ctx.project, ctx.timeout, installed, main)  # pulls a clean, behind main
     problems = [n for n in (note, ask) if n]
     if main is None:
         problems.insert(0, "couldn't read main's plugin version from GitHub (this session runs %s)" % installed)

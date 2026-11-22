@@ -693,6 +693,24 @@ class SelfPull(Clean):
         for part in ["0.3.70", "0.3.66", "new session"]:
             self.assertIn(part, ask)
 
+    def test_a_pull_that_brings_a_newer_plugin_leaves_the_update_to_the_plugin_note(self):
+        # Review of #155: GitHub's main and the pulled checkout name the same version, so when the
+        # plugin note already says to update, the checkout's line doesn't say it again.
+        clone, origin = apb_checkout()
+        push_to_origin_bumping(origin, 1, "0.3.70")
+        ask, done = version.checkout_check(clone, 10, "0.3.66", "0.3.70")
+        self.assertIsNone(ask)
+        self.assertIsNotNone(done)
+
+    def test_after_a_compaction_the_note_names_the_update_commands_once(self):
+        clone, origin = apb_checkout()
+        push_to_origin_bumping(origin, 2, "0.3.70")
+        note = note_of(run_compact(clone, fake_gh("0.3.70"), installed="0.3.66"))
+        self.assertEqual(git(clone, "rev-parse", "main"), origin_main(origin))
+        self.assertIn("pulled", note)
+        self.assertEqual(note.count(UPDATE), 1, note)
+        self.assertEqual(note.count("open a new session"), 1, note)
+
     def test_a_pull_that_keeps_the_plugin_version_says_nothing_about_it(self):
         clone, origin = apb_checkout()
         push_to_origin_bumping(origin, 1, "0.3.66")
@@ -721,13 +739,26 @@ class SelfPull(Clean):
 
     def test_the_selfcheck_and_this_hook_never_both_check_the_checkout(self):
         # Two hooks fetching and pulling at once would race. For each session start, exactly one of
-        # them checks the apb checkout: the self-check runs at every start but a compaction.
-        selfcheck = load("apb_selfcheck_for_version_test", os.path.join(HERE, "apb-selfcheck.py"))
+        # them checks the apb checkout. "theirs" comes from running apb-selfcheck.py the way Claude Code
+        # does, with that payload: it checked the checkout if its block has a Version line.
         clone, _ = apb_checkout()
         for source in ["startup", "resume", "clear", "compact"]:
-            ours = version.checks_checkout(payload(source=source), clone)
-            theirs = source != "compact" and selfcheck.is_apb_folder(clone)
+            p = payload(source=source, cwd=clone)
+            ours = version.checks_checkout(p, clone)
+            theirs = "Version:" in (selfcheck_context(clone, p) or "")
             self.assertNotEqual(ours, theirs, source)
+
+
+def selfcheck_context(project, p):
+    """What apb-selfcheck.py gives Claude for payload p in project, or None. GitHub is a gh that isn't
+    there and no watcher waits, so the checks are quick (and red); only whether it ran matters."""
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=project, APB_WATCHERS_DIR=tmp())
+    r = subprocess.run([sys.executable, os.path.join(HERE, "apb-selfcheck.py"), "--gh", "/no/such/gh",
+                        "--plugin-root", plugin_root("0.3.57"), "--home", tmp(), "--root-pid", str(os.getpid()),
+                        "--wait", "0", "--timeout", "5"], input=json.dumps(p).encode(), capture_output=True,
+                       env=env, cwd=tempfile.gettempdir(), timeout=120)
+    out = r.stdout.decode().strip()
+    return json.loads(out)["hookSpecificOutput"]["additionalContext"] if out else None
 
 
 # ---------------------------------------------------------------- after a merge to main

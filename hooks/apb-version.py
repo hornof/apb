@@ -186,7 +186,7 @@ def checks_checkout(p, folder):
     return not (isinstance(p, dict) and p.get("source") != "compact" and is_apb_folder(folder))
 
 
-def checkout_check(folder, timeout, installed=None):
+def checkout_check(folder, timeout, installed=None, main=None):
     """(ask, done) for the apb checkout in folder, each a sentence or None (#128, #140).
 
     When main is only behind origin/main (on main, a clean working tree, no local commits, the fetch
@@ -198,7 +198,9 @@ def checkout_check(folder, timeout, installed=None):
     ask is the line that asks the human: the checkout is off main, or main is behind but the pull
     isn't a plain fast-forward (uncommitted changes, local commits, no fetch, or the pull failed). It
     is also the line that says the pull brought a plugin version newer than installed, the version this
-    session runs: the running plugin is then older than the checkout.
+    session runs: the running plugin is then older than the checkout. main is main's plugin version on
+    GitHub (plugin_check's): when it is newer than installed, plugin_check's note already says to update
+    the plugin, so this line doesn't say it again.
 
     (None, None) when there is nothing to say: not the apb repo, a linked worktree (a build or review
     session's; only the checkout the hook reads is ever pulled), no origin, or main up to date."""
@@ -244,7 +246,7 @@ def checkout_check(folder, timeout, installed=None):
             % (commits(behind), old, new))
     pulled = read_manifest(folder).get("version")
     ask = None
-    if newer(pulled, installed):
+    if newer(pulled, installed) and not newer(main, installed):
         ask = ("The pull brings plugin %s to the checkout, newer than the %s this session runs: update the "
                "plugin (%s, %s), then open a new session." % (pulled, installed, UPDATE[0], UPDATE[1]))
     return ask, done
@@ -328,7 +330,7 @@ def main(argv):
     if not project:
         return 0
     installed, main, plugin = plugin_check(opts.plugin_root, opts.gh, opts.timeout)
-    ask, done = checkout_check(project, opts.timeout, installed) if checks_checkout(p, project) else (None, None)
+    ask, done = checkout_check(project, opts.timeout, installed, main) if checks_checkout(p, project) else (None, None)
     notes = [n for n in (plugin, "This apb checkout's `main` %s." % done if done else None, ask) if n]
     if not notes:
         return 0

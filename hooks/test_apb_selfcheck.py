@@ -686,7 +686,7 @@ class TheApbRepo(unittest.TestCase):
         self.assertTrue(found["Hooks"][0])
 
     # ------------------------------------------------ #140: a clean, behind main is pulled
-    def apb_world(self, behind):
+    def apb_world(self, behind, bump=None):
         """A World whose project is a clone of the apb repo, `behind` commits behind its bare origin.
         Returns (world, origin)."""
         origin = os.path.join(tmp(), "origin.git")
@@ -703,6 +703,8 @@ class TheApbRepo(unittest.TestCase):
         git(tmp(), "clone", "-q", origin, other)
         for i in range(behind):
             commit(other, "later-%d.txt" % i)
+        if bump:
+            commit(other, ".claude-plugin/plugin.json", json.dumps({"name": "apb", "version": bump}))
         git(other, "push", "-q", "origin", "main")
         w = World()
         w.project = clone
@@ -726,6 +728,19 @@ class TheApbRepo(unittest.TestCase):
         for part in ["pulled", "6 commits", before[:7], after[:7]]:
             self.assertIn(part, text)
         self.assertNotIn("To update", text)
+
+    def test_a_pull_that_brings_a_newer_plugin_names_the_update_once(self):
+        # Review of #155: the plugin note and the pulled plugin.json name the same version; the line
+        # says to update the plugin once.
+        w, origin = self.apb_world(behind=2, bump="0.3.61")
+        w.break_version()  # GitHub's main is at 0.3.61 too
+        found = lines_of(w.context())
+        self.assertEqual(git(w.project, "rev-parse", "main"), git(origin, "rev-parse", "main"))
+        ok, text = found["Version"]
+        self.assertFalse(ok)
+        self.assertIn("pulled", text)
+        self.assertEqual(text.count("claude plugin marketplace update apb"), 1, text)
+        self.assertEqual(text.count("open a new session"), 1, text)
 
     def test_a_dirty_behind_checkout_is_not_pulled_and_the_line_asks(self):
         w, origin = self.apb_world(behind=6)
