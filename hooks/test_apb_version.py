@@ -5,7 +5,9 @@ The card's "Done when":
 - a session started on an older plugin than main says so in its first message: the SessionStart hook
   gives Claude a note with the two versions, the two update commands and "then open a new session";
 - and again after the next merge to main: when a watcher wakes the orchestrator with a merge, the wake
-  carries the same note;
+  carries a note with the two versions; since #162 it tells the orchestrator to update the plugin
+  itself with scripts/plugin-update.py and end its message with that script's hand-off, not to hand
+  the human the update commands (AtAWake, WatcherWake);
 - a session in an apb checkout that is off main or behind it says so in its first message, with the
   branch name and the commands to switch and pull; the hook never switches;
 - #140: a clean main that is only behind origin/main is pulled (a fast-forward); a dirty, ahead,
@@ -35,6 +37,7 @@ HOOKS_JSON = os.path.join(HERE, "hooks.json")
 
 UPDATE = "claude plugin marketplace update apb"
 UPDATE_PLUGIN = "claude plugin update apb@apb"
+UPDATE_SCRIPT = "scripts/plugin-update.py"
 
 
 def load(name, path):
@@ -771,15 +774,31 @@ def report(merge=True):
 
 class AtAWake(Clean):
     def wake(self, project, gh, out, session="s1", installed="0.3.50"):
-        return version.wake_note(project, session, out, gh=gh, root=plugin_root(installed), timeout=10)
+        # One plugin folder per version: the note names the update script inside it (#162).
+        roots = self.__dict__.setdefault("roots", {})
+        root = roots.setdefault(installed, plugin_root(installed))
+        return version.wake_note(project, session, out, gh=gh, root=root, timeout=10)
 
     def test_a_merge_with_an_older_plugin_says_so_again(self):
         project, gh = apb_project(), fake_gh("0.3.55")
         run(project, gh, installed="0.3.50")  # said at session start
         note = self.wake(project, gh, report(merge=True))
-        for part in ["0.3.50", "0.3.55", UPDATE, UPDATE_PLUGIN, "then open a new session"]:
+        for part in ["0.3.50", "0.3.55", UPDATE_SCRIPT, "--next"]:
             self.assertIn(part, note)
         self.assertIn(note, self.wake(project, gh, report(merge=True)))  # every merge, while it's older
+
+    def test_the_wake_has_the_orchestrator_update_the_plugin_itself(self):
+        # #162: the orchestrator runs the update; the human only opens the new session.
+        project, gh = apb_project(), fake_gh("0.3.55")
+        root = plugin_root("0.3.50")
+        note = version.wake_note(project, "s1", report(merge=True), gh=gh, root=root, timeout=10)
+        self.assertIn("python3 %s" % os.path.join(root, "scripts", "plugin-update.py"), note)
+        self.assertIn("yourself", note)
+        self.assertIn("last line", note)
+        # The human isn't handed the commands: the script hands them over only when the update fails.
+        self.assertNotIn(UPDATE, note)
+        self.assertNotIn(UPDATE_PLUGIN, note)
+        self.assertNotIn("1 thing for you to do", note)
 
     def test_a_merge_on_the_current_plugin_says_nothing(self):
         project, gh = apb_project(), fake_gh("0.3.57")
@@ -836,7 +855,7 @@ class WatcherWake(Clean):
         self.assertEqual(r.returncode, 2, r.stderr)
         err = r.stderr.decode()
         self.assertIn("PR #3 merged", err)
-        for part in ["999.0.0", self.installed(), UPDATE, UPDATE_PLUGIN, "then open a new session"]:
+        for part in ["999.0.0", self.installed(), UPDATE_SCRIPT]:
             self.assertIn(part, err)
 
     def test_the_wake_has_no_note_on_the_current_version(self):
@@ -845,6 +864,7 @@ class WatcherWake(Clean):
         err = r.stderr.decode()
         self.assertIn("PR #3 merged", err)
         self.assertNotIn(UPDATE, err)
+        self.assertNotIn(UPDATE_SCRIPT, err)
 
     def test_the_wake_still_comes_when_github_fails(self):
         r = self.wake("fail")

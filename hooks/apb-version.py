@@ -27,8 +27,11 @@ hooks. This hook says so.
   The hook prints the note as SessionStart additionalContext, with the instruction to say it in the
   first message. On the current version and an up-to-date main it prints nothing.
 - At a watcher wake (hooks/apb-watch-start.py calls wake_note): when the report has a merge and main's
-  plugin is newer, the wake carries the same plugin note; without a merge it carries the note only
-  for a main version this session hasn't been told yet (the version bump lands just after a merge).
+  plugin is newer, the wake carries a plugin note; without a merge it carries the note only for a main
+  version this session hasn't been told yet (the version bump lands just after a merge). Since #162
+  that note doesn't hand the human the commands: it tells the orchestrator to update the plugin itself
+  with scripts/plugin-update.py, which runs both commands, checks the installed version against
+  main's, and prints the hand-off (open a new session, or the commands if the update failed).
   .apb/version-said.json keeps, per session, the last main version said.
 
 Every git and gh call has a time limit (--timeout). Anything that can't be read says nothing, and any
@@ -308,13 +311,19 @@ def wake_note(project, session, report, gh="gh", root=ROOT, timeout=TIMEOUT):
     """The plugin line to add to a watcher's wake, or "": when main's plugin is newer and the report has
     a merge, or main is at a version this session hasn't been told."""
     try:
-        _, main, note = plugin_check(root, gh, timeout)
+        installed, main, note = plugin_check(root, gh, timeout)
         if not note:
             return ""
         if not MERGE.search(report or "") and read_said(project).get(session) == main:
             return ""
         record_said(project, session, main)
-        return "apb version check: say this in one line in your next message to the human: " + note
+        return ("apb version check: this session runs apb plugin %s; main is at %s. Update the plugin "
+                "yourself now (#162), from the project's root: `python3 %s --next <the card the new session "
+                "should build>`. It runs both update commands and checks the installed version against "
+                "main's. Its output is the hand-off: say its first line, and end your message with its last "
+                "line, the one thing for the human to do. Don't hand the human the update commands yourself; "
+                "the script does that only when the update fails."
+                % (installed, main, os.path.join(root, "scripts", "plugin-update.py")))
     except Exception:
         return ""
 
