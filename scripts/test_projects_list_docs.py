@@ -245,6 +245,19 @@ class Setup(unittest.TestCase):
         self.assertLess(self.text.index(check), self.text.index("`gh repo clone <apb repo>"))
         self.assertIn("If Claude's account can't push to the apb repo", self.text)
 
+    def test_no_access_skips_the_pr_and_hands_off_the_row(self):
+        # Decision 8 on PR #151, answered a): without push access, skip the clone and the apb PR;
+        # the hand-off gives the human the exact row to add and says why it wasn't added.
+        sentence = next((x for x in re.split(r"(?<=[.!?])\s", self.text)
+                         if "can't push to the apb repo" in x), "")
+        self.assertRegex(sentence, r"skip the clone and the apb PR")
+        self.assertRegex(sentence, r"hand-off[^.]*exact row[^.]*`docs/projects\.md`")
+        self.assertIn('"yes"', sentence)
+        self.assertRegex(sentence, r"project folder from step 0")
+        self.assertRegex(sentence, r"says why it wasn't added")
+        # The placeholder that pointed at nothing is gone.
+        self.assertNotIn("see below", self.text)
+
     def test_hand_off_covers_no_apb_pr(self):
         # Review Fix 3: the step can skip, so the hand-off says why when there is no PR.
         self.assertRegex(self.text, r"hand-off[^.]*links the apb PR that adds the project's row, "
