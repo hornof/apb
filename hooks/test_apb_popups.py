@@ -117,6 +117,11 @@ class OutsideSetup(Project):
         os.makedirs(os.path.join(self.dir, ".claude-plugin"))
         with open(os.path.join(self.dir, ".claude-plugin", "plugin.json"), "w") as f:
             json.dump({"name": "apb", "version": "0.0.1"}, f)
+        # The manifest alone isn't enough: the apb repo also holds hooks/apb-watch-start.py
+        # (hooks/apb_folder.py, the rule every hook shares since #132).
+        self.assertIsNone(run_hook(self.dir, ASK, question()))
+        os.makedirs(os.path.join(self.dir, "hooks"))
+        open(os.path.join(self.dir, "hooks", "apb-watch-start.py"), "w").close()
         self.assertTrue(refused(run_hook(self.dir, ASK, question())))
         with open(os.path.join(self.dir, ".claude-plugin", "plugin.json"), "w") as f:
             json.dump({"name": "other-plugin"}, f)

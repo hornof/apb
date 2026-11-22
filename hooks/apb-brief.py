@@ -8,8 +8,8 @@ Claude Code runs this from hooks/hooks.json, with the event's JSON on stdin:
   found and says to send the task only. Only the brief's own words count: words inside a path, URL,
   branch or file name (/w/review-format, review-format, format.md) are left out. The format lives in agents/builder.md and agents/reviewer.md.
 - SubagentStop: when an agent's report says it "departed from" its file, or did something "as you
-  asked, instead of" what its file says, a Departure line goes into .apb/events.jsonl (apb projects
-  only, the ones with docs/MAP.md). hooks/apb-stop.py then sends back any hand-off to the human until
+  asked, instead of" what its file says (outside quotes, backticks and lines quoted with ">"), a Departure line goes into .apb/events.jsonl (in apb projects,
+  the ones with docs/MAP.md, and in the apb repo itself; see hooks/apb_folder.py). hooks/apb-stop.py then sends back any hand-off to the human until
   the orchestrator has put it right and run:
 
     python3 <apb plugin folder>/hooks/apb-brief.py resolve "<what you did>"
@@ -23,6 +23,9 @@ import os
 import re
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from apb_folder import is_apb_folder  # noqa: E402
 
 MAX = 300  # longest quote kept, in characters
 
@@ -102,18 +105,29 @@ DEPARTED = re.compile(r"\bdeparted from\b", re.I)
 AS_ASKED = re.compile(r"\bas you asked,?\s+instead of\b", re.I)
 NEGATION = re.compile(r"\b(?:not|never|nothing|no|none|\w+n't)\b", re.I)
 REPORT_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n\s*\n")
+# Quoted words: in quotation marks or backticks, or in single quotes that aren't an apostrophe. A
+# report that quotes the phrase (a review of this check, of its docs) says nothing about itself.
+QUOTE = re.compile(r"\"[^\"\n]*\"|\u201c[^\u201d\n]*\u201d|`[^`\n]*`|(?<!\w)'[^'\n]*'(?!\w)")
+QUOTED_LINE = re.compile(r"\s*>")
 
 
 def departure(text):
-    """The sentence where the report says it departed from its file, or None."""
+    """The sentence where the report says it departed from its file, or None. Words in quotes or
+    backticks, and lines quoted with ">", don't count."""
     if not isinstance(text, str):
         return None
-    for s in REPORT_SENTENCE.split(plain(text)):
-        flat = " ".join(s.split())
-        if AS_ASKED.search(flat):
+    text = "\n".join(line for line in text.split("\n") if not QUOTED_LINE.match(line))
+    # Blank out quoted words, keeping every position, so a sentence is cut at the same place in both.
+    masked = QUOTE.sub(lambda m: "_" * len(m.group(0)), text)
+    start = 0
+    for a, b in [m.span() for m in REPORT_SENTENCE.finditer(masked)] + [(len(masked), len(masked))]:
+        flat = " ".join(plain(text[start:a]).split())
+        bare = " ".join(plain(masked[start:a]).split())  # plain() drops the blanks
+        start = b
+        if AS_ASKED.search(bare):
             return flat[:MAX]
-        m = DEPARTED.search(flat)
-        clause = re.split(r"[,;:]", flat[:m.start()])[-1] if m else ""
+        m = DEPARTED.search(bare)
+        clause = re.split(r"[,;:]", bare[:m.start()])[-1] if m else ""
         if m and not NEGATION.search(" ".join(clause.split()[-4:])):
             return flat[:MAX]
     return None
@@ -147,11 +161,10 @@ def on_dispatch(p):
 
 
 def apb_project(p=None):
-    """The apb project's folder, or None: CLAUDE_PROJECT_DIR, else the event's cwd, else this folder."""
+    """The apb project's folder, or the apb repo's, or None: CLAUDE_PROJECT_DIR, else the event's cwd,
+    else this folder."""
     project = os.environ.get("CLAUDE_PROJECT_DIR") or (p or {}).get("cwd") or (None if p else os.getcwd())
-    if isinstance(project, str) and os.path.isfile(os.path.join(project, "docs", "MAP.md")):
-        return project
-    return None
+    return project if is_apb_folder(project) else None
 
 
 def append(project, line):
@@ -188,7 +201,7 @@ def resolve(args):
         return 2
     project = apb_project()
     if not project:
-        print("Not an apb project (no docs/MAP.md here). Run it from the project's root.", file=sys.stderr)
+        print("Not an apb project (no docs/MAP.md here) nor the apb repo. Run it from the project's root.", file=sys.stderr)
         return 2
     path = os.path.join(project, ".apb", "events.jsonl")
     pending = 0
