@@ -16,7 +16,9 @@ The lines, in order (CHECKS):
    `scripts/apb-watch.py --list` shows, matched by their state file in this folder's .apb), and
    .apb/watcher-owner.json names this session's Claude Code (one of this process's ancestors). With no
    owner file, or no ancestors to compare, the line is ✅ and says which session holds it is unknown. The watcher hook runs at the same session
-   start, so this line waits up to --wait seconds for it.
+   start, so this line waits up to --wait seconds for it. In a reopened (resumed) session (#146) the
+   watcher stays with any other open session that holds it: the line is ✅, names that session, and
+   says this one leaves it there; it never says "held by this session" unless the owner file names it.
 2. GitHub account: `gh api user` with the session's environment is not the human's own login (gh
    without GH_TOKEN / GITHUB_TOKEN; if gh has no login of its own, the repo's owner).
 3. Board: on the repo's project board, the top card of Todo is open and not blocked by an open issue;
@@ -30,7 +32,10 @@ The lines, in order (CHECKS):
 To add a line: write a function check_x(ctx) that returns (ok, text) and add ("Label", check_x) to
 CHECKS. The checks run side by side; one that raises shows ❌ with the error.
 
-The session's name (issue #133's comment, hooks/apb_session.py) heads the block. The hook can't rename
+The session's name (issue #133's comment, hooks/apb_session.py) heads the block. A reopened session
+(SessionStart's `source` is "resume", or its first line in .apb/events.jsonl comes before the open
+holder's; reopened()) is given no number (#146): the block carries the name it had, or
+none. The hook can't rename
 the session itself (a hook can't call the app's tools), so it tells Claude to: with the desktop app's
 mcp__ccd_session_mgmt__set_session_title, or else by asking the human in one line.
 
@@ -156,9 +161,25 @@ def watcher_state(ctx, watch, expected):
                       % " and ".join(running)), False
     if owner.get("root") not in ctx.roots:
         who = owner.get("name") or "session %s" % owner.get("session")
+        if getattr(ctx, "resumed", False) and alive(owner.get("root")):
+            return True, ("%s, held by another open session, \"%s\". This session was reopened, so it leaves "
+                          "the watcher there; to make this one the orchestrator, close that one."
+                          % (" and ".join(running), who)), True
         return False, ("%s runs, but another session holds it: \"%s\". Only the newest orchestrator session "
                        "holds the watcher; if this is the newest, close the other one." % (" and ".join(running), who)), True
     return True, "%s, held by this session" % " and ".join(running), True
+
+
+def alive(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def check_watcher(ctx):
@@ -427,10 +448,23 @@ def installed_version(root):
     return m.get("version") if isinstance(m, dict) else None
 
 
-def context(opts, project, hook):
+def context(opts, project, hook, resumed=False):
     roots = [opts.root_pid] if opts.root_pid is not None else ancestors()
     return Context(project=project, plugin_root=opts.plugin_root, gh=opts.gh, timeout=opts.timeout,
-                   wait=opts.wait, roots=roots, home=opts.home, hook=hook)
+                   wait=opts.wait, roots=roots, home=opts.home, hook=hook, resumed=resumed)
+
+
+def reopened(ctx, p):
+    """True if this session was reopened (#146), so it gets no number: SessionStart says so (`source`
+    "resume"), or the owner file names another open session and this session's first line in
+    .apb/events.jsonl comes before that one's (the watcher hook's rule; its .apb/resumed.json can't be
+    read here, since that hook writes it at this same moment)."""
+    if p.get("source") == "resume":
+        return True
+    owner = read_json(os.path.join(ctx.folder, "watcher-owner.json"))
+    if not isinstance(owner, dict) or owner.get("root") in ctx.roots or not alive(owner.get("root")):
+        return False
+    return apb_session.active_before(ctx.folder, p.get("session_id"), owner.get("session"))
 
 
 def main(argv):
@@ -451,7 +485,10 @@ def main(argv):
     if load("apb_watch_start", "apb-watch-start.py").linked_worktree(project):
         return 0  # a build or review session: only the orchestrator's checkout runs the check
     ctx = context(opts, project, True)
-    name = apb_session.session_name(ctx.folder, p.get("session_id"), installed_version(opts.plugin_root))
+    ctx.resumed = reopened(ctx, p)
+    resumed = ctx.resumed
+    name = apb_session.session_name(ctx.folder, p.get("session_id"), installed_version(opts.plugin_root),
+                                    assign=not resumed)
     results = run_checks(ctx)
     sys.stdout.write(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                         "additionalContext": instructions(name, results)}},
