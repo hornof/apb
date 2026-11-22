@@ -331,7 +331,7 @@ REMOTE = "https://github.com/hum/proj.git"
 
 def snapshot(board=(), prs=(), worktrees=()):
     return {"repo": "hum/proj", "human": "hum", "claude_login": "claude-bot", "board": list(board),
-            "prs": list(prs), "worktrees": list(worktrees), "assigned": [], "advisor": False}
+            "prs": list(prs), "worktrees": list(worktrees), "assigned": []}
 
 
 def card(n, status, state="OPEN", assignees=()):

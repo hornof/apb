@@ -10,9 +10,14 @@ line per thread:
   "Recommended: <letter>" and "Resolve with no reply = <letter>", naming the same option;
 - its answer: resolved, answered with an option letter in the human's last reply, a design discussion
   (three or more replies from the human and no letter), or waiting on the human.
-A reply is Claude's when it comes from Claude's own GitHub account (apb-setup step 5), signed or not, or
-when it is signed "— Claude (<role>)", as in older comments, the advisor's, and projects without the account.
-comment-author.py holds the rule and says where Claude's login comes from; --claude-login gives it directly.
+Only the human's own replies are an answer (#169). A reply is Claude's when it comes from Claude's own
+GitHub account (apb-setup step 5), signed or not, or when it is signed "— Claude (<role>)", as in older
+comments, the advisor's, and projects without the account. comment-author.py holds that rule and says where
+Claude's login comes from; --claude-login gives it directly. When the human's login is known (--human, or
+by default the repo's owner when that is a person), a reply is the human's only when it comes from that
+login and isn't Claude's. So the advisor, which posts as the human with its signature, and Claude's account
+never answer a Decision, even where Claude's login isn't known. Resolving a thread with no reply from the
+human still takes the recommendation.
 It exits with 1 if any thread's shape is wrong, so nothing is handed over until the review is fixed.
 It reads GitHub and changes nothing.
 """
@@ -116,9 +121,21 @@ def body_of(comment):
     return comment.get("body") if isinstance(comment, dict) else comment
 
 
+def author_of(comment):
+    return comment.get("author") if isinstance(comment, dict) else None
+
+
 def is_claude(comment, claude_login=None):
-    author = comment.get("author") if isinstance(comment, dict) else None
-    return authors.is_claude(body_of(comment), author, claude_login)
+    return authors.is_claude(body_of(comment), author_of(comment), claude_login)
+
+
+def is_humans(comment, claude_login=None, human_login=None):
+    """True if the reply is the human's own: not Claude's, and, when the human's login is known and the
+    comment has an author, from that login."""
+    if is_claude(comment, claude_login):
+        return False
+    author = author_of(comment)
+    return not (human_login and author is not None and author.lower() != human_login.lower())
 
 
 # Words that, right after a letter at the start of a reply, make it a choice: "B sounds good.", "a works for
@@ -149,13 +166,14 @@ def chosen(reply, letters):
     return None
 
 
-def status(thread, claude_login=None):
+def status(thread, claude_login=None, human_login=None):
     """("resolved", letter), ("answered", letter), ("discussion", None) or ("waiting", None).
     thread: {"isResolved", "comments": [oldest first]}; the first comment is the Decision. Each comment
-    is its body, or {"body", "author"}. claude_login is Claude's own GitHub login, or None."""
+    is its body, or {"body", "author"}. claude_login is Claude's own GitHub login, human_login the
+    human's; either may be None."""
     body, replies = body_of(thread["comments"][0]), thread["comments"][1:]
     letters = options(body) or list("abcdefghijklmnopqrstuvwxyz")
-    human = [body_of(r) for r in replies if not is_claude(r, claude_login)]
+    human = [body_of(r) for r in replies if is_humans(r, claude_login, human_login)]
     last = chosen(human[-1], letters) if human else None
     if thread["isResolved"]:
         named = [c for c in (chosen(r, letters) for r in human) if c]
@@ -187,7 +205,7 @@ def describe(state):
     return "waiting on the human"
 
 
-def report(threads, claude_login=None):
+def report(threads, claude_login=None, human_login=None):
     """(lines, how many threads have a wrong shape)."""
     if not threads:
         return ["No Decision threads."], 0
@@ -202,11 +220,12 @@ def report(threads, claude_login=None):
         where = t.get("path") or "PR"
         if t.get("line"):
             where += ":%s" % t["line"]
-        lines.append("%s (%s): %s; %s" % (name, where, shape, describe(status(t, claude_login))))
+        lines.append("%s (%s): %s; %s" % (name, where, shape, describe(status(t, claude_login, human_login))))
     return lines, bad
 
 
 QUERY = """query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
+  owner { __typename login }
   pullRequest(number: $number) { reviewThreads(first: 100) { nodes {
     isResolved path line comments(first: 100) { nodes { body author { login } } } } } } } }"""
 
@@ -216,13 +235,17 @@ def run(args):
 
 
 def threads(repo, pr):
+    """(the PR's review threads, the repo owner's login when the owner is a person, else None)."""
     owner, name = repo.split("/", 1)
     got = json.loads(run(["gh", "api", "graphql", "-f", "owner=" + owner, "-f", "name=" + name,
                           "-F", "number=%d" % pr, "-f", "query=" + QUERY]))
-    nodes = got["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    repository = got["data"]["repository"]
+    nodes = repository["pullRequest"]["reviewThreads"]["nodes"]
+    who = repository.get("owner") or {}
+    person = who.get("login") if who.get("__typename") == "User" else None
     return [{"isResolved": t["isResolved"], "path": t["path"], "line": t["line"],
              "comments": [{"body": c["body"], "author": (c.get("author") or {}).get("login")}
-                          for c in t["comments"]["nodes"]]} for t in nodes if t["comments"]["nodes"]]
+                          for c in t["comments"]["nodes"]]} for t in nodes if t["comments"]["nodes"]], person
 
 
 def main(argv):
@@ -230,10 +253,12 @@ def main(argv):
     parser.add_argument("pr", type=int)
     parser.add_argument("--repo", help="owner/name; by default, this folder's repo")
     parser.add_argument("--claude-login", help="Claude's own GitHub login; by default, from the project's settings")
+    parser.add_argument("--human", help="the human's GitHub login; by default, the repo's owner when that is a person")
     args = parser.parse_args(argv)
     try:
         repo = args.repo or json.loads(run(["gh", "repo", "view", "--json", "nameWithOwner"]))["nameWithOwner"]
-        lines, bad = report(threads(repo, args.pr), authors.claude_login(args.claude_login))
+        found, owner = threads(repo, args.pr)
+        lines, bad = report(found, authors.claude_login(args.claude_login), args.human or owner)
     except subprocess.CalledProcessError as e:
         print("gh failed: " + (e.stderr or e.stdout or "").strip(), file=sys.stderr)
         return 2
