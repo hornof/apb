@@ -99,8 +99,10 @@ ABANDONED = 3 * 3600  # an agent silent this long is taken to be gone; same as s
 REMIND_AFTER = 30 * 60  # seconds the human holds the ball, with no action, before one reminder
 LIFETIME_MARGIN = 60  # seconds the reminder may run past its wait before its deadline ends it
 MAX = 300  # longest string kept in a line, in characters
-CHECK_BUDGET = 12  # seconds for the consistency check's gh calls; with PR_BUDGET, inside hooks.json's 25
-GIT_LIMIT = 3  # seconds for the git call that finds the project's repo
+CHECK_BUDGET = 10  # seconds for the whole consistency check: its gh calls and its git worktree list
+GIT_LIMIT = 3  # seconds for each of the two git calls before it (the project's repo, linked worktree or not)
+STARTUP = 3  # seconds left for Python, the events file and the rest; the worst case must fit hooks.json's timeout:
+# PR_BUDGET + CHECK_BUDGET + 2 * GIT_LIMIT + STARTUP <= 25 (test_apb_stop_checks.py checks it)
 
 # The checks this hook makes on the message itself (#121), each with the incident that added it. The
 # GitHub-state cases are in scripts/consistency-check.py's CASES.
@@ -218,7 +220,8 @@ PROJECTS_NONE = re.compile(r"(?i:none)\b")
 PR_LINK = re.compile(r"github\.com/[\w.-]+/[\w.-]+/pull/\d+|\b[\w.-]+/[\w.-]+#\d+")
 MAX_PRS = 3  # apb PRs looked up in one stop
 PR_TIME_LIMIT = 4  # seconds for one gh call
-PR_BUDGET = 6  # seconds for all the stop's gh calls, both checks together; the Stop hook has 10 in all
+PR_BUDGET = 6  # seconds for the PR lookups of the already-done and Projects-line checks together; the Stop
+# hook has 25 in all (see CHECK_BUDGET)
 
 DONE = ("A hand-off asks the human for something that is already done: %s. Look it up again, then hand "
         "off only what is left.")

@@ -488,6 +488,36 @@ class Script(unittest.TestCase):
         self.assertIn("couldn't run", r.stderr)
 
 
+class Budget(unittest.TestCase):
+    """Review fix 2 on #157: the git worktree list comes out of the check's budget, never on top of it."""
+
+    def fetch_with_slow_gh(self, budget, delay):
+        folder = tempfile.mkdtemp()
+        with open(os.path.join(folder, "page.json"), "w") as f:
+            json.dump(graphql_answer([], []), f)
+        gh = os.path.join(folder, "gh")
+        with open(gh, "w") as f:
+            f.write("#!/bin/sh\nsleep %s\ncat '%s/page.json'\n" % (delay, folder))
+        os.chmod(gh, os.stat(gh).st_mode | stat.S_IEXEC)
+        seen = []
+        real = cc.worktree_branches
+        cc.worktree_branches = lambda project, time_limit=5: seen.append(time_limit) or []
+        try:
+            return cc.fetch(REPO, folder, CLAUDE, gh=gh, budget=budget, time_limit=budget), seen
+        finally:
+            cc.worktree_branches = real
+
+    def test_the_worktree_call_gets_only_what_is_left(self):
+        _, seen = self.fetch_with_slow_gh(budget=3, delay=1)
+        self.assertEqual(len(seen), 1)
+        self.assertLessEqual(seen[0], 2.05)
+        self.assertGreater(seen[0], 0)
+
+    def test_no_time_left_is_an_error_not_an_overrun(self):
+        with self.assertRaises((cc.OutOfTime, subprocess.TimeoutExpired)):
+            self.fetch_with_slow_gh(budget=0.5, delay=1)
+
+
 class TimeLimits(unittest.TestCase):
     def test_every_child_has_a_time_limit(self):
         with open(SCRIPT, encoding="utf-8") as f:

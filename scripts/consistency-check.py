@@ -481,7 +481,11 @@ def fetch(repo, project, claude_login=None, human=None, gh="gh", budget=TIME_LIM
             coordination = [c.get("body") for c in _nodes(got["data"]["repository"]["issue"]["comments"])]
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError, OutOfTime):
             coordination = None  # the advisor check alone goes without it
-    s = from_answers(answers, repo, claude_login, worktree_branches(project), coordination)
+    # The worktrees come out of the same budget, so the check's whole run fits in it (review fix 2 on #157).
+    left = end - time.time()
+    if left <= 0:
+        raise OutOfTime("no time left for git")
+    s = from_answers(answers, repo, claude_login, worktree_branches(project, min(time_limit, left)), coordination)
     if human:
         s["human"] = human
     return s

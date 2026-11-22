@@ -360,6 +360,41 @@ class HookRunForReal(unittest.TestCase):
         self.assertIn("couldn't run", out["systemMessage"])
 
 
+class TimeBudget(unittest.TestCase):
+    """Review fix 2 on #157: if Claude Code kills the hook at its timeout, there is no events line and no
+    "couldn't run" message, so the worst case must fit inside hooks.json's timeout."""
+
+    def test_the_worst_case_fits_the_stop_hooks_timeout(self):
+        with open(os.path.join(HERE, "hooks.json")) as f:
+            groups = json.load(f)["hooks"]["Stop"]
+        timeout = next(h["timeout"] for g in groups for h in g["hooks"] if h["args"][0].endswith("/apb-stop.py"))
+        worst = stop.PR_BUDGET + stop.CHECK_BUDGET + 2 * stop.GIT_LIMIT + stop.STARTUP
+        self.assertLessEqual(worst, timeout)
+        self.assertGreaterEqual(stop.STARTUP, 2)
+
+    def test_the_check_passes_its_budget_on(self):
+        # The hook gives the check CHECK_BUDGET for its gh calls and for each one, nothing more.
+        project = apb_project(REMOTE)
+        write_events(project, STARTED)
+        seen = {}
+        real = stop.consistency
+
+        def fake_module():
+            module = real()
+
+            def fetch(repo, project, login, budget, time_limit):
+                seen.update(budget=budget, time_limit=time_limit)
+                return snapshot()
+            module.fetch = fetch
+            return module
+        stop.consistency = fake_module
+        try:
+            handle("Started the builder on #117.", project)
+        finally:
+            stop.consistency = real
+        self.assertEqual(seen, {"budget": stop.CHECK_BUDGET, "time_limit": stop.CHECK_BUDGET})
+
+
 class Cases(unittest.TestCase):
     def test_the_hooks_own_cases_name_their_incidents(self):
         ids = [c["id"] for c in stop.CASES]
