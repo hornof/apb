@@ -9,6 +9,9 @@ hooks. This hook says so.
   - the plugin: compare the installed version (this plugin's own .claude-plugin/plugin.json) with
     main's, read from GitHub with `gh api` in the repo the installed manifest names. When main is
     newer, the note gives both versions, the two update commands and "then open a new session".
+  It also acts in a checkout whose main is the apb repo (main holds hooks/apb-watch-start.py and a
+  plugin.json naming "apb"), whatever branch is checked out: a branch from before hooks/ existed has
+  no hooks/ folder, so the shared rule alone would miss the card's own case.
   - the checkout, in the apb repo only: when it is on another branch than main (or a detached HEAD),
     the note names the branch and gives `git switch main` and `git pull`; when main is behind
     origin/main, the note says by how many commits and gives `git pull`. The hook runs
@@ -129,9 +132,39 @@ def git(folder, timeout, *args):
     return out.stdout.strip() if out.returncode == 0 else None
 
 
+def apb_repo_on_main(folder, timeout):
+    """True if folder is a git checkout whose main is the apb repo: main (or origin/main) holds
+    hooks/apb-watch-start.py and a .claude-plugin/plugin.json naming the plugin "apb". The checked-out
+    branch can't hide this, unlike the files on disk: a branch from before hooks/ existed (the card's
+    map-stays-current) has no hooks/ folder, so apb_folder's rule doesn't see it."""
+    if not isinstance(folder, str) or not folder or not os.path.isdir(folder):
+        return False
+    for ref in ("refs/heads/main", "refs/remotes/origin/main"):
+        if git(folder, timeout, "cat-file", "-e", "%s:hooks/apb-watch-start.py" % ref) is None:
+            continue
+        text = git(folder, timeout, "show", "%s:.claude-plugin/plugin.json" % ref)
+        try:
+            m = json.loads(text or "")
+        except ValueError:
+            continue
+        if isinstance(m, dict) and m.get("name") == "apb":
+            return True
+    return False
+
+
+def apb_folder_of(p, timeout):
+    """The folder the check acts in for payload p, or None: where apb's hooks act (apb_folder), or a
+    checkout whose main is the apb repo, whatever branch is checked out."""
+    project = project_dir(p)
+    if project:
+        return project
+    folder = os.environ.get("CLAUDE_PROJECT_DIR") or (p.get("cwd") if isinstance(p, dict) else None)
+    return folder if apb_repo_on_main(folder, timeout) else None
+
+
 def checkout_note(folder, timeout):
     """The checkout line for the apb repo when it is off main or main is behind origin/main, else None."""
-    if not is_apb_repo(folder):
+    if not (is_apb_repo(folder) or apb_repo_on_main(folder, timeout)):
         return None
     git_dir, common = git(folder, timeout, "rev-parse", "--absolute-git-dir"), \
         git(folder, timeout, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -215,7 +248,7 @@ def main(argv):
     p = json.loads(sys.stdin.buffer.read().decode("utf-8"))
     if not isinstance(p, dict) or p.get("agent_id"):
         return 0
-    project = project_dir(p)
+    project = apb_folder_of(p, opts.timeout)
     if not project:
         return 0
     _, main, plugin = plugin_check(opts.plugin_root, opts.gh, opts.timeout)

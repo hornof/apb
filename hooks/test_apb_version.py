@@ -398,6 +398,60 @@ class CheckoutAtStart(Clean):
         self.assertIsNone(note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57")))
 
 
+def old_branch(clone, name="map-stays-current", manifest=None):
+    """Check out a branch made before hooks/ existed: only an old plugin.json, no hooks/ folder."""
+    git(clone, "checkout", "-q", "--orphan", name)
+    git(clone, "rm", "-rq", "--cached", ".")
+    shutil.rmtree(os.path.join(clone, "hooks"))
+    os.remove(os.path.join(clone, ".claude-plugin", "plugin.json"))
+    commit(clone, ".claude-plugin/plugin.json",
+           manifest if manifest is not None else json.dumps({"name": "apb", "version": "0.3.2"}))
+
+
+class OldBranchAtStart(Clean):
+    """The card's own case (review of #137): the checkout is on a branch from before hooks/ existed, so
+    the folder rule other hooks use doesn't see the apb repo. main still says it is the apb repo."""
+
+    def test_the_cards_case_says_the_branch_and_the_plugin(self):
+        clone, _ = apb_checkout()
+        old_branch(clone)
+        self.assertFalse(os.path.exists(os.path.join(clone, "hooks")))
+        note = note_of(run(clone, fake_gh("0.3.55"), installed="0.3.50"))
+        self.assertIsNotNone(note)
+        for part in ["map-stays-current", "git switch main", "git pull", "0.3.50", "0.3.55", UPDATE]:
+            self.assertIn(part, note)
+        self.assertEqual(git(clone, "branch", "--show-current"), "map-stays-current")
+
+    def test_the_cards_case_on_the_current_plugin_still_says_the_branch(self):
+        clone, _ = apb_checkout()
+        old_branch(clone)
+        note = note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57"))
+        self.assertIn("map-stays-current", note)
+        self.assertNotIn(UPDATE, note)
+
+    def test_a_repo_whose_main_is_not_apb_says_nothing(self):
+        # Another plugin's repo: main has the hook file but names another plugin.
+        clone, _ = apb_checkout()
+        with open(os.path.join(clone, ".claude-plugin", "plugin.json"), "w") as f:
+            json.dump({"name": "other"}, f)
+        git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "other")
+        git(clone, "push", "-q", "origin", "main")
+        old_branch(clone, "feature", manifest=json.dumps({"name": "other"}))
+        gh = fake_gh("9.9.9")
+        self.assertIsNone(note_of(run(clone, gh)))
+        self.assertEqual(gh_calls(gh), [])
+
+    def test_a_repo_whose_main_has_no_hook_file_says_nothing(self):
+        clone, _ = apb_checkout()
+        git(clone, "rm", "-rq", "hooks")
+        git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "no hooks")
+        git(clone, "push", "-q", "origin", "main")
+        git(clone, "checkout", "-q", "-b", "feature")
+        gh = fake_gh("9.9.9")
+        self.assertIsNone(note_of(run(clone, gh)))
+        self.assertEqual(gh_calls(gh), [])
+
+
 # ---------------------------------------------------------------- after a merge to main
 
 def report(merge=True):
