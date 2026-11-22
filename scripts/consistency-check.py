@@ -318,7 +318,8 @@ def decision_cases(s):
             if not is_decision(t, login):
                 continue
             replies = t["comments"][1:]
-            human = [r for r in replies if not is_claude(r, login)]
+            # Only the human's own replies, by login when it is known, as decision-check.py counts them (#169).
+            human = [r for r in replies if decisions.is_humans(r, login, s.get("human"))]
             if t.get("isResolved"):
                 if not any(is_claude(r, login) and CONFIRM.search(own_text(r.get("body"))) for r in replies):
                     out.append(_problem("resolved-decision-unconfirmed", "a Decision on PR #%d is resolved, and no reply "
@@ -367,8 +368,8 @@ def merge_cases(s, hand_off):
 
 def check(s, hand_off=None):
     """Every problem in the snapshot s (see from_answers), each {"case", "incident", "problem"} and, for a
-    board case, "card". hand_off: what this turn hands the human, {"prs", "merge", "issues",
-    "decisions"}: PR and card numbers it names, PRs it asks to merge, PRs whose Decision threads it links."""
+    board case, "card". hand_off: what this turn hands the human, {"prs", "merge", "issues"}:
+    PR and card numbers it names, and PRs it asks to merge."""
     hand_off = hand_off or {}
     return (board_cases(s) + assignment_cases(s, hand_off) + decision_cases(s) + merge_cases(s, hand_off))
 

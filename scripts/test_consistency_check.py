@@ -362,6 +362,17 @@ class ReplyInDecision(unittest.TestCase):
         t = thread(comment(DECISION), comment("b", author=CLAUDE))
         self.assertEqual(cases(cc.check(snap(prs=[pr(120, threads=[t])]))), ["reply-in-unanswered-decision"])
 
+    def test_without_claudes_login_an_unsigned_claude_reply_is_not_the_humans(self):
+        # Review fix 2 on #176: as in decision-check.py, a reply is the human's only from the human's login.
+        t = thread(comment(DECISION + "\n\n— Claude (reviewer)"), comment("b", author="hornof-claude"))
+        s = snap(prs=[pr(120, threads=[t])], human="hornof")
+        s["claude_login"] = None
+        self.assertEqual(cases(cc.check(s)), ["reply-in-unanswered-decision"])
+        t = thread(comment(DECISION + "\n\n— Claude (reviewer)"), comment("b", author="hornof"),
+                   comment("On it.", author="hornof-claude"))
+        s["prs"] = [pr(120, threads=[t])]
+        self.assertEqual(cc.check(s), [])
+
     def test_the_message_no_longer_sends_the_text_to_a_pr_level_comment(self):
         t = thread(comment(DECISION), comment("In plain words.\n\n— Claude (orchestrator)"))
         found = cc.check(snap(prs=[pr(120, threads=[t])]))

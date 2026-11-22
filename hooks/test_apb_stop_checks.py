@@ -422,7 +422,7 @@ class ConsistencyInTheHook(unittest.TestCase):
                    "https://github.com/hum/proj/pull/120#discussion_r7, https://github.com/hum/proj/pull/120#discussion_r8, "
                    "and answer the question on #41.")
         got = stop.hand_off_refs(message, "hum/proj")
-        self.assertEqual(got["decisions"], [120])
+        self.assertNotIn("decisions", got)  # nothing reads it since #169 removed the advisor-comment case
         self.assertEqual(got["merge"], [])
         self.assertIn(120, got["prs"])
         self.assertIn(41, got["issues"])
@@ -432,7 +432,7 @@ class ConsistencyInTheHook(unittest.TestCase):
         got = stop.hand_off_refs("1 thing for you to do right now: merge https://github.com/other/x/pull/9.", "hum/proj")
         self.assertEqual((got["merge"], got["prs"]), ([], []))
         self.assertEqual(stop.hand_off_refs("Nothing for you to do right now. Waiting on CI, ETA 7:10 PM.", "hum/proj"),
-                         {"prs": [], "merge": [], "issues": [], "decisions": []})
+                         {"prs": [], "merge": [], "issues": []})
 
 
 class HookRunForReal(unittest.TestCase):

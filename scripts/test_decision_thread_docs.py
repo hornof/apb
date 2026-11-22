@@ -101,6 +101,11 @@ class Playbook(unittest.TestCase):
         self.assertIn('"How the human reviews"', rule)
         self.assertIn("My answer is in the decision 3 thread", rule)
 
+    def test_the_stop_hooks_own_cases_bullet_starts_its_own_line(self):
+        # Review fix 1 on #176: removing #97's case joined this bullet onto the one before it.
+        self.assertTrue(any(l.startswith("- **The Stop hook's own cases,**") for l in self.playbook.splitlines()))
+        self.assertNotIn(".- **The Stop hook's own cases", self.playbook)
+
     def test_the_end_of_turn_check_lets_the_advisor_reply(self):
         self.assertIn("reply-in-unanswered-decision: someone other than the human or the advisor replied",
                       flat(self.playbook))
