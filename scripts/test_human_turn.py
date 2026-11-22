@@ -204,7 +204,7 @@ def respond(query, variables, board):
         return {"nodes": [{"isResolved": r} for r in p["threads"]]}
 
     def draft(p):
-        return {"isDraft": p["draft"]} if "isDraft" in query else {}
+        return {"isDraft": p.get("draft", False)} if "isDraft" in query else {}
 
     for p in board["prs"].values():
         if login in p["assignees"]:

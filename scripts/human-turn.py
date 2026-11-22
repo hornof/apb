@@ -6,8 +6,10 @@ while it waits on them"). Nothing else uses the assignee. This script is the gua
 it on every status check, and clears each flag it reports as stale.
 
 A PR assigned to the human waits on them while it is open (to merge, or to decide). A merged or closed
-PR waits on nobody: the merge is the human acting, and its leftover unresolved threads don't count. A card
-assigned to the human waits on them while a PR that closes it ("Closes #N") is open, or while the card is
+PR waits on nobody: the merge is the human acting, and its leftover unresolved threads don't count. Nor
+does a draft PR: a builder opens one as soon as it starts and marks it ready for review when the build is
+done (#131), so a draft waits on the builder. A card assigned to the human waits on them while a PR that
+closes it ("Closes #N") is open and not a draft, or while the card is
 open and its last comment is a question from Claude: a comment by Claude (comment-author.py's rule) with a line ending in "?" or saying
 "Waiting for your go", outside quoted lines. Anything else assigned to the human is stale.
 
@@ -36,9 +38,9 @@ TIME_LIMIT = 60  # seconds for each gh call
 
 QUERY = """query($q: String!) { search(query: $q, type: ISSUE, first: 100) { nodes {
   __typename
-  ... on PullRequest { number state }
+  ... on PullRequest { number state isDraft }
   ... on Issue { number state comments(last: 1) { nodes { body author { login } } }
-    closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state } } } } } }"""
+    closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft } } } } } }"""
 
 
 def search_terms(repo, human):
@@ -60,7 +62,7 @@ def asks(body):
 
 
 def _pr(node):
-    return {"kind": "pr", "number": node["number"], "state": node["state"]}
+    return {"kind": "pr", "number": node["number"], "state": node["state"], "draft": bool(node.get("isDraft"))}
 
 
 def items(answer):
@@ -82,16 +84,16 @@ def items(answer):
 
 
 def _pr_waits(p):
-    """Why the PR still waits on the human, or None."""
-    return "PR #%d is open" % p["number"] if p["state"] == "OPEN" else None
+    """Why the PR still waits on the human, or None. A draft waits on its builder, not the human."""
+    return "PR #%d is open" % p["number"] if p["state"] == "OPEN" and not p.get("draft") else None
 
 
 def verdict(item, claude_login=None):
     """("waiting", why) or ("stale", why)."""
     if item["kind"] == "pr":
         why = _pr_waits(item)
-        return ("waiting", why) if why else ("stale", "PR #%d is %s"
-                                             % (item["number"], item["state"].lower()))
+        return ("waiting", why) if why else ("stale", "PR #%d is %s" % (
+            item["number"], "a draft" if item["state"] == "OPEN" else item["state"].lower()))
     for p in item["prs"]:
         why = _pr_waits(p)
         if why:
@@ -101,8 +103,8 @@ def verdict(item, claude_login=None):
             and asks(last["body"]):
         return "waiting", "Claude's question on the card is unanswered"
     if item["state"] != "OPEN":
-        return "stale", "the card is closed, and no PR that closes it is open"
-    return "stale", "no open PR closes it, and no unanswered question from Claude is on it"
+        return "stale", "the card is closed, and no PR that closes it is open and ready for review"
+    return "stale", "no open PR ready for review closes it, and no unanswered question from Claude is on it"
 
 
 def report(found, human, repo, claude_login=None):
