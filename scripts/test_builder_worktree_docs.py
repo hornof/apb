@@ -63,6 +63,15 @@ class Step3(unittest.TestCase):
         self.assertIn("Before you trust a builder's test results, check that they ran in its worktree",
                       self.step3)
         self.assertIn("run them again in the worktree", self.step3)
+        self.assertIn("the command names the worktree's path, or its output does", self.step3)
+
+    def test_the_check_passes_for_an_isolated_builder(self):
+        # Fix 1 on PR #158: an isolated builder's commands name no folder and unittest output names no path.
+        self.assertIn("or the builder was launched with worktree isolation and the command names no other folder",
+                      self.step3)
+
+    def test_step_3_never_offers_cd_into_the_worktree(self):
+        self.assertNotIn("cd <worktree>", self.step3)
 
     def test_the_rule_is_only_in_step_3(self):
         # Steps 1 and 2 are edited by other cards; the rule stays in step 3 so the PRs merge cleanly.
