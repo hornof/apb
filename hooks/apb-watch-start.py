@@ -19,6 +19,17 @@ background, and when it exits with code 2, what it printed on stderr wakes the m
     and the issue. A line that names the project's own repo (its git origin) counts as "#N". It leaves stuck commands and quiet agents to the project watcher, so they wake
     the orchestrator once.
   With no coordination line, the project watcher runs without an issue.
+- Only the orchestrator's session (#123). Build and review sessions run in linked git worktrees (apb-build
+  gives each builder its own; Claude Code's own isolation makes them under .claude/worktrees/), while
+  the orchestrator works in the repo's main checkout. So a session whose folder is a linked worktree
+  (git's git dir differs from its common dir) starts nothing. That is git's own record, not a folder
+  name: a worktree anywhere counts, and a main checkout counts as one wherever it sits.
+- The newest session in a folder takes the watchers over. After a plugin update the human opens a new
+  orchestrator session while the old one is often still open. A hook whose Claude Code started later
+  than the holder's stops the holder's hook (and so its watchers), waits for it to exit, and takes the
+  pid file. The older session's hooks find a newer holder and leave it alone, so it never takes the
+  watchers back. Hooks of the same session never take over from each other (same Claude Code process).
+  Start times come from one ps snapshot, to the second; a tie takes nothing over.
 - No second copy of either. Each watcher has its own pid file in .apb/ (watcher.pid,
   watcher-coordination.pid), written under a lock, so hooks fired at once start each watcher once.
   A hook takes every pid file that is free and runs those watchers side by side; a hook that finds
@@ -180,8 +191,42 @@ def holder(path):
     return held
 
 
-def claim(path, me):
-    """Write the pid file if no live watcher holds it. Returns True if this hook now holds it.
+def linked_worktree(folder):
+    """True if folder is a linked git worktree (made by `git worktree add`), not a repo's main
+    checkout. Anything git can't answer counts as no worktree, so the watcher runs as before."""
+    try:
+        out = subprocess.run(["git", "-C", folder, "rev-parse", "--absolute-git-dir", "--path-format=absolute",
+                              "--git-common-dir"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError, TypeError, ValueError):
+        return False
+    lines = out.stdout.split("\n")
+    if out.returncode != 0 or len(lines) < 2 or not lines[0] or not lines[1]:
+        return False
+    return os.path.realpath(lines[0]) != os.path.realpath(lines[1])
+
+
+def started_later(mine, theirs):
+    """True if process mine started after process theirs, by one ps snapshot (to the second)."""
+    try:
+        watch = load_watch()
+        procs = watch.parse_ps(watch.read_ps())
+        return procs[mine]["elapsed"] < procs[theirs]["elapsed"]
+    except Exception:
+        return False
+
+
+def gone(pid, seconds):
+    end = time.time() + seconds
+    while time.time() < end:
+        if not alive(pid) or not command_of(pid):
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def claim(path, me, takes_over=lambda held: False):
+    """Write the pid file if no live watcher holds it, or if takes_over(holder) says this session
+    replaces the holder's. Returns True if this hook now holds it.
     me() gives what to write; it is called only when this hook takes the file.
     A lock file makes the check and the write one step, so hooks fired at once start one watcher."""
     with open(path + ".lock", "w") as lock:
@@ -190,12 +235,13 @@ def claim(path, me):
         if held is not None:
             if held.get("pid") == os.getpid():
                 return False
-            if alive(held.get("parent")):
+            if alive(held.get("parent")) and not takes_over(held):
                 return False
-            try:  # its Claude Code has exited: nobody would hear it
+            try:  # its Claude Code has exited (nobody would hear it), or a newer session takes over
                 os.kill(held["pid"], signal.SIGTERM)
             except OSError:
                 pass
+            gone(held["pid"], 10)  # it stops its watchers and frees its own pid file first
         tmp = "%s.%d" % (path, os.getpid())
         with open(tmp, "w") as f:
             json.dump(me(), f)
@@ -330,8 +376,8 @@ def main(argv):
     if not isinstance(p, dict) or p.get("agent_id"):
         return 0
     project = os.environ.get("CLAUDE_PROJECT_DIR") or p.get("cwd")
-    if not is_apb_folder(project):
-        return 0
+    if not is_apb_folder(project) or linked_worktree(project):
+        return 0  # a build or review session's worktree: only the orchestrator's session watches
     folder = os.path.join(project, ".apb")
     os.makedirs(folder, exist_ok=True)
     ignore = os.path.join(folder, ".gitignore")
@@ -353,10 +399,23 @@ def main(argv):
             found["root"] = root_pid()
         return {"pid": me, "parent": found["root"] or os.getppid(), "session": session}
 
+    def takes_over(other):
+        """True if this session is newer than the one holding the watcher (#123)."""
+        mine()
+        root = found["root"]
+        if root is None or not isinstance(other.get("parent"), int):
+            return False
+        if started_later(root, other["parent"]):
+            found.setdefault("from", other.get("session"))
+            return True
+        return False
+
     held = [w for w in watchers(folder, repo, issue)
-            if not backing_off(w["failed"], opts.backoff) and claim(w["pid"], mine)]
+            if not backing_off(w["failed"], opts.backoff) and claim(w["pid"], mine, takes_over)]
     if not held:
         return 0
+    if "from" in found:
+        log(folder, {"event": "watcher-takeover", "session": session, "from": found["from"], "pid": me})
     stopping, done = threading.Event(), queue.Queue()
     signal.signal(signal.SIGTERM, on_term)
     try:
