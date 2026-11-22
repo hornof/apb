@@ -1121,13 +1121,20 @@ class NewestSessionTakesOver(unittest.TestCase):
             slow.wait(timeout=10)
 
     def stubborn(self):
-        """A process that looks like the hook and doesn't exit on SIGTERM."""
-        p = subprocess.Popen([sys.executable, "-c", "import signal, time\n"
-                              "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-                              "open(__import__('sys').argv[1], 'w').close()\n"
+        """A process that looks like the hook and doesn't exit on SIGTERM; it notes each one it gets in
+        the file terms(p) names."""
+        p = subprocess.Popen([sys.executable, "-c", "import signal, sys, time\n"
+                              "def note(*a):\n"
+                              "    with open(sys.argv[1] + '.term', 'a') as f:\n"
+                              "        f.write('SIGTERM\\n')\n"
+                              "signal.signal(signal.SIGTERM, note)\n"
+                              "open(sys.argv[1], 'w').close()\n"
                               "time.sleep(60)", os.path.join(tempfile.mkdtemp(), "ready"), "apb-watch-start.py"])
         self.assertTrue(wait_for(lambda: os.path.exists(p.args[3])))  # its SIGTERM handler is set
         return p
+
+    def terms(self, p):
+        return p.args[3] + ".term"
 
     def test_a_takeover_is_refused_and_logged_while_the_old_hook_still_runs(self):
         # Issue #170: the hook used to give up waiting after 10 s and start a second watcher anyway.
@@ -1142,6 +1149,7 @@ class NewestSessionTakesOver(unittest.TestCase):
             t = time.time()
             self.assertFalse(hook.claim(path, lambda: {"pid": os.getpid(), "parent": 1, "session": "new"},
                                         lambda held: True))
+            self.assertTrue(wait_for(lambda: os.path.exists(self.terms(old))), "it was asked to stop")
             self.assertGreaterEqual(time.time() - t, 1, "it waited for the old hook first")
             self.assertIsNone(old.poll(), "the old hook still runs")
             with open(path) as f:
@@ -1176,6 +1184,11 @@ class NewestSessionTakesOver(unittest.TestCase):
                 self.assertEqual(hook.holder(path)["pid"], old.pid, "a holder ps can't check still holds")
                 self.assertFalse(hook.claim(path, lambda: {"pid": os.getpid(), "parent": 1, "session": "new"},
                                             lambda held: True), broken)
+                time.sleep(0.3)
+                self.assertFalse(os.path.exists(self.terms(old)), "no signal to a process ps can't name")
+                with open(os.path.join(folder, "events.jsonl")) as f:
+                    self.assertEqual([json.loads(l)["event"] for l in f.read().splitlines()],
+                                     ["watcher-takeover-refused"], broken)
             hook.PS = "ps"
             dead = subprocess.Popen([sys.executable, "-c", "pass"])
             dead.wait(timeout=10)

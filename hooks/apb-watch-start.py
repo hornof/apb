@@ -319,13 +319,17 @@ def claim(path, me, takes_over=lambda held: False):
                 return False
             if alive(held.get("parent")) and not takes_over(held):
                 return False
+            refused = lambda: log(os.path.dirname(path), {"event": "watcher-takeover-refused", "pid": os.getpid(),
+                                                          "from": held.get("session"), "holder": held["pid"]})
+            if command_of(held["pid"]) is None:  # ps can't say what it is: it may be a reused pid, so no signal
+                refused()
+                return False
             try:  # its Claude Code has exited (nobody would hear it), or a newer session takes over
                 os.kill(held["pid"], signal.SIGTERM)
             except OSError:
                 pass
             if not gone(held["pid"], TAKEOVER_WAIT):  # it stops its watchers and frees its pid file first
-                log(os.path.dirname(path), {"event": "watcher-takeover-refused", "pid": os.getpid(),
-                                            "from": held.get("session"), "holder": held["pid"]})
+                refused()
                 return False  # two watchers must never run at once; the next hook tries again
         tmp = "%s.%d" % (path, os.getpid())
         with open(tmp, "w") as f:
