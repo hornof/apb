@@ -975,6 +975,11 @@ class Session:
             self.proc.wait(timeout=10)
 
 
+def read_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
 class NewestSessionTakesOver(unittest.TestCase):
     """After a plugin update the human opens a new orchestrator session while the old one is still
     open: the new one takes the watcher over, and the old one doesn't take it back (#123)."""
@@ -1103,6 +1108,36 @@ class NewestSessionTakesOver(unittest.TestCase):
             self.assertIsNone(s.rc(first), "the first hook still runs")
         finally:
             s.close()
+            for st in starts_of(fake):
+                if alive(st["pid"]):
+                    os.kill(st["pid"], signal.SIGTERM)
+
+    def test_the_owner_file_names_the_session_and_a_newer_one_takes_the_next_number(self):
+        # Issue #133's comment: the owner file carries the session's name, so `apb-watch.py --list`
+        # shows which named session holds the watcher; the newer session has the higher number.
+        sys.path.insert(0, HERE)
+        import apb_session
+        project, fake = apb_project(), fake_watcher("sleep 30")
+        version = read_json(os.path.join(os.path.dirname(HERE), ".claude-plugin", "plugin.json"))["version"]
+        old, new = Session(project, fake, "old"), None
+        owner = os.path.join(project, ".apb", "watcher-owner.json")
+        try:
+            old.hook()
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 1))
+            with open(owner) as f:
+                first = json.load(f)
+            self.assertEqual(first["name"], apb_session.session_name(os.path.join(project, ".apb"), "old", "x"))
+            self.assertTrue(first["name"].startswith("apb orch 1 · %s · " % version), first)
+            time.sleep(1.5)
+            new = Session(project, fake, "new")
+            new.hook()
+            self.assertTrue(wait_for(lambda: len(starts_of(fake)) == 2, 15))
+            self.assertTrue(wait_for(lambda: read_json(owner).get("session") == "new"))
+            self.assertTrue(read_json(owner)["name"].startswith("apb orch 2 · "))
+        finally:
+            old.close()
+            if new:
+                new.close()
             for st in starts_of(fake):
                 if alive(st["pid"]):
                     os.kill(st["pid"], signal.SIGTERM)

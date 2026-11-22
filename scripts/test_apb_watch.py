@@ -1433,6 +1433,25 @@ class Registry(unittest.TestCase):
         self.assertIn("No apb watchers", w.listing([], None, now)[0])
         self.assertIn("could not be read", w.listing([], None, now)[-1])
 
+    def test_the_listing_names_the_session_that_holds_each_watcher(self):
+        # Issue #133: the owner file next to a watcher's state file names its session.
+        folder = os.path.join(tempfile.mkdtemp(), ".apb")
+        os.makedirs(folder)
+        name = "apb orch 4 · 0.3.59 · Nov 21 7:20 PM"
+        with open(os.path.join(folder, "watcher-owner.json"), "w") as f:
+            json.dump({"root": 1, "started": 0, "session": "s", "name": name}, f)
+        held = {"pid": 31, "repo": "hornof/apb", "poll": 120, "started": 0, "issues": [25],
+                "state": os.path.join(folder, "watch.json")}
+        loose = {"pid": 32, "repo": "hornof/tahoe", "poll": 120, "started": 0, "issues": [],
+                 "state": os.path.join(tempfile.mkdtemp(), "watch.json")}
+        unnamed = dict(loose, pid=33)
+        self.assertEqual(w.owner_name(held), name)
+        self.assertIsNone(w.owner_name(loose))
+        self.assertIsNone(w.owner_name({"pid": 34}))
+        lines = w.listing([dict(held, owner=w.owner_name(held)), dict(unnamed, owner=None)], None, 0)
+        self.assertIn('  hornof/apb #25: every 2 min, running under 1 min (pid 31), held by "%s"' % name, lines)
+        self.assertIn("  hornof/tahoe: every 2 min, running under 1 min (pid 33)", lines)
+
 
 # ---------------------------------------------------------------- the real script
 
