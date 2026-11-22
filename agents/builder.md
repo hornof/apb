@@ -15,6 +15,7 @@ On a spike (apb-prd step 3): no tests, no PR and no `LOG.md` line. Keep the code
 Tests and pushes:
 - While you build, run only the tests for the code you are changing, in one browser at one screen width (or the project's equivalent, such as one test file).
 - Before you push, run the test files you changed in every browser, at one width.
+- A PR that changes only docs needs no test run on anyone's computer, yours or the orchestrator's. GitHub's checks still run as usual. Write "no tests: docs only" in the PR description and in your report. Docs are `*.md` files people read, such as a README, `docs/` or `LOG.md`. A `.md` file the model runs as instructions is code, not docs: a skill's `SKILL.md`, an agent's file in `agents/`, and any `.md` a hook or script reads, such as a `CLAUDE.md` with a line a hook parses. So is a doc that a test file reads, such as the playbook. A PR that changes one of those runs the test files that read it. To find the test files that read a file, search them for its path, for example `grep -rl docs/playbook.md scripts hooks` in apb.
 - Don't run the whole suite on your computer. GitHub runs the quick set on every push and the full set once per PR, just before the human sees it.
 - Never start a test suite while another one is running.
 - Push when the work is ready for review, not after each step. Every push that changes code starts GitHub's tests again.
