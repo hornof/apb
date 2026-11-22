@@ -49,7 +49,7 @@ class TestPolicy(unittest.TestCase):
 
     def test_policy_says_what_every_watcher_does(self):
         policy = flat(parts()[0])
-        for words in ("PRs opened, closed or merged", "comments", "reviews", "new issues",
+        for words in ("PRs opened, closed or merged", "new commits", "comments", "reviews", "new issues",
                       "board moves", "one line", "heartbeat", "2 minutes", "15 minutes",
                       "every hour", "any change", "GitHub API budget"):
             self.assertIn(words, policy)
@@ -66,7 +66,8 @@ class TestPolicy(unittest.TestCase):
         self.assertIn("draft PR", policy)
         self.assertIn("issue-<N>-", policy)
         self.assertIn("ready for review", policy)
-        self.assertIn("#132", policy)
+        # The policy is the job, not its history: the #132 story stays on #131 (review Note 6).
+        self.assertNotIn("#132", policy)
 
 
 class TestImplementations(unittest.TestCase):
@@ -90,6 +91,8 @@ class TestImplementations(unittest.TestCase):
         self.assertIn("cloud chat", adv[0])
         self.assertIn("Broken since Nov 21", adv[0])
         self.assertIn("timed messages", adv[0])
+        # Review Fix 5: the policy names new commits; this watcher reports only changed check results.
+        self.assertIn("doesn't report new commits", orch[0])
 
     def test_orchestrator_detail_points_back(self):
         # "While Claude waits" is the orchestrator's implementation; it points to the policy.
@@ -108,6 +111,17 @@ class TestDraftPrRule(unittest.TestCase):
         self.assertNotIn("before you open the PR", text)
         self.assertNotIn("Before you open the PR", text)
         self.assertNotIn("Push when the work is ready for review", text)
+        # Review Fix 3: the draft-PR paragraph agrees with the spike paragraph's "no PR".
+        self.assertIn("Except on a spike (below), open the PR as a draft", text)
+
+    def test_templates_follow_the_draft_rule(self):
+        # Review Fix 4 and Note 7: a project's CLAUDE.md and MAP.md start from these.
+        claude = flat(read("templates/CLAUDE-template.md"))
+        self.assertIn("when the builder marks the PR ready for review, spawn the reviewer", claude)
+        self.assertIn("Opens one flat draft PR when it starts", claude)
+        self.assertNotIn("when the PR is open, spawn the reviewer", claude)
+        for rel in ("templates/CLAUDE-template.md", "templates/MAP-template.md", "docs/playbook.md"):
+            self.assertNotIn("whenever a PR opens", flat(read(rel)), rel)
 
     def test_apb_build_moves_the_card_when_the_pr_is_ready(self):
         text = flat(read("skills/apb-build/SKILL.md"))
