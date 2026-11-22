@@ -1,7 +1,7 @@
 {
   "name": "apb",
   "description": "Agentic Programming Blueprint — a software factory packaged as a Claude Code plugin: PRD → TDD → split the TDD into cards → tests-first build loop → separated review → deployed-artifact verification, with human gates.",
-  "version": "0.3.75",
+  "version": "0.3.76",
   "author": { "name": "Luke Hornof", "url": "https://hornof.org" },
   "repository": "https://github.com/hornof/apb"
 }
