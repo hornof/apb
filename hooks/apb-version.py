@@ -12,12 +12,18 @@ hooks. This hook says so.
   It also acts in a checkout whose main is the apb repo (main holds hooks/apb-watch-start.py and a
   plugin.json naming "apb"), whatever branch is checked out: a branch from before hooks/ existed has
   no hooks/ folder, so the shared rule alone would miss the card's own case.
-  - the checkout, in the apb repo only: when it is on another branch than main (or a detached HEAD),
-    the note names the branch and gives `git switch main` and `git pull`; when main is behind
-    origin/main, the note says by how many commits and gives `git pull`. The hook runs
-    `git fetch origin main` to know, which moves only origin/main; it never switches or pulls, since
-    the checkout may hold uncommitted work. A linked worktree is left alone: Claude Code makes those
-    on their own branches on purpose, and `git switch main` fails in one.
+  - the checkout, in the apb repo only (checkout_check): when it is on another branch than main (or a
+    detached HEAD), the note names the branch and gives `git switch main` and `git pull`; it never
+    switches. It runs `git fetch origin main` to know whether main is behind origin/main. When main is
+    only behind (clean working tree, no local commits, the fetch worked), it pulls: a fast-forward of
+    main (#140), and the note gives the old and new commit, and says so if the pull brought a plugin
+    version newer than the session's. When the pull isn't a plain fast-forward (uncommitted changes,
+    local commits, no fetch, or the fast-forward failed), it doesn't pull: the note says by how many
+    commits main is behind, why it didn't pull, and gives `git pull`. A linked worktree is left alone:
+    Claude Code makes those on their own branches on purpose, and `git switch main` fails in one.
+    At every session start but a compaction the startup self-check (apb-selfcheck.py) runs
+    checkout_check on its Version line, so this hook's own SessionStart leaves the checkout to it
+    (checks_checkout): two hooks fetching and pulling the same checkout at once would race.
   The hook prints the note as SessionStart additionalContext, with the instruction to say it in the
   first message. On the current version and an up-to-date main it prints nothing.
 - At a watcher wake (hooks/apb-watch-start.py calls wake_note): when the report has a merge and main's
@@ -36,7 +42,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from apb_folder import is_apb_repo, project_dir  # noqa: E402
+from apb_folder import is_apb_folder, is_apb_repo, project_dir  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)  # the installed plugin
@@ -162,30 +168,100 @@ def apb_folder_of(p, timeout):
     return folder if apb_repo_on_main(folder, timeout) else None
 
 
-def checkout_note(folder, timeout):
-    """The checkout line for the apb repo when it is off main or main is behind origin/main, else None."""
+def count(folder, timeout, revs):
+    """The number of commits in revs, or None if git can't say."""
+    n = git(folder, timeout, "rev-list", "--count", revs)
+    return int(n) if n and n.isdigit() else None
+
+
+def commits(n):
+    return "%d commit%s" % (n, "" if n == 1 else "s")
+
+
+def checks_checkout(p, folder):
+    """True if this hook checks (and may pull) the apb checkout for payload p: only when the self-check
+    (apb-selfcheck.py) doesn't, since two hooks fetching and pulling at once would race (#140). The
+    self-check runs at every session start but a compaction, in a folder where apb's hooks act; this
+    hook also acts in a checkout on a branch from before hooks/ existed, which the self-check skips."""
+    return not (isinstance(p, dict) and p.get("source") != "compact" and is_apb_folder(folder))
+
+
+def checkout_check(folder, timeout, installed=None):
+    """(ask, done) for the apb checkout in folder, each a sentence or None (#128, #140).
+
+    When main is only behind origin/main (on main, a clean working tree, no local commits, the fetch
+    worked), it pulls: a fast-forward of main to the origin/main it just fetched, `git merge --ff-only`,
+    which is what `git pull --ff-only` does after its fetch. done then says so, with the old and new
+    commit. Untracked files don't stop the pull: a fast-forward never changes or removes one, and git
+    refuses it if a pulled file would overwrite one (then ask says the pull failed).
+
+    ask is the line that asks the human: the checkout is off main, or main is behind but the pull
+    isn't a plain fast-forward (uncommitted changes, local commits, no fetch, or the pull failed). It
+    is also the line that says the pull brought a plugin version newer than installed, the version this
+    session runs: the running plugin is then older than the checkout.
+
+    (None, None) when there is nothing to say: not the apb repo, a linked worktree (a build or review
+    session's; only the checkout the hook reads is ever pulled), no origin, or main up to date."""
     if not (is_apb_repo(folder) or apb_repo_on_main(folder, timeout)):
-        return None
+        return None, None
     git_dir, common = git(folder, timeout, "rev-parse", "--absolute-git-dir"), \
         git(folder, timeout, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if git_dir is None or common is None:
-        return None
+        return None, None
     if os.path.realpath(git_dir) != os.path.realpath(common):
-        return None  # a linked worktree
+        return None, None  # a linked worktree
     if git(folder, timeout, "remote", "get-url", "origin") is None:
-        return None
+        return None, None
     branch = git(folder, timeout, "symbolic-ref", "--short", "-q", "HEAD")
     if branch != "main":
         where = "on branch `%s`" % branch if branch else "on a detached HEAD"
         return ("This apb checkout is %s, not `main`. To switch: `git switch main`, then `git pull` "
-                "(commit or set aside any work first)." % where)
-    git(folder, timeout, "fetch", "--quiet", "origin", "main")  # moves origin/main only
-    behind = git(folder, timeout, "rev-list", "--count", "main..refs/remotes/origin/main")
-    if not behind or not behind.isdigit() or int(behind) == 0:
+                "(commit or set aside any work first)." % where), None
+    fetched = git(folder, timeout, "fetch", "--quiet", "origin", "main") is not None  # moves origin/main only
+    behind = count(folder, timeout, "main..refs/remotes/origin/main")
+    if not behind:
+        return None, None
+    ahead = count(folder, timeout, "refs/remotes/origin/main..main")
+    head = "This apb checkout's `main` is %s behind `origin/main`" % commits(behind)
+    if not fetched:
+        return ("%s (as last fetched: the hook couldn't fetch from origin), so the hook didn't pull it. "
+                "To update: `git pull`." % head), None
+    if ahead is None or ahead:
+        return ("%s and has %s not on it, so the hook didn't pull it (not a fast-forward). To update: push "
+                "those commits or move them to a branch, then `git pull`."
+                % (head, "local commits" if ahead is None else commits(ahead).replace("commit", "local commit"))), None
+    if git(folder, timeout, "status", "--porcelain", "--untracked-files=no") != "":
+        return ("%s and has uncommitted changes, so the hook didn't pull it. To update: commit or set aside "
+                "the changes, then `git pull`." % head), None
+    old = git(folder, timeout, "rev-parse", "--short", "main")
+    failed = merge_ff(folder, timeout)
+    new = git(folder, timeout, "rev-parse", "--short", "main")
+    if failed is not None or new is None or new == old or \
+            git(folder, timeout, "rev-parse", "main") != git(folder, timeout, "rev-parse", "refs/remotes/origin/main"):
+        return ("%s; the hook's fast-forward failed (%s), so `main` is unchanged. To update: `git pull`."
+                % (head, failed or "main didn't move")), None
+    done = ("was %s behind `origin/main`; the hook pulled it (fast-forward) from `%s` to `%s`"
+            % (commits(behind), old, new))
+    pulled = read_manifest(folder).get("version")
+    ask = None
+    if newer(pulled, installed):
+        ask = ("The pull brings plugin %s to the checkout, newer than the %s this session runs: update the "
+               "plugin (%s, %s), then open a new session." % (pulled, installed, UPDATE[0], UPDATE[1]))
+    return ask, done
+
+
+def merge_ff(folder, timeout):
+    """Fast-forward main to the fetched origin/main. None if it worked, else git's first line of why."""
+    try:
+        out = subprocess.run(["git", "-C", folder, "merge", "--ff-only", "--quiet", "refs/remotes/origin/main"],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
+                             env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_MERGE_AUTOEDIT="no"))
+    except (OSError, subprocess.SubprocessError) as e:
+        return type(e).__name__
+    if out.returncode == 0:
         return None
-    n = int(behind)
-    return ("This apb checkout's `main` is %d commit%s behind `origin/main`. To update: `git pull`."
-            % (n, "" if n == 1 else "s"))
+    lines = [l.strip() for l in (out.stderr or out.stdout).splitlines() if l.strip()]
+    return lines[0] if lines else "git exited %d" % out.returncode
 
 
 # ---------------------------------------------------------------- what was said
@@ -251,9 +327,9 @@ def main(argv):
     project = apb_folder_of(p, opts.timeout)
     if not project:
         return 0
-    _, main, plugin = plugin_check(opts.plugin_root, opts.gh, opts.timeout)
-    checkout = checkout_note(project, opts.timeout)
-    notes = [n for n in (plugin, checkout) if n]
+    installed, main, plugin = plugin_check(opts.plugin_root, opts.gh, opts.timeout)
+    ask, done = checkout_check(project, opts.timeout, installed) if checks_checkout(p, project) else (None, None)
+    notes = [n for n in (plugin, "This apb checkout's `main` %s." % done if done else None, ask) if n]
     if not notes:
         return 0
     if plugin:

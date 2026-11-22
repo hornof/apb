@@ -7,7 +7,9 @@ The card's "Done when":
 - and again after the next merge to main: when a watcher wakes the orchestrator with a merge, the wake
   carries the same note;
 - a session in an apb checkout that is off main or behind it says so in its first message, with the
-  branch name and the commands to switch and pull; the hook never switches or pulls;
+  branch name and the commands to switch and pull; the hook never switches;
+- #140: a clean main that is only behind origin/main is pulled (a fast-forward); a dirty, ahead,
+  diverged, off-main or offline one is not, and still gets the ask (SelfPull);
 - a session on the current version and an up-to-date main says nothing.
 
 Each hook test runs the script the way Claude Code does: a JSON payload on stdin, the folder in
@@ -180,6 +182,17 @@ def run(project, gh, installed="0.3.50", p=None, raw=None, timeout_arg=None):
     return subprocess.run(cmd, input=data, capture_output=True, env=env, cwd=tempfile.gettempdir(), timeout=60)
 
 
+def run_compact(project, gh, **kw):
+    """The hook at a session start after a compaction: in the apb repo, the one start where this hook,
+    not the self-check, checks the checkout (#140)."""
+    return run(project, gh, p=payload(source="compact"), **kw)
+
+
+def origin_main(origin):
+    """main on the bare origin: the oracle for where a pull must land."""
+    return git(origin, "rev-parse", "main")
+
+
 def note_of(r):
     """The note the hook gives Claude at session start, or None if it said nothing."""
     out = r.stdout.decode().strip()
@@ -319,9 +332,13 @@ class PluginAtStart(Clean):
 # ---------------------------------------------------------------- the apb checkout at session start
 
 class CheckoutAtStart(Clean):
+    """In the apb repo this hook checks the checkout only after a compaction: at any other session
+    start the self-check (apb-selfcheck.py) does, on its Version line (#140). So these run the hook
+    with source "compact"."""
+
     def test_an_up_to_date_main_and_current_plugin_say_nothing(self):
         clone, _ = apb_checkout()
-        r = run(clone, fake_gh("0.3.57"), installed="0.3.57")
+        r = run_compact(clone, fake_gh("0.3.57"), installed="0.3.57")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIsNone(note_of(r))
 
@@ -330,7 +347,7 @@ class CheckoutAtStart(Clean):
         git(clone, "checkout", "-q", "-b", "map-stays-current")
         with open(os.path.join(clone, "work.txt"), "w") as f:
             f.write("uncommitted\n")
-        note = note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57"))
+        note = note_of(run_compact(clone, fake_gh("0.3.57"), installed="0.3.57"))
         self.assertIsNotNone(note)
         for part in ["map-stays-current", "git switch main", "git pull"]:
             self.assertIn(part, note)
@@ -339,29 +356,58 @@ class CheckoutAtStart(Clean):
         with open(os.path.join(clone, "work.txt")) as f:
             self.assertEqual(f.read(), "uncommitted\n")
 
-    def test_main_behind_origin_says_so_and_never_pulls(self):
+    def test_a_dirty_main_behind_origin_says_so_and_never_pulls(self):
+        # Was "main behind origin says so and never pulls" (#128). Since #140 a clean, behind main is
+        # pulled (SelfPull below); a checkout with uncommitted changes still gets the note and the ask.
         clone, origin = apb_checkout()
         before = git(clone, "rev-parse", "main")
         push_to_origin(origin, 2)  # the clone hasn't fetched: the hook must look for itself
-        note = note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57"))
+        with open(os.path.join(clone, "hooks", "apb-watch-start.py"), "a") as f:
+            f.write("# work in progress\n")
+        note = note_of(run_compact(clone, fake_gh("0.3.57"), installed="0.3.57"))
         self.assertIsNotNone(note)
         self.assertIn("behind", note)
         self.assertIn("2 commits", note)
+        self.assertIn("uncommitted", note)
         self.assertIn("git pull", note)
         self.assertNotIn("git switch", note)
         self.assertEqual(git(clone, "rev-parse", "main"), before)
         self.assertEqual(git(clone, "branch", "--show-current"), "main")
 
+    def test_a_clean_main_behind_origin_is_pulled_after_a_compaction(self):
+        # After a compaction the self-check doesn't run, so this hook pulls (#140).
+        clone, origin = apb_checkout()
+        before = git(clone, "rev-parse", "main")
+        push_to_origin(origin, 2)
+        note = note_of(run_compact(clone, fake_gh("0.3.57"), installed="0.3.57"))
+        self.assertEqual(git(clone, "rev-parse", "main"), origin_main(origin))
+        self.assertIn("pulled", note)
+        self.assertIn(before[:7], note)
+        self.assertIn(origin_main(origin)[:7], note)
+        self.assertNotIn("To update", note)
+
+    def test_at_startup_the_checkout_is_left_to_the_self_check(self):
+        # The self-check runs at the same session start and owns the checkout's Version line, so this
+        # hook neither says it nor pulls: two hooks fetching and pulling at once would race (#140).
+        clone, origin = apb_checkout()
+        before = git(clone, "rev-parse", "main")
+        push_to_origin(origin, 2)
+        for source in ["startup", "resume", "clear"]:
+            self.assertIsNone(note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57",
+                                          p=payload(source=source))), source)
+        self.assertEqual(git(clone, "rev-parse", "main"), before)
+        self.assertEqual(git(clone, "rev-parse", "refs/remotes/origin/main"), before, "not even a fetch")
+
     def test_ahead_of_origin_is_not_behind(self):
         clone, _ = apb_checkout()
         commit(clone, "local.txt")
-        self.assertIsNone(note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57")))
+        self.assertIsNone(note_of(run_compact(clone, fake_gh("0.3.57"), installed="0.3.57")))
 
     def test_off_main_with_main_behind_says_switch_then_pull(self):
         clone, origin = apb_checkout()
         git(clone, "checkout", "-q", "-b", "old")
         push_to_origin(origin, 1)
-        note = note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57"))
+        note = note_of(run_compact(clone, fake_gh("0.3.57"), installed="0.3.57"))
         self.assertIn("`old`", note)
         self.assertIn("git switch main", note)
         self.assertIn("git pull", note)
@@ -369,13 +415,13 @@ class CheckoutAtStart(Clean):
     def test_a_detached_head_is_off_main(self):
         clone, _ = apb_checkout()
         git(clone, "checkout", "-q", "--detach")
-        note = note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57"))
+        note = note_of(run_compact(clone, fake_gh("0.3.57"), installed="0.3.57"))
         self.assertIn("git switch main", note)
 
     def test_plugin_and_checkout_both_said_in_one_note(self):
         clone, _ = apb_checkout()
         git(clone, "checkout", "-q", "-b", "map-stays-current")
-        note = note_of(run(clone, fake_gh("0.3.55"), installed="0.3.50"))
+        note = note_of(run_compact(clone, fake_gh("0.3.55"), installed="0.3.50"))
         for part in ["0.3.50", "0.3.55", UPDATE, "map-stays-current", "git switch main"]:
             self.assertIn(part, note)
 
@@ -384,18 +430,18 @@ class CheckoutAtStart(Clean):
         clone, _ = apb_checkout()
         wt = os.path.join(tmp(), "wt")
         git(clone, "worktree", "add", "-q", "-b", "worktree-agent-1", wt)
-        self.assertIsNone(note_of(run(wt, fake_gh("0.3.57"), installed="0.3.57")))
+        self.assertIsNone(note_of(run_compact(wt, fake_gh("0.3.57"), installed="0.3.57")))
 
     def test_an_apb_project_on_a_branch_is_not_checked(self):
         # The checkout check is for the apb repo only; a project's branches are its own business.
         clone, _ = apb_checkout(project=True)
         git(clone, "checkout", "-q", "-b", "feature")
-        self.assertIsNone(note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57")))
+        self.assertIsNone(note_of(run_compact(clone, fake_gh("0.3.57"), installed="0.3.57")))
 
     def test_no_origin_says_nothing_about_the_checkout(self):
         clone, _ = apb_checkout()
         git(clone, "remote", "remove", "origin")
-        self.assertIsNone(note_of(run(clone, fake_gh("0.3.57"), installed="0.3.57")))
+        self.assertIsNone(note_of(run_compact(clone, fake_gh("0.3.57"), installed="0.3.57")))
 
 
 def old_branch(clone, name="map-stays-current", manifest=None):
@@ -450,6 +496,238 @@ class OldBranchAtStart(Clean):
         gh = fake_gh("9.9.9")
         self.assertIsNone(note_of(run(clone, gh)))
         self.assertEqual(gh_calls(gh), [])
+
+
+# ---------------------------------------------------------------- pulling a clean, behind main (#140)
+
+class Scenario:
+    """An apb checkout in one state. The bare origin is the independent oracle: after the check, local
+    main must be origin's main (a pull) or exactly what it was (no pull), whatever the check said.
+
+    behind: commits on origin's main the clone doesn't have; ahead: local commits on main;
+    dirty: None, "unstaged" (a change to a tracked file) or "staged" (a new file added);
+    untracked: None, "harmless" (a file the pull doesn't touch) or "conflict" (a file the pulled
+    commits also create); branch: "main", "other" or "detached"; online: False makes origin
+    unreachable after a fetch, so origin/main is known but the hook's own fetch fails."""
+
+    def __init__(self, behind=0, ahead=0, dirty=None, untracked=None, branch="main", online=True):
+        self.clone, self.origin = apb_checkout()
+        for i in range(ahead):
+            commit(self.clone, "local-%d.txt" % i)
+        if behind:
+            push_to_origin(self.origin, behind)
+        if not online:
+            git(self.clone, "fetch", "-q", "origin")
+            git(self.clone, "remote", "set-url", "origin", os.path.join(tmp(), "gone.git"))
+        if branch == "other":
+            git(self.clone, "checkout", "-q", "-b", "other")
+        elif branch == "detached":
+            git(self.clone, "checkout", "-q", "--detach")
+        self.files = {}
+        if dirty == "unstaged":
+            self.write("hooks/apb-watch-start.py", "# the hook, being edited\n")
+        elif dirty == "staged":
+            self.write("staged.txt", "staged\n")
+            git(self.clone, "add", "staged.txt")
+        if untracked == "harmless":
+            self.write("notes.txt", "my notes\n")
+        elif untracked == "conflict":
+            self.write("later-0.txt", "mine, not origin's\n")
+        self.state = dict(behind=behind, ahead=ahead, dirty=dirty, untracked=untracked, branch=branch,
+                          online=online)
+        self.main_before = git(self.clone, "rev-parse", "main")
+        self.head_before = self.head()
+        self.status_before = git(self.clone, "status", "--porcelain")
+
+    def write(self, name, text):
+        with open(os.path.join(self.clone, name), "w") as f:
+            f.write(text)
+        self.files[name] = text
+
+    def head(self):
+        r = subprocess.run(["git", "symbolic-ref", "-q", "HEAD"], cwd=self.clone, capture_output=True, text=True,
+                           timeout=30)
+        return r.stdout.strip() or git(self.clone, "rev-parse", "HEAD")
+
+    def should_pull(self):
+        """The rule, written apart from the hook: pull only a plain fast-forward of a clean main."""
+        s = self.state
+        return (s["branch"] == "main" and s["online"] and s["behind"] > 0 and s["ahead"] == 0
+                and s["dirty"] is None and s["untracked"] != "conflict")
+
+    def should_ask(self):
+        s = self.state
+        return s["branch"] != "main" or (s["behind"] > 0 and not self.should_pull())
+
+    def check(self, installed="0.3.2", timeout=10):
+        return version.checkout_check(self.clone, timeout, installed)
+
+
+def push_to_origin_bumping(origin, n, bump):
+    other = os.path.join(tmp(), "other")
+    git(tmp(), "clone", "-q", origin, other)
+    for i in range(n):
+        commit(other, "later-%d.txt" % i)
+    commit(other, ".claude-plugin/plugin.json", json.dumps({"name": "apb", "version": bump}))
+    git(other, "push", "-q", "origin", "main")
+
+
+class SelfPull(Clean):
+    """The card's "Done when": a clean, behind checkout pulls (both the hook's message and the repo
+    say so); a dirty, ahead, diverged, off-main or offline one doesn't, and gets the ask."""
+
+    def assert_outcome(self, sc, ask, done):
+        s = sc.state
+        main_after = git(sc.clone, "rev-parse", "main")
+        if sc.should_pull():
+            self.assertEqual(main_after, origin_main(sc.origin), s)
+            self.assertIsNone(ask, s)
+            self.assertIsNotNone(done, s)
+            self.assertIn(sc.main_before[:7], done)
+            self.assertIn(main_after[:7], done)
+        else:
+            self.assertEqual(main_after, sc.main_before, s)
+            self.assertIsNone(done, s)
+            self.assertEqual(ask is not None, sc.should_ask(), (s, ask))
+        # Uncommitted work is never touched, pull or not.
+        self.assertEqual(sc.head(), sc.head_before, s)
+        for name, text in sc.files.items():
+            with open(os.path.join(sc.clone, name)) as f:
+                self.assertEqual(f.read(), text, (s, name))
+        if not sc.should_pull():
+            self.assertEqual(git(sc.clone, "status", "--porcelain"), sc.status_before, s)
+
+    def test_a_clean_behind_main_is_pulled(self):
+        sc = Scenario(behind=3)
+        ask, done = sc.check()
+        self.assert_outcome(sc, ask, done)
+        self.assertEqual(git(sc.clone, "rev-parse", "main"), origin_main(sc.origin))
+        self.assertIn("3 commits", done)
+
+    def test_a_harmless_untracked_file_does_not_stop_the_pull(self):
+        # Untracked files don't count as uncommitted work: a fast-forward never changes or removes one.
+        sc = Scenario(behind=1, untracked="harmless")
+        self.assert_outcome(sc, *sc.check())
+        self.assertEqual(git(sc.clone, "rev-parse", "main"), origin_main(sc.origin))
+
+    def test_an_untracked_file_the_pull_would_overwrite_stops_it(self):
+        sc = Scenario(behind=1, untracked="conflict")
+        ask, done = sc.check()
+        self.assert_outcome(sc, ask, done)
+        self.assertIn("git pull", ask)
+
+    def test_uncommitted_changes_stop_the_pull(self):
+        for dirty in ["unstaged", "staged"]:
+            sc = Scenario(behind=2, dirty=dirty)
+            ask, done = sc.check()
+            self.assert_outcome(sc, ask, done)
+            self.assertIn("uncommitted", ask)
+            self.assertIn("git pull", ask)
+
+    def test_local_commits_stop_the_pull(self):
+        sc = Scenario(behind=2, ahead=1)  # diverged
+        ask, done = sc.check()
+        self.assert_outcome(sc, ask, done)
+        self.assertIn("1 local commit", ask)
+        self.assertIn("git pull", ask)
+
+    def test_ahead_only_has_nothing_to_pull(self):
+        sc = Scenario(ahead=2)
+        self.assertEqual(sc.check(), (None, None))
+        self.assert_outcome(sc, None, None)
+
+    def test_off_main_is_never_pulled_or_switched(self):
+        for branch in ["other", "detached"]:
+            sc = Scenario(behind=2, branch=branch)
+            ask, done = sc.check()
+            self.assert_outcome(sc, ask, done)
+            self.assertIn("git switch main", ask)
+
+    def test_offline_does_not_pull_and_asks(self):
+        sc = Scenario(behind=2, online=False)
+        ask, done = sc.check()
+        self.assert_outcome(sc, ask, done)
+        self.assertIn("fetch", ask)
+        self.assertIn("git pull", ask)
+
+    def test_a_hanging_origin_is_stopped_and_asks(self):
+        # A remote that never answers (no network, an ssh prompt): the fetch's time limit stops it.
+        sc = Scenario(behind=1, online=False)
+        hang = os.path.join(tmp(), "hang-ssh")
+        with open(hang, "w") as f:
+            f.write("#!/bin/sh\nexec sleep 30\n")
+        os.chmod(hang, 0o755)
+        git(sc.clone, "remote", "set-url", "origin", "ssh://example.invalid/apb.git")
+        old = os.environ.get("GIT_SSH_COMMAND")
+        os.environ["GIT_SSH_COMMAND"] = hang
+        try:
+            t = time.time()
+            ask, done = sc.check(timeout=1)
+            self.assertLess(time.time() - t, 10)
+        finally:
+            if old is None:
+                os.environ.pop("GIT_SSH_COMMAND", None)
+            else:
+                os.environ["GIT_SSH_COMMAND"] = old
+        self.assert_outcome(sc, ask, done)
+        self.assertIn("git pull", ask)
+
+    def test_a_linked_worktree_is_never_pulled(self):
+        # The pull runs only in the checkout the hook reads, and never in a builder's worktree.
+        sc = Scenario(behind=2)
+        wt = os.path.join(tmp(), "wt")
+        git(sc.clone, "worktree", "add", "-q", "-b", "worktree-agent-1", wt)
+        wt_head = git(wt, "rev-parse", "HEAD")
+        self.assertEqual(version.checkout_check(wt, 10, "0.3.2"), (None, None))
+        self.assertEqual(git(sc.clone, "rev-parse", "main"), sc.main_before)
+        self.assertEqual(git(wt, "rev-parse", "HEAD"), wt_head)
+
+    def test_a_pull_that_brings_a_newer_plugin_says_so(self):
+        clone, origin = apb_checkout()
+        before = git(clone, "rev-parse", "main")
+        push_to_origin_bumping(origin, 1, "0.3.70")
+        ask, done = version.checkout_check(clone, 10, "0.3.66")
+        self.assertEqual(git(clone, "rev-parse", "main"), origin_main(origin))
+        self.assertIn(before[:7], done)
+        self.assertIsNotNone(ask, "the running plugin is now older than the checkout")
+        for part in ["0.3.70", "0.3.66", "new session"]:
+            self.assertIn(part, ask)
+
+    def test_a_pull_that_keeps_the_plugin_version_says_nothing_about_it(self):
+        clone, origin = apb_checkout()
+        push_to_origin_bumping(origin, 1, "0.3.66")
+        ask, done = version.checkout_check(clone, 10, "0.3.66")
+        self.assertIsNone(ask)
+        self.assertIsNotNone(done)
+
+    def test_random_states_pull_exactly_when_it_is_a_clean_fast_forward(self):
+        # Property: over random combinations of the states, main moves to origin's main exactly when
+        # the oracle's rule says so, and uncommitted work is never touched either way.
+        rng = random.Random(140)
+        # The pulls are rare in a uniform sample, so both kinds of pull start the set.
+        cases = {(1, 0, None, None, "main", True), (3, 0, None, "harmless", "main", True)}
+        while len(cases) < 26:
+            behind = rng.choice([0, 1, 3])
+            cases.add((behind, rng.choice([0, 0, 1]), rng.choice([None, None, "unstaged", "staged"]),
+                       rng.choice([None, "harmless", "conflict"]) if behind else rng.choice([None, "harmless"]),
+                       rng.choice(["main", "main", "main", "other", "detached"]), rng.choice([True, True, False])))
+        pulled = 0
+        for behind, ahead, dirty, untracked, branch, online in sorted(cases, key=repr):
+            sc = Scenario(behind, ahead, dirty, untracked, branch, online)
+            self.assert_outcome(sc, *sc.check())
+            pulled += sc.should_pull()
+            shutil.rmtree(sc.clone, ignore_errors=True)
+        self.assertGreater(pulled, 0, "the sample must hold some pulls")
+
+    def test_the_selfcheck_and_this_hook_never_both_check_the_checkout(self):
+        # Two hooks fetching and pulling at once would race. For each session start, exactly one of
+        # them checks the apb checkout: the self-check runs at every start but a compaction.
+        selfcheck = load("apb_selfcheck_for_version_test", os.path.join(HERE, "apb-selfcheck.py"))
+        clone, _ = apb_checkout()
+        for source in ["startup", "resume", "clear", "compact"]:
+            ours = version.checks_checkout(payload(source=source), clone)
+            theirs = source != "compact" and selfcheck.is_apb_folder(clone)
+            self.assertNotEqual(ours, theirs, source)
 
 
 # ---------------------------------------------------------------- after a merge to main

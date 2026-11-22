@@ -685,6 +685,73 @@ class TheApbRepo(unittest.TestCase):
         self.assertIn("feature", found["Version"][1])
         self.assertTrue(found["Hooks"][0])
 
+    # ------------------------------------------------ #140: a clean, behind main is pulled
+    def apb_world(self, behind):
+        """A World whose project is a clone of the apb repo, `behind` commits behind its bare origin.
+        Returns (world, origin)."""
+        origin = os.path.join(tmp(), "origin.git")
+        git(tmp(), "init", "-q", "--bare", "-b", "main", origin)
+        clone = os.path.join(tmp(), "apb")
+        git(tmp(), "clone", "-q", origin, clone)
+        git(clone, "checkout", "-q", "-b", "main")
+        commit(clone, ".claude-plugin/plugin.json", json.dumps({"name": "apb", "version": "0.3.60"}))
+        commit(clone, "hooks/apb-watch-start.py", "")
+        commit(clone, ".gitignore", ".apb/\n")
+        git(clone, "push", "-q", "origin", "main")
+        git(clone, "branch", "issue-7-x")
+        other = os.path.join(tmp(), "other")
+        git(tmp(), "clone", "-q", origin, other)
+        for i in range(behind):
+            commit(other, "later-%d.txt" % i)
+        git(other, "push", "-q", "origin", "main")
+        w = World()
+        w.project = clone
+        w.apb = os.path.join(clone, ".apb")
+        os.makedirs(w.apb)
+        w.break_watcher()
+        w.start_watcher()
+        w.owner(ROOT_PID, "x")
+        w.cfg["board"] = board([card(7, "In progress"), card(130, "Todo")])
+        w.write_gh()
+        return w, origin
+
+    def test_a_clean_behind_checkout_is_pulled_and_the_line_is_green(self):
+        w, origin = self.apb_world(behind=6)
+        before = git(w.project, "rev-parse", "main")
+        found = lines_of(w.context())
+        after = git(w.project, "rev-parse", "main")
+        self.assertEqual(after, git(origin, "rev-parse", "main"), "the oracle: main is origin's main")
+        ok, text = found["Version"]
+        self.assertTrue(ok, text)
+        for part in ["pulled", "6 commits", before[:7], after[:7]]:
+            self.assertIn(part, text)
+        self.assertNotIn("To update", text)
+
+    def test_a_dirty_behind_checkout_is_not_pulled_and_the_line_asks(self):
+        w, origin = self.apb_world(behind=6)
+        before = git(w.project, "rev-parse", "main")
+        with open(os.path.join(w.project, "hooks", "apb-watch-start.py"), "w") as f:
+            f.write("# being edited\n")
+        found = lines_of(w.context())
+        self.assertEqual(git(w.project, "rev-parse", "main"), before)
+        with open(os.path.join(w.project, "hooks", "apb-watch-start.py")) as f:
+            self.assertEqual(f.read(), "# being edited\n")
+        ok, text = found["Version"]
+        self.assertFalse(ok)
+        for part in ["6 commits behind", "uncommitted", "git pull"]:
+            self.assertIn(part, text)
+
+    def test_a_diverged_checkout_is_not_pulled_and_the_line_asks(self):
+        w, origin = self.apb_world(behind=2)
+        commit(w.project, "local.txt")
+        before = git(w.project, "rev-parse", "main")
+        found = lines_of(w.context())
+        self.assertEqual(git(w.project, "rev-parse", "main"), before)
+        ok, text = found["Version"]
+        self.assertFalse(ok)
+        self.assertIn("local commit", text)
+        self.assertIn("git pull", text)
+
 
 class HooksFile(unittest.TestCase):
     def test_it_runs_at_session_start_before_the_first_message(self):

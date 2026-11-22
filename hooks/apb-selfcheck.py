@@ -28,7 +28,10 @@ The lines, in order (CHECKS):
    hooks.json registers the watcher on session start, prompts and tool calls, and the Stop hook; no
    settings file turns hooks off (disableAllHooks) or turns the apb plugin off (enabledPlugins).
 5. Version: hooks/apb-version.py's checks (#128): the plugin is as new as main's, and, in the apb repo,
-   the checkout is on main and not behind origin/main.
+   the checkout is on main and not behind origin/main. When main is only behind (clean, no local
+   commits), the check pulls it, a fast-forward, and the line is ✅ with the old and new commit (#140);
+   when the pull isn't a plain fast-forward, the line is ❌ and asks the human. At session start this
+   check, not apb-version.py's own hook, looks at the checkout, so only one of them fetches and pulls.
 To add a line: write a function check_x(ctx) that returns (ok, text) and add ("Label", check_x) to
 CHECKS. The checks run side by side; one that raises shows ❌ with the error.
 
@@ -353,14 +356,16 @@ def check_hooks(ctx):
 def check_version(ctx):
     version = load("apb_version", "apb-version.py")
     installed, main, note = version.plugin_check(ctx.plugin_root, ctx.gh, ctx.timeout)
-    checkout = version.checkout_note(ctx.project, ctx.timeout)
-    problems = [n for n in (note, checkout) if n]
+    ask, done = version.checkout_check(ctx.project, ctx.timeout, installed)  # pulls a clean, behind main
+    problems = [n for n in (note, ask) if n]
     if main is None:
         problems.insert(0, "couldn't read main's plugin version from GitHub (this session runs %s)" % installed)
     if problems:
-        return False, " ".join(problems)
+        return False, " ".join(problems + (["The checkout's `main` %s." % done] if done else []))
     text = "plugin %s, same as main" % installed
-    if is_apb_repo(ctx.project):
+    if done:
+        text += "; checkout `main` %s" % done
+    elif is_apb_repo(ctx.project):
         text += "; checkout on main, up to date"
     return True, text
 
