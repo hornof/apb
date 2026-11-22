@@ -795,6 +795,9 @@ class ProjectsLine(unittest.TestCase):
         self.assertTrue(note.startswith(self.NOTE_START), note)
         self.assertIn(APB_PR % 74, note)
         self.assertIn("Projects: none", note)
+        # The note reads the same list as the playbook rule (#145): projects marked in use there, no other.
+        self.assertIn("every project marked in use in the apb repo's docs/projects.md, and to no other", note)
+        self.assertNotIn("every project in use", note)
         self.assertEqual(calls, ["pr view 74 --repo hornof/apb --json state,body,files"])
         last = read_events(self.project)[-1]
         self.assertEqual((last["sent_back"], last["projects-line-missing"]), (True, [74]))

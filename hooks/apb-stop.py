@@ -153,7 +153,8 @@ QUOTED = re.compile(r"\s*>")
 
 PROJECTS = ("An apb PR in this hand-off changes how projects run (it touches templates/, hooks/, "
             "agents/, a skill's SKILL.md or docs/playbook.md), and its description has no \"Projects:\" line: %s. "
-            "Apply the change to every project in use, then add one line to the PR's description: "
+            "Apply the change to every project marked in use in the apb repo's docs/projects.md, and to no "
+            "other, then add one line to the PR's description: "
             "\"Projects: <links to those projects' PRs>\", or \"Projects: none\" when no project needs a "
             "change. Then hand off.")
 # A path in the apb repo whose change reaches projects: a template, a hook, an agent's file, a skill's
