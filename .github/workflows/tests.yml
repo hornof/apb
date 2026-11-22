@@ -13,9 +13,11 @@ on:
 permissions:
   contents: read
 
-# A new push to a PR replaces that PR's run still in progress; runs on main all finish.
+# A new push to a PR replaces that PR's older run. Each push to main gets a group of its own:
+# GitHub keeps only one pending run per group and cancels an older pending one, even without
+# cancel-in-progress, so a shared group would drop a run when several merges land close together.
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

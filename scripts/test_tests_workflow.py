@@ -35,6 +35,26 @@ def runs(job):
     return [" ".join(s["run"].split()) for s in job.get("steps", []) if "run" in s]
 
 
+def evaluate(text, ctx):
+    """Fill in a value with `${{ }}` expressions, for the small subset this workflow uses:
+    `github.<name>`, string literals, `==`, `&&`, `||`. GitHub's && and || return an operand,
+    like Python's `and` and `or`, so the expression is translated and evaluated."""
+    if isinstance(text, bool):
+        return text
+
+    def one(m):
+        expr = m.group(1)
+        unknown = re.sub(r"github\.\w+|'[^']*'|==|&&|\|\||\s", "", expr)
+        if unknown:
+            raise ValueError("unsupported expression: %r" % expr)
+        expr = re.sub(r"github\.(\w+)", lambda g: repr(str(ctx[g.group(1)])), expr)
+        expr = expr.replace("&&", " and ").replace("||", " or ")
+        return str(eval(expr, {"__builtins__": {}}))  # only literals and operators remain
+
+    out = re.sub(r"\$\{\{(.*?)\}\}", one, text)
+    return {"True": True, "False": False}.get(out, out)
+
+
 @unittest.skipUnless(shutil.which("ruby"), "needs ruby to parse YAML")
 class Workflow(unittest.TestCase):
     @classmethod
@@ -76,12 +96,47 @@ class Workflow(unittest.TestCase):
             for step in steps[1:]:
                 self.assertIn("failure()", step.get("if", ""), step.get("name"))
 
+    def group(self, **ctx):
+        return evaluate(self.wf["concurrency"]["group"], ctx)
+
+    def test_a_push_run_has_a_group_of_its_own(self):
+        # GitHub keeps one pending run per group and cancels an older pending one, even with
+        # cancel-in-progress false (review of PR #150, Fix 1). Each run on main gets its own group,
+        # so three quick merges each get a Tests run.
+        push = dict(event_name="push", ref="refs/heads/main")
+        self.assertNotEqual(self.group(run_id="101", **push), self.group(run_id="102", **push))
+        self.assertEqual(evaluate(self.wf["concurrency"]["cancel-in-progress"], dict(event_name="push")), False)
+
+    def test_a_new_push_to_a_pr_replaces_its_older_run(self):
+        pr = dict(event_name="pull_request", ref="refs/pull/7/merge")
+        self.assertEqual(self.group(run_id="101", **pr), self.group(run_id="102", **pr))
+        other = dict(pr, ref="refs/pull/8/merge")
+        self.assertNotEqual(self.group(run_id="101", **pr), self.group(run_id="101", **other))
+        self.assertEqual(evaluate(self.wf["concurrency"]["cancel-in-progress"], dict(event_name="pull_request")), True)
+
     def test_the_suites_run_from_the_repo_root(self):
         # discover -s hooks needs the checkout as the working folder: no step moves it.
         for job in self.jobs.values():
             for step in job.get("steps", []):
                 self.assertNotIn("working-directory", step)
             self.assertNotIn("defaults", job)
+
+
+class Evaluator(unittest.TestCase):
+    """The expression helper the group tests rely on (guards against a vacuous pass)."""
+
+    def test_and_or_pick_an_operand(self):
+        e = "x-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}"
+        self.assertEqual(evaluate(e, dict(event_name="pull_request", ref="r", run_id="9")), "x-r")
+        self.assertEqual(evaluate(e, dict(event_name="push", ref="r", run_id="9")), "x-9")
+
+    def test_a_plain_value_stays_as_is(self):
+        self.assertEqual(evaluate("tests-${{ github.ref }}", dict(ref="r")), "tests-r")
+        self.assertEqual(evaluate("${{ github.event_name == 'push' }}", dict(event_name="push")), True)
+
+    def test_anything_else_is_refused(self):
+        with self.assertRaises(ValueError):
+            evaluate("${{ github.ref == 'a' && __import__('os') }}", dict(ref="a"))
 
 
 class EveryTestFileRuns(unittest.TestCase):
