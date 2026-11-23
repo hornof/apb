@@ -10,6 +10,7 @@ import json
 import os
 import random
 import re
+import signal
 import stat
 import subprocess
 import sys
@@ -70,13 +71,15 @@ def payload(message, **extra):
 
 def fake_osascript():
     """A folder holding an osascript that records its arguments, so tests never alert the Mac.
-    Returns (folder, the file it records to)."""
+    It also records APB_TEST_TAG, which the reminder inherits from the hook run that started it, so a
+    test can tell which stop's reminder alerted (#171). Returns (folder, the file it records to)."""
     folder = tempfile.mkdtemp()
     calls = os.path.join(folder, "calls.txt")
     fake = os.path.join(folder, "osascript")
     with open(fake, "w") as f:
         f.write("#!/bin/sh\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> '%s'; done\n"
-                "echo --- >> '%s'\n" % (calls, calls))
+                "printf 'tag=%%s\\n' \"$APB_TEST_TAG\" >> '%s'\n"
+                "echo --- >> '%s'\n" % (calls, calls, calls))
     os.chmod(fake, os.stat(fake).st_mode | stat.S_IEXEC)
     return folder, calls
 
@@ -1648,18 +1651,66 @@ class Hook(unittest.TestCase):
         self.assertLess(time.time() - start, 3.0)
 
 
+def reminders(project):
+    """The pids of the reminders running for project, from ps. The hook's Popen returns once the
+    reminder has started, so a reminder is listed as soon as the hook run that started it ends."""
+    ps = subprocess.run(["ps", "-axo", "pid=,stat=,command="], capture_output=True, text=True, timeout=10)
+    pids = []
+    for line in ps.stdout.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) == 3 and not parts[1].startswith("Z") and \
+                (" remind %s " % project) in parts[2] and "apb-stop.py" in parts[2]:
+            pids.append(int(parts[0]))
+    return pids
+
+
 class Reminder(unittest.TestCase):
-    """Rule 4: the human has held the ball for a while with no action: one reminder."""
+    """Rule 4: the human has held the ball for a while with no action: one reminder.
+
+    These tests run the hook and its reminder as real processes, with no wall-clock window (#171).
+    A test that writes lines after a stop holds that stop's reminder (SIGSTOP) while it writes, so the
+    reminder can't check for the human before the lines are there: all it has to outlast is one ps call
+    by the test, against its 2 s wait, not another hook run and two Python starts. Each test
+    then waits for every reminder for its project to exit and counts the alerts. Each stop runs with
+    its own APB_TEST_TAG, which the fake osascript records, so an alert says which stop's reminder sent it."""
+
+    SETTLE_LIMIT = 120  # seconds; a reminder's own deadline is its wait plus LIFETIME_MARGIN
 
     def setUp(self):
         self.project = apb_project()
         self.bin, self.calls = fake_osascript()
-        self.env = {"APB_REMIND_AFTER_SECONDS": "1", "PATH": self.bin + os.pathsep + os.environ["PATH"]}
+        self.env = {"APB_REMIND_AFTER_SECONDS": "2", "PATH": self.bin + os.pathsep + os.environ["PATH"]}
+        self.addCleanup(self.kill_reminders)
 
-    def alerts(self, wait):
-        deadline = time.time() + wait
-        while time.time() < deadline:
-            time.sleep(0.2)
+    def kill_reminders(self):
+        for pid in reminders(self.project):
+            for sig in (signal.SIGCONT, signal.SIGKILL):
+                try:
+                    os.kill(pid, sig)
+                except OSError:
+                    pass
+
+    def end_turn(self, message, tag, **extra):
+        env = dict(self.env, APB_TEST_TAG=tag)
+        return run(payload(message, **extra), self.project, env)
+
+    def hold(self):
+        """Pause the reminders running for this project; returns their pids."""
+        pids = reminders(self.project)
+        for pid in pids:
+            os.kill(pid, signal.SIGSTOP)
+        return pids
+
+    def release(self, pids):
+        for pid in pids:
+            os.kill(pid, signal.SIGCONT)
+
+    def alerts(self):
+        """Wait for every reminder for this project to exit, then return the alerts they sent."""
+        limit = time.time() + self.SETTLE_LIMIT
+        while reminders(self.project):
+            self.assertLess(time.time(), limit, "a reminder ran past its own deadline")
+            time.sleep(0.1)
         if not os.path.exists(self.calls):
             return []
         with open(self.calls) as f:
@@ -1667,110 +1718,117 @@ class Reminder(unittest.TestCase):
 
     def test_one_reminder_when_the_human_holds_the_ball(self):
         write_events(self.project, FINISHED_AGENT)
-        run(payload(ONE), self.project, self.env)
-        got = self.alerts(3.5)
+        self.end_turn(ONE, "hand-off")
+        got = self.alerts()
         self.assertEqual(len(got), 1)
         self.assertIn("Reminder, your turn: merge PR #44", got[0])
         self.assertIn("Glass", got[0])
+        self.assertIn("tag=hand-off", got[0])
 
     def test_reminder_for_several_things(self):
         write_events(self.project, FINISHED_AGENT)
-        run(payload(MANY), self.project, self.env)
-        got = self.alerts(3.5)
+        self.end_turn(MANY, "hand-off")
+        got = self.alerts()
         self.assertEqual(len(got), 1)
         self.assertIn("Reminder, your turn: 2 things", got[0])
 
     def test_no_reminder_when_claude_holds_the_ball(self):
         write_events(self.project, FINISHED_AGENT)
-        run(payload(NOTHING), self.project, self.env)
-        self.assertEqual(self.alerts(3), [])
+        self.end_turn(NOTHING, "nothing")
+        self.assertEqual(reminders(self.project), [])
+        self.assertEqual(self.alerts(), [])
 
     def test_no_reminder_after_all_clear(self):
         # All clear gets one alert, from the orchestrator; nothing more until the human speaks.
         write_events(self.project, FINISHED_AGENT)
-        run(payload(ALL_CLEAR), self.project, self.env)
-        self.assertEqual(self.alerts(3), [])
+        self.end_turn(ALL_CLEAR, "all-clear")
+        self.assertEqual(reminders(self.project), [])
+        self.assertEqual(self.alerts(), [])
 
     def test_an_answer_after_all_clear_starts_no_reminder(self):
         write_events(self.project, FINISHED_AGENT)
-        run(payload(ALL_CLEAR), self.project, self.env)
+        self.end_turn(ALL_CLEAR, "all-clear")
         write_events(self.project, [{"event": "UserPromptSubmit"}])
-        run(payload("The last PR changed two files."), self.project, self.env)
-        self.assertEqual(self.alerts(3), [])
+        self.end_turn("The last PR changed two files.", "answer")
+        self.assertEqual(reminders(self.project), [])
+        self.assertEqual(self.alerts(), [])
 
     def test_no_reminder_after_the_human_acts(self):
         write_events(self.project, FINISHED_AGENT)
-        run(payload(ONE), self.project, self.env)
+        self.end_turn(ONE, "hand-off")
+        held = self.hold()
+        self.assertEqual(len(held), 1)
         write_events(self.project, [{"event": "UserPromptSubmit"}])
-        self.assertEqual(self.alerts(3), [])
+        self.release(held)
+        self.assertEqual(self.alerts(), [])
 
     def test_an_answer_while_the_human_holds_the_ball_starts_a_new_wait(self):
         write_events(self.project, FINISHED_AGENT)
-        run(payload(ONE), self.project, {"APB_REMIND_AFTER_SECONDS": "30"})  # cancelled by the next line
+        self.end_turn(ONE, "hand-off")
+        held = self.hold()
         write_events(self.project, [{"event": "UserPromptSubmit"}])
-        run(payload("The PR changes two files."), self.project, self.env)
-        got = self.alerts(3.5)
+        self.end_turn("The PR changes two files.", "answer")
+        self.release(held)
+        got = self.alerts()
         self.assertEqual(len(got), 1)
         self.assertIn("merge PR #44", got[0])
+        self.assertIn("tag=answer", got[0])  # the new wait's, not the hand-off's
+
+    def woken_stop_keeps_the_original_wait(self, wake):
+        """A stop after a wake that is not the human's (wake: the lines it writes) neither ends the
+        hand-off's wait nor starts another: one alert, from the hand-off's reminder."""
+        write_events(self.project, FINISHED_AGENT)
+        self.end_turn(ONE, "hand-off")
+        held = self.hold()
+        self.assertEqual(len(held), 1)
+        write_events(self.project, wake)
+        tasks = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
+        r = self.end_turn("PR #44: checks still running.", "woken", background_tasks=tasks)
+        self.assertFalse(sent_back(r))
+        self.assertEqual(reminders(self.project), held)  # the woken stop started none
+        self.release(held)
+        got = self.alerts()
+        self.assertEqual(len(got), 1)
+        self.assertIn("merge PR #44", got[0])
+        self.assertIn("tag=hand-off", got[0])
 
     def test_a_woken_stop_with_no_line_keeps_the_original_time(self):
-        write_events(self.project, FINISHED_AGENT)
-        env = dict(self.env, APB_REMIND_AFTER_SECONDS="3")
-        start = time.time()
-        run(payload(ONE), self.project, env)
-        while time.time() < start + 1:
-            time.sleep(0.1)
         # A watcher check-in wakes Claude; no prompt, no ask, the watcher still runs.
-        write_events(self.project, [{"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}])
-        tasks = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
-        r = run(payload("PR #44: checks still running.", background_tasks=tasks), self.project, env)
-        self.assertFalse(sent_back(r))
-        # The original wait fires about 3 s after the first stop; a restarted one would fire at 4 s.
-        got = self.alerts(start + 3.6 - time.time())
-        self.assertEqual(len(got), 1)
-        self.assertIn("merge PR #44", got[0])
-        self.assertEqual(len(self.alerts(2)), 1)
-
-    def test_a_new_ask_ends_the_wait(self):
-        write_events(self.project, FINISHED_AGENT)
-        env = dict(self.env, APB_REMIND_AFTER_SECONDS="2")
-        run(payload(ONE), self.project, env)
-        write_events(self.project, [{"event": "PostToolUse", "command": "gh pr checks 40", "exit": 0}])
-        tasks = [{"id": "w", "type": "shell", "status": "running"}]
-        run(payload(NOTHING, background_tasks=tasks), self.project, env)
-        self.assertEqual(self.alerts(3), [])
-
-    def test_agent_activity_does_not_cancel_it(self):
-        write_events(self.project, FINISHED_AGENT)
-        run(payload(ONE), self.project, self.env)
-        write_events(self.project, [{"event": "SubagentStart", "agent_id": "r9"}])
-        self.assertEqual(len(self.alerts(3.5)), 1)
+        self.woken_stop_keeps_the_original_wait(
+            [{"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}])
 
     def test_a_watcher_wake_logged_as_a_prompt_keeps_the_original_time(self):
         # #135: Claude Code logs a watcher's wake as an automatic prompt. It is not the human acting,
         # so it neither ends the wait nor starts a new one.
+        self.woken_stop_keeps_the_original_wait(
+            [{"event": "UserPromptSubmit", "automatic": True},
+             {"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}])
+
+    def test_a_new_ask_ends_the_wait(self):
         write_events(self.project, FINISHED_AGENT)
-        env = dict(self.env, APB_REMIND_AFTER_SECONDS="3")
-        start = time.time()
-        run(payload(ONE), self.project, env)
-        while time.time() < start + 1:
-            time.sleep(0.1)
-        write_events(self.project, [{"event": "UserPromptSubmit", "automatic": True},
-                                    {"event": "PostToolUse", "command": "gh pr checks 44", "exit": 0}])
-        tasks = [{"id": "w", "type": "shell", "status": "running", "command": "python3 apb-watch.py"}]
-        r = run(payload("Checks still running.", background_tasks=tasks), self.project, env)
-        self.assertFalse(sent_back(r))
-        # The original wait fires about 3 s after the hand-off; a restarted one would fire at 4 s.
-        got = self.alerts(start + 3.6 - time.time())
+        self.end_turn(ONE, "hand-off")
+        held = self.hold()
+        write_events(self.project, [{"event": "PostToolUse", "command": "gh pr checks 40", "exit": 0}])
+        tasks = [{"id": "w", "type": "shell", "status": "running"}]
+        self.end_turn(NOTHING, "new-ask", background_tasks=tasks)
+        self.release(held)
+        self.assertEqual(self.alerts(), [])
+
+    def test_agent_activity_does_not_cancel_it(self):
+        write_events(self.project, FINISHED_AGENT)
+        self.end_turn(ONE, "hand-off")
+        held = self.hold()
+        write_events(self.project, [{"event": "SubagentStart", "agent_id": "r9"}])
+        self.release(held)
+        got = self.alerts()
         self.assertEqual(len(got), 1)
-        self.assertIn("merge PR #44", got[0])
-        self.assertEqual(len(self.alerts(2)), 1)
+        self.assertIn("tag=hand-off", got[0])
 
     def test_the_text_cannot_break_out_of_the_alert(self):
         write_events(self.project, FINISHED_AGENT)
         thing = 'say "hi" & `rm -rf x` $(boom) \\ it'
-        run(payload("1 thing for you to do right now: %s." % thing), self.project, self.env)
-        got = self.alerts(3.5)
+        self.end_turn("1 thing for you to do right now: %s." % thing, "hand-off")
+        got = self.alerts()
         self.assertEqual(len(got), 1)
         self.assertIn("Reminder, your turn: " + thing, got[0])
 
