@@ -9,6 +9,9 @@ It exits, printing what it found, when:
 - Stuck: a command started from one of Claude Code's shells has used no CPU for --stuck-minutes.
 - Quiet: an agent that is still running has written nothing to .apb/events.jsonl for --quiet-minutes.
 - Check-in: --check-in minutes have passed (use it while agents run, to look at their progress).
+- A followed card (#165): --follow-file names the cards' issues it also watches, and their check-in,
+  which comes only while an agent runs. It is read at every check, so the hook's one watcher picks up
+  a card without a second watcher reading every PR again.
 - No change: --limit minutes have passed, so it never runs forever.
 - Budget: the account's GraphQL budget is low or used up. Said once per budget hour, for all the
   watchers on this machine.
@@ -26,6 +29,9 @@ nothing is reported twice. It only reads; it never stops a process or changes an
 Usage (from the project folder, in the background):
   python3 <apb plugin>/scripts/apb-watch.py --state <scratch folder>/watch.json [--repo owner/name]
       [--issue N ...] [--check-in 5] [--limit 60] [--stuck-minutes 10] [--quiet-minutes 15] [--poll S]
+      [--follow-file F]
+  python3 <apb plugin>/scripts/apb-watch.py --follow N [--check-in 5]   (or --unfollow N)
+      adds the card's issue to (or takes it from) .apb/follow.json, which the hook's watcher reads
   python3 <apb plugin>/scripts/apb-watch.py --list
       lists the watchers running on this machine, each with the session that holds it (its name,
       `apb orch N · <version> · <start time PT>`, from .apb/watcher-owner.json), and the account's
@@ -171,6 +177,7 @@ ACTIVE = 120  # seconds between reads while the repo has had activity in the las
 QUIET = 900  # seconds between reads once it has been quiet that long
 ACTIVE_WINDOW = 3600
 TICK = 20  # seconds between local checks (stuck commands, quiet agents, check-in, limit)
+FOLLOW = os.path.join(".apb", "follow.json")  # the cards the hook's watcher follows (#165)
 CEILING = 1000  # points an hour for all the watchers on this machine together
 LOW = 1000  # points left in the account's hour: below this, read every QUIET and say so once
 FIRST_COST = 2  # points a read is taken to cost until one has been measured
@@ -682,8 +689,13 @@ def parse_args(argv):
     a.add_argument("--poll", type=float, help="seconds between GitHub reads, fixed; default: every %d s while "
                    "the repo is active, every %d s once it has been quiet for an hour" % (ACTIVE, QUIET))
     a.add_argument("--root-pid", type=int, help="Claude Code's process; default: found from this script's parents")
+    a.add_argument("--follow-file", help="the follow file to read at every check (default for --follow: %s)" % FOLLOW)
+    a.add_argument("--follow", type=int, action="append", default=[],
+                   help="add this card's issue to the follow file (with --check-in, its check-in), then exit")
+    a.add_argument("--unfollow", type=int, action="append", default=[],
+                   help="take this card's issue out of the follow file, then exit")
     opts = a.parse_args(argv)
-    if not opts.list and not opts.state:
+    if not opts.list and not opts.state and not (opts.follow or opts.unfollow):
         a.error("the following arguments are required: --state")
     return opts
 
@@ -697,6 +709,35 @@ def load_state(path):
     except (OSError, ValueError):
         pass
     return {}
+
+
+def read_follow(path):
+    """{"issues": [N, ...], "check_in": minutes} from the follow file; nothing followed if it is missing
+    or unreadable."""
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        issues = sorted({int(n) for n in data.get("issues") or []})
+        return {"issues": issues, "check_in": float(data.get("check_in") or 0)}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"issues": [], "check_in": 0}
+
+
+def follow(path, add, remove, check_in):
+    """Add and remove cards' issues in the follow file; returns a line saying what it follows now."""
+    now = read_follow(path)
+    issues = sorted((set(now["issues"]) | set(add)) - set(remove))
+    check_in = check_in or now["check_in"]
+    if not issues:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return "Following no cards."
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    save_state(path, {"issues": issues, "check_in": check_in})
+    return "Following %s%s." % (", ".join("#%d" % n for n in issues),
+                                " (check-in every %g min while agents run)" % check_in if check_in else "")
 
 
 def save_state(path, state):
@@ -739,8 +780,11 @@ def watch(opts, snapshot, ps_text, now, sleep, me, registry=None):
                 procs = parse_ps(ps_text())
             except Exception as e:
                 last_error = "ps: %s" % e
+            followed = read_follow(opts.follow_file) if opts.follow_file else {"issues": [], "check_in": 0}
             if now() >= next_read:
-                lines, error = read_github(opts, state, snapshot, now(), registry)
+                issues = sorted(set(opts.issue) | set(followed["issues"]))
+                record["issues"] = issues
+                lines, error = read_github(opts, state, snapshot, now(), registry, issues)
                 found += lines
                 if error is not None:  # GitHub down or slow: try again at the next read
                     failures, last_error = failures + 1, error
@@ -770,7 +814,8 @@ def watch(opts, snapshot, ps_text, now, sleep, me, registry=None):
             waited = now() - start
             note = [] if not failures else [
                 "GitHub could not be read %d times; last error: %s" % (failures, last_error)]
-            if opts.check_in and waited >= opts.check_in * 60:
+            check_in = opts.check_in or (followed["check_in"] if agents else 0)
+            if check_in and waited >= check_in * 60:
                 lines = ["Check-in: %s, nothing new on GitHub." % minutes(waited)]
                 if agents:
                     lines += ["Agent %s (%s): last event %s ago: %s" % (
@@ -790,12 +835,13 @@ def watch(opts, snapshot, ps_text, now, sleep, me, registry=None):
             unregister(registry, me)
 
 
-def read_github(opts, state, snapshot, t, registry):
-    """One GitHub read: updates state, returns (lines for the orchestrator, error or None)."""
+def read_github(opts, state, snapshot, t, registry, issues=None):
+    """One GitHub read of the PRs and issues (default: --issue): updates state, returns (lines for the
+    orchestrator, error or None)."""
     found = []
     try:
         # A merged or closed PR stays watched while it has an unresolved Decision thread.
-        new = snapshot(opts.repo, opts.issue, still_watched(state.get("github")),
+        new = snapshot(opts.repo, opts.issue if issues is None else issues, still_watched(state.get("github")),
                        cache=state.setdefault("details", {}))
     except RateLimited as e:
         reset = e.reset or t + QUIET
@@ -845,6 +891,9 @@ def notice(state, registry, reset):
 
 def main(argv):
     opts = parse_args(argv)
+    if opts.follow or opts.unfollow:
+        print(follow(opts.follow_file or FOLLOW, opts.follow, opts.unfollow, opts.check_in), flush=True)
+        return
     if opts.list:
         records = [dict(r, owner=owner_name(r)) for r in live_watchers(registry_dir(), parse_ps(read_ps()))]
         now = time.time()
