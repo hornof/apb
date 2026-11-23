@@ -31,6 +31,14 @@ The cases:
 - merge-with-open-request: the turn asks the human to merge a PR while an advisor comment on it has no
   later reply from Claude that addresses it (links it or quotes it; the reviewer's posts don't count),
   or the reviewer's Fix post has an item with no commit on the PR and no reason it wasn't fixed (#159).
+- loose-follow-up: the turn asks the human to merge a PR, or says a PR is merged (the Stop hook reads
+  "PR #N merged" in the message; the PR is found among the open PRs or the MERGED_PRS merged ones most
+  recently updated), and a reviewer Note on it (a numbered item in the Notes section of a post of
+  Claude's that isn't the advisor's), or an ask for a card on it or on the cards it closes ("file a
+  card", "want a card?", "say so" next to "file" or "card"), links no new card (#N other than the PR and
+  the cards it closes) and has no later reply that settles it: for a Note, a line that names it ("Note
+  6: #181", "Notes 3 to 5: no action"); for an ask, a reply that links or quotes that comment and links
+  a new card or says "no action" (#173).
 
 A Decision is a review thread whose first comment is Claude's and has lettered options or
 "Resolve with no reply". Claude's comments are told from the human's by comment-author.py.
@@ -88,6 +96,9 @@ CASES = [
      "incident": "2026-11-20: the orchestrator's summary went inside Decision 7's thread on PR #120 (#97, #121)"},
     {"id": "merge-with-open-request",
      "incident": "2026-11-20: PR #120 was called ready while the advisor's playbook comment was unapplied (#121)"},
+    {"id": "loose-follow-up",
+     "incident": "2026-11-22: PR #161 Note 2, PR #163 Note 6 and PR #164's advisor comment (\"file one card\") were "
+                 "left with no card until the human asked what was missing (#173)"},
 ]
 INCIDENT = {c["id"]: c["incident"] for c in CASES}
 
@@ -104,6 +115,20 @@ SHA = re.compile(r"(?i)(?<![0-9a-z])[0-9a-f]{7,40}(?![0-9a-z])")
 WHY_NOT = re.compile(r"(?i)\b(?:not fixed|won'?t fix|wontfix|why not|not doing|declined|no change|left as is|"
                      r"not changed|skipped)\b")
 ITEM = re.compile(r"\s*(\d+)[.)]\s+\S")
+# A numbered item, maybe in bold: "2. …", "**3.** …" (#173).
+NOTE_ITEM = re.compile(r"\s*[*_]{0,2}(\d+)[.)][*_]{0,2}\s+\S")
+NOTES_HEADING = re.compile(r"(?i)notes?\b(?:\s*\([^)]*\))?\W*$")
+# A card a text links: #N, or a link to an issue. Not a PR ("PR #44"), an HTML entity (&#44;) or a word#N.
+CARD_REF = re.compile(r"(?<![\w/&#])(?<!PR )(?<!PRs )(?<!pull request )#(\d+)\b|github\.com/[\w.-]+/[\w.-]+/issues/(\d+)\b")
+NO_ACTION = re.compile(r"(?i)\bno\s+(?:action|card)\b")
+# A line that refers to reviewer Notes by number: "Note 6", "Notes 4 and 5", "Notes 3 to 6", "Notes 2-3".
+NOTE_REF = re.compile(r"(?i)\bnotes?\s+(\d+(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*|to\s+|[-–]\s*)\d+)*)")
+# Asking for a card (#173): "file a card", "want a card?", "say so" next to "file" or "card".
+REQUEST = re.compile(r"(?i)\bfile\s+(?:a|one|another|the|that|this)\s+(?:new\s+|follow-?up\s+|separate\s+)?card\b"
+                     r"|\bwant\s+(?:a|one|another)\s+(?:new\s+|separate\s+)?card\b"
+                     r"|\bsay\s+so\b[^.\n]{0,60}?\b(?:file|card)\b"
+                     r"|\b(?:file|card)\b[^.\n]{0,60}?\bsay\s+so\b")
+CODE = re.compile(r"`[^`\n]*`")
 
 
 # ---------------------------------------------------------------- reading comments
@@ -195,6 +220,77 @@ def fix_items(body):
             found[current] = line
         elif current is not None and line.strip():
             found[current] += "\n" + line
+    return found
+
+
+def note_items(body):
+    """({item number: its text}, the post's other lines) for the Notes section of a reviewer's post. The
+    section starts at a line that is only "Notes" (after heading or bold marks; a "(…)" may follow) and
+    ends at the next heading line or a "Fix" or "Decisions" line. An item is a numbered line, maybe in
+    bold ("**3.** …"), with the lines under it."""
+    found, other, current, inside = {}, [], None, False
+    for line in own_text(body).splitlines():
+        stripped = line.strip()
+        bare = stripped.lstrip("#").strip().strip("*_").strip()
+        item = NOTE_ITEM.match(line)
+        heading = not item and (stripped.startswith("#") or (stripped.startswith("**") and stripped.endswith("**")))
+        if not item and NOTES_HEADING.match(bare):
+            inside, current = True, None
+            continue
+        if inside and (heading or (not item and re.match(r"(?i)(?:fix\w*|decisions?)\b\W*$", bare))):
+            inside, current = False, None
+        if inside and item:
+            current = int(item.group(1))
+            found[current] = line
+        elif inside and current is not None and stripped:
+            found[current] += "\n" + line
+        else:
+            other.append(line)
+    return found, other
+
+
+def new_cards(text, own):
+    """The cards the text links (#N or a link to an issue, outside code spans) that aren't in own: the PR
+    itself and the cards it closes."""
+    refs = {int(a or b) for a, b in CARD_REF.findall(CODE.sub(" ", text or ""))}
+    return refs - set(own)
+
+
+def note_numbers(line):
+    """The Note numbers a line refers to: "Note 6", "Notes 4 and 5", "Notes 3 to 6", "Notes 2-3"."""
+    out = set()
+    for m in NOTE_REF.finditer(re.sub(r"[*_]", "", line)):
+        tokens = re.findall(r"\d+|to|[-–]", m.group(1))
+        k = 0
+        while k < len(tokens):
+            if k + 2 < len(tokens) and tokens[k + 1] in ("to", "-", "–"):
+                lo, hi = int(tokens[k]), int(tokens[k + 2])
+                out |= set(range(lo, hi + 1)) if 0 <= hi - lo <= 50 else {lo, hi}
+                k += 3
+            else:
+                if tokens[k].isdigit():
+                    out.add(int(tokens[k]))
+                k += 1
+    return out
+
+
+def settles(line, own):
+    """True if the line settles a follow-up: it links a new card, or it says "no action" (or "no card")."""
+    return bool(new_cards(line, own)) or bool(NO_ACTION.search(line))
+
+
+def requests(lines, own):
+    """The sentences in the lines that ask for a card, outside code spans (the lines are a comment's own
+    text, so quotes are already gone); a line that settles itself (it links a new card, or says "no
+    action") asks nothing."""
+    found = []
+    for line in lines:
+        text = re.sub(r"[*_]", "", CODE.sub(" ", line))
+        if not REQUEST.search(text) or settles(text, own):
+            continue
+        for sentence in re.split(r"(?<=[.!?])\s+", text):
+            if REQUEST.search(sentence):
+                found.append(flat(sentence).lstrip("-+ ").strip())
     return found
 
 
@@ -366,12 +462,57 @@ def merge_cases(s, hand_off):
     return out
 
 
+def follow_up_cases(s, hand_off):
+    """loose-follow-up (#173): for each PR the turn asks to merge or says is merged, every reviewer Note on
+    it, and every ask for a card on it or on the cards it closes, links a new card or has a later reply
+    that settles it. A reply settles a Note on a line that names it ("Note 6: #181", "Notes 3 to 5: no
+    action"), and an ask for a card when it links or quotes that comment (as `addresses` reads it) and
+    links a new card or says "no action"."""
+    login = s.get("claude_login")
+    prs = {p["number"]: p for p in list(s.get("merged") or []) + list(s.get("prs") or [])}
+    out = []
+    wanted = []
+    for key in ("merge", "merged"):
+        wanted += [(n, key) for n in hand_off.get(key) or [] if n not in [w[0] for w in wanted]]
+    for n, key in wanted:
+        p = prs.get(n)
+        if not p:
+            continue
+        what = ("this turn hands over the merge of PR #%d" if key == "merge" else "this turn notices PR #%d merged") % n
+        own = {n} | set(p.get("closes") or [])
+        posts = list(p.get("comments") or []) + list(p.get("reviews") or [])
+        everything = posts + list(p.get("card_comments") or [])
+        for i, c in enumerate(everything):
+            notes, rest = ({}, own_text(c.get("body")).splitlines())
+            if i < len(posts) and is_claude(c, login) and not is_advisor(c):
+                notes, rest = note_items(c.get("body"))
+            for k, text in sorted(notes.items()):
+                if new_cards(text, own) or any(
+                        _later(r, c) and any(k in note_numbers(line) and settles(line, own)
+                                             for line in own_text(r.get("body")).splitlines())
+                        for r in everything):
+                    continue
+                out.append(_problem("loose-follow-up", "%s, but Note %d in %s has no card and no \"no action\" "
+                                    "reply. File a card and reply on the PR \"Note %d: #<card>\", or reply "
+                                    "\"Note %d: no action, <why>\"." % (what, k, c.get("url") or "a review post",
+                                                                       k, k)))
+            asked = requests(rest, own)
+            if asked and not any(_later(r, c) and addresses(r, c) and settles(own_text(r.get("body")), own)
+                                 for r in everything):
+                out.append(_problem("loose-follow-up", "%s, but %s asks for a card (\"%s\") and has no card linked "
+                                    "and no \"no action\" reply. File the card (#<card>) and reply linking that "
+                                    "comment and the card, or reply linking it with \"no action, <why>\"."
+                                    % (what, c.get("url") or "a comment", asked[0][:160])))
+    return out
+
+
 def check(s, hand_off=None):
     """Every problem in the snapshot s (see from_answers), each {"case", "incident", "problem"} and, for a
-    board case, "card". hand_off: what this turn hands the human, {"prs", "merge", "issues"}:
-    PR and card numbers it names, and PRs it asks to merge."""
+    board case, "card". hand_off: what this turn hands the human, {"prs", "merge", "issues", "merged"}:
+    PR and card numbers it names, PRs it asks to merge, and PRs it says are merged."""
     hand_off = hand_off or {}
-    return (board_cases(s) + assignment_cases(s, hand_off) + decision_cases(s) + merge_cases(s, hand_off))
+    return (board_cases(s) + assignment_cases(s, hand_off) + decision_cases(s) + merge_cases(s, hand_off)
+            + follow_up_cases(s, hand_off))
 
 
 # ---------------------------------------------------------------- reading GitHub
@@ -380,6 +521,14 @@ COMMENT = "body author { login } createdAt url"
 # A card: what the board cases read, and what human-turn.py's verdict reads (its last comment, its PRs).
 CARD = """number state assignees(first: 10) { nodes { login } } comments(last: 1) { nodes { body author { login } } }
           closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number state isDraft } }"""
+# A PR: what every case reads, and the comments on the cards it closes (#173).
+PR = """number isDraft headRefName assignees(first: 10) { nodes { login } }
+      commits(last: 100) { nodes { commit { oid } } }
+      closingIssuesReferences(first: 10) { nodes { number comments(last: 30) { nodes { %(c)s } } } }
+      reviewThreads(first: 20) { nodes { isResolved comments(first: 10) { nodes { %(c)s } } } }
+      comments(last: 30) { nodes { %(c)s } }
+      reviews(last: 10) { nodes { %(c)s } }""" % {"c": COMMENT}
+MERGED_PRS = 5  # the most recently updated merged PRs, where a merge the turn notices is found (#173)
 QUERY = """query($owner: String!, $name: String!, $q: String!) {
   repository(owner: $owner, name: $name) {
     owner { __typename login }
@@ -387,19 +536,15 @@ QUERY = """query($owner: String!, $name: String!, $q: String!) {
       pageInfo { hasNextPage endCursor }
       nodes { fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
         content { ... on Issue { %(card)s } } } } } }
-    pullRequests(states: OPEN, first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes {
-      number isDraft headRefName assignees(first: 10) { nodes { login } }
-      commits(last: 100) { nodes { commit { oid } } }
-      closingIssuesReferences(first: 10) { nodes { number } }
-      reviewThreads(first: 20) { nodes { isResolved comments(first: 10) { nodes { %(c)s } } } }
-      comments(last: 30) { nodes { %(c)s } }
-      reviews(last: 10) { nodes { %(c)s } } } } }
+    pullRequests(states: OPEN, first: 20, orderBy: {field: UPDATED_AT, direction: DESC}) { nodes { %(pr)s } }
+    merged: pullRequests(states: MERGED, first: %(merged)d, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { %(pr)s } } }
   assigned: search(query: $q, type: ISSUE, first: 50) { nodes {
     __typename
     ... on PullRequest { number state isDraft }
     ... on Issue { number state comments(last: 1) { nodes { body author { login } } }
       closedByPullRequestsReferences(first: 20, includeClosedPrs: true) { nodes { number state isDraft } } } } } }""" % {
-    "c": COMMENT, "card": CARD}
+    "c": COMMENT, "card": CARD, "pr": PR, "merged": MERGED_PRS}
 PAGE = """query($owner: String!, $name: String!, $after: String!) {
   repository(owner: $owner, name: $name) {
     projectsV2(first: 1) { nodes { items(first: 100, after: $after, orderBy: {field: POSITION, direction: ASC}) {
@@ -442,20 +587,27 @@ def from_answers(answers, repo, claude_login, worktrees, agents=None):
                 read = human_turn.items({"data": {"search": {"nodes": [dict(content, __typename="Issue")]}}})[0]
                 c["last_comment"], c["prs"] = read["last_comment"], read["prs"]
             board.append(c)
-    prs = []
-    for p in _nodes(first["repository"].get("pullRequests")):
-        prs.append({"number": p["number"], "draft": bool(p.get("isDraft")), "head": p.get("headRefName") or "",
-                    "assignees": [a["login"] for a in _nodes(p.get("assignees")) if a],
-                    "closes": [c["number"] for c in _nodes(p.get("closingIssuesReferences")) if c],
-                    "threads": [{"isResolved": bool(t.get("isResolved")), "comments": _comments(t.get("comments"))}
-                                for t in _nodes(p.get("reviewThreads")) if t and _nodes(t.get("comments"))],
-                    "comments": _comments(p.get("comments")), "reviews": _comments(p.get("reviews")),
-                    "commits": [((c or {}).get("commit") or {}).get("oid") for c in _nodes(p.get("commits"))
-                                if ((c or {}).get("commit") or {}).get("oid")]})
     return {"repo": repo, "human": owner.get("login") if owner.get("__typename") == "User" else None,
-            "claude_login": claude_login, "board": board, "prs": prs, "worktrees": list(worktrees),
+            "claude_login": claude_login, "board": board,
+            "prs": [_pr(p) for p in _nodes(first["repository"].get("pullRequests")) if p],
+            "merged": [_pr(p) for p in _nodes(first["repository"].get("merged")) if p],
+            "worktrees": list(worktrees),
             "assigned": human_turn.items({"data": {"search": first.get("assigned") or {"nodes": []}}}),
             "agents": dict(agents or {})}
+
+
+def _pr(p):
+    """A PR from GitHub's answer, in the shape the cases read."""
+    closing = [c for c in _nodes(p.get("closingIssuesReferences")) if c]
+    return {"number": p["number"], "draft": bool(p.get("isDraft")), "head": p.get("headRefName") or "",
+            "assignees": [a["login"] for a in _nodes(p.get("assignees")) if a],
+            "closes": [c["number"] for c in closing],
+            "card_comments": [x for c in closing for x in _comments(c.get("comments"))],
+            "threads": [{"isResolved": bool(t.get("isResolved")), "comments": _comments(t.get("comments"))}
+                        for t in _nodes(p.get("reviewThreads")) if t and _nodes(t.get("comments"))],
+            "comments": _comments(p.get("comments")), "reviews": _comments(p.get("reviews")),
+            "commits": [((c or {}).get("commit") or {}).get("oid") for c in _nodes(p.get("commits"))
+                        if ((c or {}).get("commit") or {}).get("oid")]}
 
 
 class OutOfTime(Exception):
