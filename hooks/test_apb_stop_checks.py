@@ -483,6 +483,20 @@ class MergeNoticed(unittest.TestCase):
         finally:
             stop.project_repo = project_repo
 
+    def test_an_open_pr_said_to_be_merged_later_is_not_checked(self):
+        # Review fix 1 on #179: these sentences name an open PR; the check looks it up only among merged PRs.
+        p = json.loads(json.dumps(real_pr(163)))
+        p["number"] = 179
+        snap = {"repo": "hum/proj", "human": "hum", "claude_login": "hornof-claude", "board": [], "prs": [p],
+                "merged": [], "worktrees": [], "assigned": []}
+        for said in ("PR #179 is ready to be merged.", "PR #179 still needs to be merged."):
+            project = apb_project(REMOTE)
+            write_events(project, [{"event": "UserPromptSubmit", "automatic": True},
+                                   {"event": "PostToolUse", "command": "gh pr view 179", "exit": 0}])
+            r = handle(said + "\n\nNothing for you to do right now. Waiting on the review session, ETA 9:10 PM.",
+                       project, state_lookup=Recorder(snap))
+            self.assertFalse(r["send_back"], (said, r.get("note")))
+
     def test_noticing_pr_163_merged_with_note_6_loose_is_sent_back(self):
         r, project = self.stop_after(163)
         self.assertTrue(r["send_back"])

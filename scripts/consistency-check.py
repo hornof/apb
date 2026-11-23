@@ -469,15 +469,18 @@ def follow_up_cases(s, hand_off):
     action"), and an ask for a card when it links or quotes that comment (as `addresses` reads it) and
     links a new card or says "no action"."""
     login = s.get("claude_login")
-    prs = {p["number"]: p for p in list(s.get("merged") or []) + list(s.get("prs") or [])}
+    # A PR to merge is an open one; a PR said to be merged counts only if it is (review fix 1 on #179:
+    # "PR #179 is ready to be merged" names an open PR).
+    where = {"merge": {p["number"]: p for p in s.get("prs") or []},
+             "merged": {p["number"]: p for p in s.get("merged") or []}}
     out = []
-    wanted = []
-    for key in ("merge", "merged"):
-        wanted += [(n, key) for n in hand_off.get(key) or [] if n not in [w[0] for w in wanted]]
+    wanted = [(n, key) for key in ("merge", "merged") for n in hand_off.get(key) or [] if n in where[key]]
+    done = set()
     for n, key in wanted:
-        p = prs.get(n)
-        if not p:
+        if n in done:  # a PR both asked to merge and said to be merged is checked once
             continue
+        done.add(n)
+        p = where[key][n]
         what = ("this turn hands over the merge of PR #%d" if key == "merge" else "this turn notices PR #%d merged") % n
         own = {n} | set(p.get("closes") or [])
         posts = list(p.get("comments") or []) + list(p.get("reviews") or [])

@@ -598,6 +598,18 @@ class LooseFollowUp(unittest.TestCase):
         self.assertEqual(loose(cc.check(real_snap([p], merged=False), {"prs": [163], "issues": [162]})), [])
         self.assertEqual(loose(cc.check(real_snap([p]), {"merged": [999]})), [])
 
+    def test_an_open_pr_said_to_be_merged_is_not_a_merge_noticed(self):
+        # Review fix 1 on #179: "PR #179 is ready to be merged." names an open PR; only s["merged"] counts.
+        post = comment("## Notes\n1. Slow.", url="https://github.com/hum/proj/pull/179#issuecomment-5")
+        p = pr(179, closes=[173], comments=[post])
+        self.assertEqual(loose(cc.check(snap(prs=[p]), {"merged": [179]})), [])
+        # The same PR, merged, is checked; and asked to merge, it is checked as a merge handed over.
+        s = snap()
+        s["merged"] = [p]
+        self.assertEqual(len(loose(cc.check(s, {"merged": [179]}))), 1)
+        self.assertIn("hands over the merge of PR #179",
+                      loose(cc.check(snap(prs=[p]), {"merge": [179]}))[0]["problem"])
+
     # ------------------------------------------------ made-up posts, for each rule on its own
 
     URL = "https://github.com/hum/proj/pull/120#issuecomment-500"
