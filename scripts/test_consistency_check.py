@@ -652,13 +652,16 @@ class LooseFollowUp(unittest.TestCase):
 
     def test_a_reply_with_no_card_and_no_no_action_doesnt_settle_it(self):
         for body in ["Note 2: seen.", "Note 2: see #7.", "Note 2: see PR #44.", "Notes: no action.",
-                     "Note 12: no action.", "No action on any of it."]:
+                     "Note 12: no action.", "No action on any of it.",
+                     # Review fix 2 on #179: "no card" is a status, not a decision.
+                     "Notes 2-3: no card, harmless.", "Notes 2 and 6 still have no card.",
+                     "Note 2 has no card yet; filing after merge."]:
             later = comment(body, at="2026-11-20T11:00:00Z")
             self.assertEqual(len(self.found_for([self.notes_post((2, "a")), later])), 1, body)
 
     def test_reply_forms_that_settle_a_note(self):
         for body in ["Note 2: no action.", "note 2 - #45", "**Note 2:** filed #45.", "Notes 1 to 3: no action.",
-                     "Notes 1, 2 and 3: no action.", "Notes 2-3: no card, harmless.",
+                     "Notes 1, 2 and 3: no action.", "Notes 2-3: no action, harmless.",
                      "Note 2: https://github.com/hum/proj/issues/45"]:
             later = comment(body, at="2026-11-20T11:00:00Z", author=HUMAN)
             self.assertEqual(self.found_for([self.notes_post((2, "a")), later]), [], body)

@@ -120,7 +120,8 @@ NOTE_ITEM = re.compile(r"\s*[*_]{0,2}(\d+)[.)][*_]{0,2}\s+\S")
 NOTES_HEADING = re.compile(r"(?i)notes?\b(?:\s*\([^)]*\))?\W*$")
 # A card a text links: #N, or a link to an issue. Not a PR ("PR #44"), an HTML entity (&#44;) or a word#N.
 CARD_REF = re.compile(r"(?<![\w/&#])(?<!PR )(?<!PRs )(?<!pull request )#(\d+)\b|github\.com/[\w.-]+/[\w.-]+/issues/(\d+)\b")
-NO_ACTION = re.compile(r"(?i)\bno\s+(?:action|card)\b")
+# "no action" only: "Note 6 has no card yet" is a status, not a decision (review fix 2 on #179).
+NO_ACTION = re.compile(r"(?i)\bno\s+action\b")
 # A line that refers to reviewer Notes by number: "Note 6", "Notes 4 and 5", "Notes 3 to 6", "Notes 2-3".
 NOTE_REF = re.compile(r"(?i)\bnotes?\s+(\d+(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*|to\s+|[-–]\s*)\d+)*)")
 # Asking for a card (#173): "file a card", "want a card?", "say so" next to "file" or "card".
@@ -275,7 +276,7 @@ def note_numbers(line):
 
 
 def settles(line, own):
-    """True if the line settles a follow-up: it links a new card, or it says "no action" (or "no card")."""
+    """True if the line settles a follow-up: it links a new card, or it says "no action"."""
     return bool(new_cards(line, own)) or bool(NO_ACTION.search(line))
 
 
