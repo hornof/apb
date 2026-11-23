@@ -74,7 +74,9 @@ file yet (a fresh clone of the apb repo) it reads no events and lets the stop th
   an agent, in the main checkout of a project on GitHub, it runs scripts/consistency-check.py within
   CHECK_BUDGET seconds and sends the message back once with each problem ("consistency"). On a GitHub
   error, it lets the stop through, logs "consistency-error" and tells the human (systemMessage) that the
-  check couldn't run. CASES lists this hook's own cases and their incidents.
+  check couldn't run. CASES lists this hook's own cases and their incidents. Besides what the hand-off
+  names, the check is told each PR the message says is merged ("PR #44 merged", noticed_merges), so a
+  merge the turn notices gets its loose follow-ups checked too (#173).
 - Both checks share one gh time budget (PR_BUDGET seconds, at most PR_TIME_LIMIT for one call) and look
   each PR up once. Whatever can't be looked up in time is let through.
 - It appends a Stop line to the events file, with who holds the ball when the message's ask block
@@ -834,6 +836,29 @@ def hand_off_refs(message, repo):
     return out
 
 
+# A PR the message says is merged (#173): "PR #44 merged", "PRs #44, #45 and #46 merged", a link to one.
+PR_LIST = re.compile(r"\bPRs?\s*#\d+(?:\s*(?:,\s*(?:and\s+)?|and\s+|&\s*)#\d+)*")
+MERGED = re.compile(r"(?i:\bmerged\b)")
+NOT_MERGED = re.compile(r"(?i:\b(?:not|isn't|aren't|wasn't|weren't|never|un)\s*(?:been\s+|yet\s+)?merged\b)")
+
+
+def noticed_merges(message, repo):
+    """The PRs in the project's repo that the message says are merged, outside quotes and plans, once
+    each, in order: a sentence with "merged" (not "not merged") and a "PR #N" or a link to the PR."""
+    found = []
+    for line in unquoted(message):
+        for sentence in SENTENCE_END.split(re.sub(r"[*_]", "", line)):
+            sentence = PLAN.sub(" ", QUOTE.sub(" ", sentence))
+            if not MERGED.search(sentence) or NOT_MERGED.search(sentence):
+                continue
+            numbers = [int(m.group(2)) for m in PULL_LINK.finditer(sentence)
+                       if m.group(1).lower() == (repo or "").lower()]
+            for m in PR_LIST.finditer(PULL_LINK.sub(" ", sentence)):
+                numbers += [int(x) for x in re.findall(r"#(\d+)", m.group(0))]
+            found += [n for n in numbers if n not in found]
+    return found
+
+
 def check_state(p, project, events, session, block, message, lookup=None):
     """(problems, error): what the end-of-turn consistency check finds, run when the turn hands something
     over (it ends with an ask block) or started an agent. (None, None) when it doesn't run: a retry, no
@@ -852,6 +877,8 @@ def check_state(p, project, events, session, block, message, lookup=None):
         else:
             snapshot = lookup(repo, project)
         hand_off = hand_off_refs(message, repo) if block and block["holder"] == "human" else {}
+        # A merge the turn notices ("PR #44 merged") is checked for loose follow-ups too (#173).
+        hand_off = dict(hand_off, merged=noticed_merges(message, repo))
         return cc.check(snapshot, hand_off), None
     except Exception as e:  # never block on GitHub, or on the check itself
         return None, (str(e) or type(e).__name__)[:MAX]

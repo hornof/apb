@@ -435,6 +435,81 @@ class ConsistencyInTheHook(unittest.TestCase):
                          {"prs": [], "merge": [], "issues": []})
 
 
+REAL = os.path.join(os.path.dirname(HERE), "scripts", "test_consistency_check_2026_11_22.json")
+
+
+def real_pr(n):
+    """PR #n of hornof/apb as GitHub had it on 2026-11-22 (scripts/test_consistency_check_2026_11_22.json)."""
+    with open(REAL, encoding="utf-8") as f:
+        return [p for p in json.load(f)["prs"] if p["number"] == n][0]
+
+
+class MergeNoticed(unittest.TestCase):
+    """#173: a turn that notices a merge ("PR #163 merged") has every reviewer Note and every "file a card"
+    on that PR settled (a card, or a "no action" reply) before it ends."""
+
+    def test_the_prs_a_message_says_are_merged(self):
+        cases = [
+            ("PR #163 merged: the orchestrator updates the plugin itself.", [163]),
+            ("You merged PR #161. PRs #163, #164 and #165 merged too.", [161, 163, 164, 165]),
+            ("**PR #164** is merged.", [164]),
+            ("https://github.com/hum/proj/pull/12 merged.", [12]),
+            ("https://github.com/other/x/pull/12 merged.", []),
+            ("Once PR #80 is merged, I'll rebase.", []),
+            ("PR #80 isn't merged yet.", []),
+            ("PR #80 is not merged.", []),
+            ("The watcher said \"PR #80 merged\".", []),
+            ("> PR #80 merged\n\nSeen.", []),
+            ("PR #80 is ready for review.", []),
+            ("Card #80 merged into #81.", []),
+        ]
+        for message, want in cases:
+            self.assertEqual(stop.noticed_merges(message, "hum/proj"), want, message)
+
+    def stop_after(self, n, replies=()):
+        project = apb_project(REMOTE)
+        write_events(project, [{"event": "UserPromptSubmit", "automatic": True},
+                               {"event": "PostToolUse", "command": "gh pr view %d" % n, "exit": 0}])
+        p = json.loads(json.dumps(real_pr(n)))
+        p["comments"] += [{"body": r, "author": "hornof-claude", "createdAt": "2026-11-22T23:00:00Z",
+                           "url": "https://github.com/hornof/apb/pull/%d#issuecomment-1" % n} for r in replies]
+        snap = {"repo": "hornof/apb", "human": "hornof", "claude_login": "hornof-claude", "board": [], "prs": [],
+                "merged": [p], "worktrees": [], "assigned": []}
+        message = "PR #%d merged.\n\n1 thing for you to do right now: tell me the next card to build." % n
+        project_repo = stop.project_repo
+        stop.project_repo = lambda folder: "hornof/apb"
+        try:
+            return handle(message, project, state_lookup=Recorder(snap)), project
+        finally:
+            stop.project_repo = project_repo
+
+    def test_an_open_pr_said_to_be_merged_later_is_not_checked(self):
+        # Review fix 1 on #179: these sentences name an open PR; the check looks it up only among merged PRs.
+        p = json.loads(json.dumps(real_pr(163)))
+        p["number"] = 179
+        snap = {"repo": "hum/proj", "human": "hum", "claude_login": "hornof-claude", "board": [], "prs": [p],
+                "merged": [], "worktrees": [], "assigned": []}
+        for said in ("PR #179 is ready to be merged.", "PR #179 still needs to be merged."):
+            project = apb_project(REMOTE)
+            write_events(project, [{"event": "UserPromptSubmit", "automatic": True},
+                                   {"event": "PostToolUse", "command": "gh pr view 179", "exit": 0}])
+            r = handle(said + "\n\nNothing for you to do right now. Waiting on the review session, ETA 9:10 PM.",
+                       project, state_lookup=Recorder(snap))
+            self.assertFalse(r["send_back"], (said, r.get("note")))
+
+    def test_noticing_pr_163_merged_with_note_6_loose_is_sent_back(self):
+        r, project = self.stop_after(163)
+        self.assertTrue(r["send_back"])
+        self.assertIn("Note 6", r["note"])
+        self.assertIn("https://github.com/hornof/apb/pull/163#issuecomment-7083676251", r["note"])
+        self.assertIn("loose-follow-up", last_event(project)["consistency"])
+
+    def test_the_same_turn_with_the_notes_settled_goes_through(self):
+        r, project = self.stop_after(163, ["Notes 3 to 5: no action.\nNote 6: #181"])
+        self.assertFalse(r["send_back"], r.get("note"))
+        self.assertNotIn("consistency", last_event(project))
+
+
 class HookRunForReal(unittest.TestCase):
     """The hook as Claude Code runs it: a GitHub error prints a notice for the human and sends nothing back."""
 

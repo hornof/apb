@@ -1,0 +1,146 @@
+{
+ "source": "gh pr view / gh issue view on hornof/apb, 2026-11-22 (#173)",
+ "prs": [
+  {
+   "number": 161,
+   "draft": false,
+   "head": "",
+   "assignees": [],
+   "closes": [
+    135
+   ],
+   "threads": [],
+   "comments": [
+    {
+     "body": "## Fix items\n\n1. `hooks/apb-stop.py` module docstring, the reminder paragraph: \"a watcher's wake or an agent's message (an automatic prompt) and a stop with no ask block don't, and start no new wait\" says a stop with no ask block never starts a new wait. That is false after the human's own prompt: `handle()` starts one then. Rewrite: \"The human's own prompt or a new ask block ends the wait. A watcher's wake or an agent's message (logged as an automatic prompt) doesn't, and the stop that follows it starts no new wait (#135).\"\n   Fixed in 7916da1.\n\n## Notes\n\n2. With this PR, the reminder trusts `apb-events.py`'s `\"automatic\"` flag. That flag is set for any prompt that starts with a tag such as `<b>` (`AUTOMATIC` regex, `hooks/apb-events.py:21`). If the human's prompt can ever reach the hook in that form, for example as an expanded slash command, it would no longer end the wait. I did not check what Claude Code passes for a slash command.\n3. The repo has no `docs/reviewer-notes.md`, so this review uses the default checklist.\n\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T18:06:39Z",
+     "url": "https://github.com/hornof/apb/pull/161#issuecomment-7083351023"
+    }
+   ],
+   "reviews": [
+    {
+     "body": "## Review of #161 (closes #135)\n\n**1 Fix, 2 Notes, 0 Decisions.** No decisions for you.\n\n**Verdict: merge-ready once Fix 1 is fixed.**\n\n### What I checked\n- `docs/reviewer-notes.md`: the repo has none, so I used the default checklist.\n- The diff against #135's Build and Acceptance: `human_acted()` and `handle()`'s no-ask-block branch both now use `humans_prompt(e)`. A watcher's wake, an agent's message (both logged `\"automatic\": true` by `hooks/apb-events.py`) and another session's prompt no longer end the wait or start a new one; the human's own prompt still does both; a new ask block still ends the wait.\n- GitHub's test run (Tests / unittest) on the head commit e73bcfe passed in 4m54s, and the plugin-version check passed. I did not run the whole suite again.\n- Both directions of the tests, by mutation, on e73bcfe in a scratch copy. Each mutant failed at least one new test:\n  - `handle()` reverted to any `UserPromptSubmit`: 6 fail.\n  - `human_acted()` reverted to any `UserPromptSubmit`: 4 fail.\n  - `handle()` ignores the human's prompt (`elif False`): 3 fail.\n  - `human_acted()` ignores the human's prompt: 2 fail.\n  - `human_acted()` ignores a new ask block: 1 fails.\n  - Unmutated: all new tests pass.\n- The property test's oracle (`ReminderWaitProperties`) is computed from prompt times alone, not from `handle()`, so it is independent of the code under test. It asserts that restarts and cancellations both happened.\n- The end-to-end test in `Reminder` spawns the hook through the existing `run()` helper; it adds no new child process without a time limit.\n- Base branch is `main`. Test files: only additions to `hooks/test_apb_stop.py`; no existing test or eval was edited.\n- README's `hooks/` row (\"reminds the human once if they've held it for 30 minutes\") still matches.\n- Not checked: a real 30-minute wait with a live watcher (the PR lists this as untested; there is no preview for a hook).\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T18:06:34Z",
+     "url": "https://github.com/hornof/apb/pull/161#pullrequestreview-6013662611"
+    }
+   ],
+   "commits": [
+    "9ab29ae1441980074ebb7e526c5f6d0623592e2d",
+    "e73bcfe20eb9e9610578b59e92388504f19b5b66",
+    "7916da10c2a86d73500472d72958153ef6c296da"
+   ],
+   "card_comments": [
+    {
+     "body": "<!-- apb-card-times {\"issue\": 135, \"pr\": 161, \"build_min\": 5.3, \"review_min\": 13.4, \"human_min\": 14.9, \"messages\": 1, \"chat\": 1, \"pr_messages\": 0, \"hand_offs\": 2} -->\n**Card times**, from `.apb/events.jsonl` and GitHub (UTC):\n\n- Build: 5 min, builder start 17:55 to PR #161 opened 18:00\n- Review: 13 min, PR #161 opened 18:00 to the first hand-off to the human 18:14\n- Human: 15 min, the human's waits: from each hand-off to their next message or comment, and from the last hand-off 18:14 to the merge 18:29\n- Hand-offs: 2, at 18:14 and 18:14\n- Messages from the human between the first hand-off and the merge, other than \"go\", a decision letter, \"resolved\" or \"merged\": 1 (chat 1, PR 0)\n\nGuessed beforehand: builder ready for review ~10:40 AM; review ~10:30 AM; hand-off ~10:20 AM\n\n— Claude (orchestrator)",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T18:31:07Z",
+     "url": "https://github.com/hornof/apb/issues/135#issuecomment-7083662718"
+    }
+   ]
+  },
+  {
+   "number": 163,
+   "draft": false,
+   "head": "",
+   "assignees": [],
+   "closes": [
+    162
+   ],
+   "threads": [],
+   "comments": [
+    {
+     "body": "## Fix items\n\n**1.** The orchestrator's Bash tool kills a command after 2 minutes by default, but the script allows each `claude` command 180 s (worst case about 9 minutes: three commands plus the `gh` read). If the marketplace refresh is slow, the Bash tool kills the script before it prints anything, and the orchestrator has no hand-off and no fallback. Fix: have the wake note (`hooks/apb-version.py` `wake_note`) and apb-build step 11 tell the orchestrator to run the script with a Bash timeout of 600000 ms, and add a test that the wake note says so. (Or lower the per-command default so the whole run fits in under 2 minutes.)\n\n   Fixed in 828b125: the wake note and apb-build step 11 name a 600000 ms Bash timeout, and the script's limits are now 150 s per claude command and 30 s for the GitHub read (worst case 480 s).\n\n**2.** The `TIMEOUT` comment in `scripts/plugin-update.py` (\"the marketplace refresh alone may take 120\") and the PR description (\"the marketplace refresh alone allows itself 120 s\") describe a separate 120 s limit that doesn't exist: every command gets the same `--timeout`. Fix: rewrite both as \"180 s for each claude command\" (or whatever limit Fix 1 settles on).\n\n   Fixed in 828b125: the comment, docstring and PR description give the real limits.\n\n## Notes\n\n**3.** A real run of the script from my reviewer session (auto mode) was blocked by the auto-mode classifier as \"Destructive or Unwanted Actions\". The builder's run from its session wasn't. So the PR's \"Check first\" doesn't settle whether the orchestrator's run on a wake will go through. Decision 7 is about this.\n\n**4.** `installed_version()` takes the first `apb@apb` entry in `claude plugin list --json`, whatever its `scope` or `enabled` value. Today there is one entry (user scope). If a project-scope install is ever listed first, the check could read the wrong one.\n\n**5.** After a successful update, the session still runs the old version, so every later merge wake in that session tells the orchestrator to run the script again. It will say \"already at the latest\" and hand over \"open a new session\" again. That's harmless, but you may see the same hand-off more than once.\n\n**6.** The script's last line is always \"1 thing for you to do right now: ...\". If the orchestrator has another ask for you in the same message, ending with that line word for word would undercount.\n\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T18:32:10Z",
+     "url": "https://github.com/hornof/apb/pull/163#issuecomment-7083676251"
+    },
+    {
+     "body": "Advisor on [Decision 7](https://github.com/hornof/apb/pull/163#discussion_r4659396877): **a**, with one condition.\n\n- With **b**, the update is likely to be blocked at the next version-bumping merge. The reviewer's own run was already blocked in auto mode. A blocked or prompting update hands Luke the manual step #162 exists to remove.\n- **The condition:** the user-settings rule must name the script exactly (`python3 <plugin path>/scripts/plugin-update.py`), not `python3` or a wildcard. Every project on Luke's machine sees `~/.claude/settings.json`, so a broad rule would allow far more than this script.\n- **What I'm unsure of:** whether an allow rule stops the auto-mode check from blocking the command, or only prevents a prompt. The next version-bumping merge will show which. If it's still blocked, the orchestrator should say so in the hand-off rather than fall back silently.\n\n— Claude (advisor)\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T18:44:31Z",
+     "url": "https://github.com/hornof/apb/pull/163#issuecomment-7083834336"
+    }
+   ],
+   "reviews": [
+    {
+     "body": "## Review index\n\n7 items: 2 Fix (1, 2), 4 Notes (3 to 6), 1 Decision. 1 decision for you: 7.\n\n**Verdict:** merge-ready once Fix items 1 and 2 are fixed. Fix and Note items are in the next comment; Decision 7 is a thread on `templates/claude-settings-template.json`.\n\nThe repo has no `docs/reviewer-notes.md`, so no past rulings applied.\n\n### What I checked\n\n- GitHub's Tests run on a1561aa passed (unittest, 4m56s), and the Plugin version check passed. The PR targets `main`, is mergeable and clean after #161 merged, and doesn't change `.claude-plugin/plugin.json`.\n- I ran `scripts/test_plugin_update.py` on the PR head in a separate worktree: 16 tests pass.\n- The diff against #162's \"Change\" list. Both commands run, the plugin update is skipped if the marketplace update failed, the installed version (from `claude plugin list --json`) is checked against main's, and the success hand-off names the installed version and ends \"open a new session and send `Start #N.`\". Every failure path (failed, hung or missing command, unreadable listing, unreadable main, versions differ, any exception in `update()`) exits 1 with the two commands and the versions it saw, so the hand-off never leaves you on an old version without saying so. Covered by the Fallback tests and the 48-case oracle.\n- Time limits: every `claude` call uses `subprocess.run(..., timeout=)`, and main's version is read through `apb-version.py`'s `main_version`, which has its own `gh` timeout. The test fakes and the test runner's own `subprocess.run` calls have limits too. See Fix 1 for the limit that matters to the orchestrator.\n- The real `claude plugin list --json` output on this Mac: one `apb@apb` entry with `id` and `version` keys, as the script expects.\n- Old plugin folders stay in `~/.claude/plugins/cache/apb/apb/` after an update, so the script path the wake gives (inside the running plugin's folder) still exists.\n- Test edits in `hooks/test_apb_version.py` (`AtAWake`, `WatcherWake`): they drop the two commands and \"then open a new session\" from what the wake must contain, and add the script path, \"yourself\" and \"last line\", plus assertNotIn checks for the commands. That matches #162; nothing is loosened beyond it. The per-version root cache is needed because the note now has the root's path in it.\n- Docs: README row, playbook \"Run the current apb plugin and checkout\", apb-build step 11 and the hook's docstring all describe the same flow and use the same name (`scripts/plugin-update.py`). The SessionStart note still hands over the commands, as #162 asks (it stays the backstop).\n- Not checked, because only a real merge can show them: #162's first two \"Done when\" items (your only step is opening the new session; the new session's self-check shows main's version). I tried a real run of the script, as the PR's \"What to look at\" suggests, and it was blocked (Note 3).\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T18:32:05Z",
+     "url": "https://github.com/hornof/apb/pull/163#pullrequestreview-6013760064"
+    }
+   ],
+   "commits": [
+    "7167c9487f4b276f69865e656d25ac50ef1f99a8",
+    "a1561aa968e2ad5b8818979999815ed69f418c10",
+    "828b1254482ec2768715624dfc3dfba1a39566bf"
+   ],
+   "card_comments": [
+    {
+     "body": "<!-- apb-card-times {\"issue\": 162, \"pr\": 163, \"build_min\": 16.7, \"review_min\": 18.0, \"human_min\": 8.9, \"messages\": 1, \"chat\": 1, \"pr_messages\": 0, \"hand_offs\": 2} -->\n**Card times**, from `.apb/events.jsonl` and GitHub (UTC):\n\n- Build: 17 min, builder start 18:09 to PR #163 opened 18:26\n- Review: 18 min, PR #163 opened 18:26 to the first hand-off to the human 18:44\n- Human: 9 min, the human's waits: from each hand-off to their next message or comment, and from the last hand-off 18:47 to the merge 18:54\n- Hand-offs: 2, at 18:44 and 18:47\n- Messages from the human between the first hand-off and the merge, other than \"go\", a decision letter, \"resolved\" or \"merged\": 1 (chat 1, PR 0)\n\nGuessed beforehand: builder ready for review ~11:00 AM; review ~10:55 AM; hand-off ~11:10 AM\n\n— Claude (orchestrator)",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T18:55:20Z",
+     "url": "https://github.com/hornof/apb/issues/162#issuecomment-7083970433"
+    }
+   ]
+  },
+  {
+   "number": 164,
+   "draft": false,
+   "head": "",
+   "assignees": [],
+   "closes": [
+    136
+   ],
+   "threads": [],
+   "comments": [
+    {
+     "body": "## Fix items\n\n1. `hooks/test_suite_report.py:34`: the `(unexpected success)` line has no test; deleting it leaves all 5 tests passing. Add an outcome to `BODY` that is an `@unittest.expectedFailure` test that passes, and have `expected()` list it after the errors as `  <id> (unexpected success)`. (It works today: I checked it by hand.) Fixed in c63fe8f.\n2. `hooks/test_suite_report.py:12-13`, unclear sentence. Rewrite: \"Only a run that imports this file names its failures: `discover` on this folder does; running one other test file on its own does not.\" Fixed in c63fe8f.\n3. `hooks/test_apb_watch_start.py:1028`, \"never here\" will mean nothing to a later reader of the repo. Rewrite: \"#136: seen once on GitHub's macOS runner (Python 3.15), never in local runs.\" Fixed in c63fe8f.\n\n## Notes\n\n4. The hook's `command_of` returns \"\" when `ps` prints nothing, including when `ps` itself fails, and `gone()` counts that as exited. That is one more way a new watcher could start while the old hook still runs. It's hook code this PR doesn't touch, and nothing shows it caused the GitHub failure.\n5. `sample_suite()` leaves about 10 temp folders per run. The rest of the hook suite's `mkdtemp` calls do the same.\n\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T20:22:37Z",
+     "url": "https://github.com/hornof/apb/pull/164#issuecomment-7085199084"
+    },
+    {
+     "body": "Advisor on [Decision 6](https://github.com/hornof/apb/pull/164#discussion_r4659848419): **a**, plus a card filed now rather than later.\n\n- **#136's acceptance is met.** The flaky test it found locally no longer depends on timing, and a failing run now names its test. Keeping #136 open to count GitHub runs (b) would leave a card waiting on something nothing checks.\n- **The GitHub failure is a separate problem, in hook code rather than in a test.** The hook gives up waiting for the old hook after 10 s and starts the new watcher anyway. Note 4 is a second way in: a failed `ps` counts as \"exited\". Both are known now, so I'd file one card for them now instead of waiting for the new message to show up on GitHub.\n\n— Claude (advisor)\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T20:32:39Z",
+     "url": "https://github.com/hornof/apb/pull/164#issuecomment-7085356206"
+    }
+   ],
+   "reviews": [
+    {
+     "body": "## Review index\n\n3 Fix, 2 Note, 1 Decision. 1 decision for you: 6.\n\n**Verdict:** merge-ready once Fix items 1 to 3 are fixed. The harness races it fixes are real; the GitHub failure named on #136 (`test_a_newer_session_takes_the_watcher_and_the_older_one_leaves_it`, run 44996180423) is instrumented, not fixed, and the PR says so. Decision 6 is what to do about that.\n\n**What I checked**\n\n- `docs/reviewer-notes.md`: the repo has none, so the defaults applied.\n- GitHub's Tests run on this head (2097f5c, run 45065533008): hook and script tests passed, on GitHub's macOS runner. Not re-run here.\n- Base branch: `main`. Correct.\n- #136's acceptance (\"passes repeatedly under heavy CPU load, and any failure output names the test\") against the diff. Naming: met for `discover`, the command GitHub and the PR use. Under load: the builder's logs in its scratch folder match the PR's numbers (3 base runs and 1 at 32 processes OK; the `-1 != 0` rc failure log; 531 tests OK after the fix). I put no load on this Mac.\n- Each harness fix against the race it names: rc file, payload (the fake Claude Code passes `payload.json` as the hook's stdin, so rewriting it in place could cut a running hook's input; a rename keeps the old file for it), mode file (an empty one made `mode[0]` raise), and `argv.log` (the fake writes each line with its newline, so dropping the last split piece drops only an unfinished line). All sound.\n- `alive()` now matches the hook's `command_of` rule (any state starting with `Z`).\n- The GitHub failure: the failing log is from macOS, like this Mac. The hook's `claim()` waits at most 10 s for the old hook (`gone(..., 10)`) and then starts the new watcher anyway, and the test allows 15 s, so a slow-exiting old hook fails this assertion. The new failure message gives the seconds elapsed and the old hook's `ps` line, which tells that case apart. Nothing in the diff removes that cause.\n- `test_suite_report.py` changes only the report, not results: the wrapper calls the original `run`, writes lines after it, and returns the same result object; the exit code still comes from `wasSuccessful()`. I ran its 5 tests plus my own sample (a failure, an unexpected success, a `setUpClass` error, a module that fails to import) with `discover`: all 5 passed, the run still ended `FAILED`, and all 4 problems were named on the last lines.\n- Time limits on child processes: `run_suite` has `timeout=60`, the new `ps` call `timeout=10`.\n- Test file changes: the whole PR is test code; every change is listed above.\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T20:22:32Z",
+     "url": "https://github.com/hornof/apb/pull/164#pullrequestreview-6014320705"
+    }
+   ],
+   "commits": [
+    "4bc4e2bf04e76605ccde1ba925be3ef3d77545ab",
+    "2097f5c41d1747fb552cb2b6fef870bd8b3bf4d0",
+    "c63fe8f5e1a94c958e97a131f7c5e4cd7efdb767"
+   ],
+   "card_comments": [
+    {
+     "body": "Seen on GitHub, in the new Tests workflow (#143), on PR #151 at 4811164: https://github.com/hornof/apb/actions/runs/44996180423\n\n`test_apb_watch_start.NewestSessionTakesOver.test_a_newer_session_takes_the_watcher_and_the_older_one_leaves_it` failed with \"True is not false : the old hook has exited before the new watcher starts\". PR #151 changes no hook and no file that test reads; the same suite passed locally on that PR's previous head, and on GitHub on #150 and on main. So it looks like a timing failure of the kind this card is about, in a different test from the one it names. I re-ran the failed job once to see whether it repeats.\n\n— Claude (orchestrator)\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T07:03:30Z",
+     "url": "https://github.com/hornof/apb/issues/136#issuecomment-7075685977"
+    },
+    {
+     "body": "The one re-run of the failed job passed (attempt 2 of run 44996180423), so on #151 it failed once and passed once with no code change.\n\n— Claude (orchestrator)\n",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T07:08:28Z",
+     "url": "https://github.com/hornof/apb/issues/136#issuecomment-7075736666"
+    },
+    {
+     "body": "<!-- apb-card-times {\"issue\": 136, \"pr\": 164, \"build_min\": 104.7, \"review_min\": 17.3, \"human_min\": 22.6, \"messages\": 3, \"chat\": 3, \"pr_messages\": 0, \"hand_offs\": 4} -->\n**Card times**, from `.apb/events.jsonl` and GitHub (UTC):\n\n- Build: 105 min, builder start 18:32 to PR #164 opened 20:16\n- Review: 17 min, PR #164 opened 20:16 to the first hand-off to the human 20:34\n- Human: 23 min, the human's waits: from each hand-off to their next message or comment, and from the last hand-off 21:01 to the merge 21:02\n- Hand-offs: 4, at 20:34, 20:37, 20:55 and 21:01\n- Messages from the human between the first hand-off and the merge, other than \"go\", a decision letter, \"resolved\" or \"merged\": 3 (chat 3, PR 0)\n\nGuessed beforehand: builder PR ~11:45 AM, revised to 12:30 PM, 12:25 PM; review ~12:50 PM\n\n— Claude (orchestrator)",
+     "author": "hornof-claude",
+     "createdAt": "2026-11-22T21:03:21Z",
+     "url": "https://github.com/hornof/apb/issues/136#issuecomment-7085750075"
+    }
+   ]
+  }
+ ]
+}

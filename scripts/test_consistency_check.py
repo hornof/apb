@@ -7,6 +7,11 @@ works out each card's one right column from its issue, its PRs and its worktrees
 a card in the right column is never named, a card in a wrong one always is. The whole script is then
 run for real, with a fake `gh` on the PATH, to check what it asks GitHub, what it prints and how it exits,
 and that a GitHub error never counts as a problem.
+
+loose-follow-up (#173) is tested on the real PRs #161, #163 and #164 as GitHub had them on 2026-11-22
+(test_consistency_check_2026_11_22.json, read with gh pr view, gh api .../reviews and gh issue view), and
+on random Notes posts and replies against a bookkeeping of what each reply settled, written as the
+replies are made.
 """
 import importlib.util
 import json
@@ -420,7 +425,7 @@ class MergeWithOpenRequest(unittest.TestCase):
     def test_a_reply_that_doesnt_address_it_doesnt_answer_it(self):
         # #159: any later Claude comment counted, the reviewer's index post included.
         others = [
-            "Index: 0 Fix, 2 Notes.\n\n## Notes\n1. fine\n2. fine\n\n— Claude (reviewer)",
+            "Index: 0 Fix, 2 Notes.\n\n## Notes\n1. fine, filed #9\n2. fine, filed #10\n\n— Claude (reviewer)",
             "Rebased on main.\n\n— Claude (orchestrator)",
             "> — Claude (advisor)\n\nSeen.\n\n— Claude (orchestrator)",  # quotes only the signature
             "> the\n\nSeen.\n\n— Claude (orchestrator)",  # a quote too short to say which comment
@@ -455,7 +460,7 @@ class MergeWithOpenRequest(unittest.TestCase):
         self.assertEqual(cases(cc.check(snap(prs=[p]), self.hand_off(120))), ["merge-with-open-request"])
 
     def test_a_fix_item_with_no_commit_holds_the_merge(self):
-        review = "Index: 2 Fix.\n\n## Fix\n1. Rename the flag. abc1234\n2. Add the test.\n\n## Notes\n1. fine\n\n— Claude (reviewer)"
+        review = "Index: 2 Fix.\n\n## Fix\n1. Rename the flag. abc1234\n2. Add the test.\n\n## Notes\n1. fine, filed #9\n\n— Claude (reviewer)"
         p = pr(120, assignees=[HUMAN], comments=[comment(review)], commits=[OID])
         found = cc.check(snap(prs=[p]), self.hand_off(120))
         self.assertEqual(cases(found), ["merge-with-open-request"])
@@ -463,12 +468,12 @@ class MergeWithOpenRequest(unittest.TestCase):
 
     def test_every_fix_item_answered_is_fine(self):
         review = ("**Fix**\n1. Rename the flag. Fixed in abc1234.\n2. Add the test: not fixed, because the "
-                  "hook has none.\n\n**Notes**\n1. fine\n\n— Claude (reviewer)")
+                  "hook has none.\n\n**Notes**\n1. fine, filed #9\n\n— Claude (reviewer)")
         p = pr(120, assignees=[HUMAN], reviews=[comment(review)], commits=[OID])
         self.assertEqual(cc.check(snap(prs=[p]), self.hand_off(120)), [])
 
     def fix_post(self, item):
-        return "## Fix\n1. %s\n\n## Notes\n1. fine\n\n— Claude (reviewer)" % item
+        return "## Fix\n1. %s\n\n## Notes\n1. fine, filed #9\n\n— Claude (reviewer)" % item
 
     def test_a_fix_item_sha_must_be_a_commit_on_the_pr(self):
         # #159: any hex or digit word of 7 or more characters passed as the commit.
@@ -493,6 +498,291 @@ class MergeWithOpenRequest(unittest.TestCase):
     def test_only_a_merge_hand_off_is_checked(self):
         p = pr(120, assignees=[HUMAN], comments=[comment("Please add it." + ADVISOR, author=HUMAN)])
         self.assertEqual(cc.check(snap(prs=[p])), [])
+
+
+FIXTURE = os.path.join(HERE, "test_consistency_check_2026_11_22.json")
+
+
+def real_prs():
+    """PRs #161, #163 and #164 of hornof/apb as GitHub had them on 2026-11-22 (their comments, reviews,
+    commits, and the comments on the cards they close), read with gh for #173."""
+    with open(FIXTURE, encoding="utf-8") as f:
+        return {p["number"]: p for p in json.load(f)["prs"]}
+
+
+REAL_LOGIN = "hornof-claude"  # Claude's account on hornof/apb
+LATER = "2026-11-22T23:00:00Z"
+
+
+def real_snap(prs, merged=True):
+    s = snap(prs=[] if merged else prs, human="hornof")
+    s["repo"], s["claude_login"] = "hornof/apb", REAL_LOGIN
+    if merged:
+        s["merged"] = list(prs)
+    return s
+
+
+def reply(body, at=LATER, author=REAL_LOGIN, url="https://github.com/hornof/apb/pull/1#issuecomment-1"):
+    return {"body": body + "\n\n— Claude (orchestrator)", "author": author, "createdAt": at, "url": url}
+
+
+def loose(found):
+    return [p for p in found if p["case"] == "loose-follow-up"]
+
+
+class LooseFollowUp(unittest.TestCase):
+    """2026-11-22: six follow-ups from reviews and advisor comments were left with no card (PR #161
+    Note 2, PR #163 Note 6, PR #164's advisor comment among them), found only when the human asked
+    "what am I missing?" (#173). When a turn hands over a merge, or notices one, every reviewer Note and
+    every "file a card", "want a card?" or "say so" on the PR or the card it closes needs a card (#N) or
+    a "no action" reply."""
+
+    def test_the_2026_11_22_merges_are_sent_back(self):
+        prs = real_prs()
+        expect = {161: ("Note 2", "https://github.com/hornof/apb/pull/161#issuecomment-7083351023"),
+                  163: ("Note 6", "https://github.com/hornof/apb/pull/163#issuecomment-7083676251"),
+                  164: ("I'd file one card for them now", "https://github.com/hornof/apb/pull/164#issuecomment-7085356206")}
+        for n, (what, url) in expect.items():
+            for key, merged in (("merged", True), ("merge", False)):
+                found = loose(cc.check(real_snap([prs[n]], merged), {key: [n]}))
+                self.assertTrue(found, (n, key))
+                said = [p["problem"] for p in found if what in p["problem"] and url in p["problem"]]
+                self.assertEqual(len(said), 1, (n, key, [p["problem"] for p in found]))
+                self.assertIn("PR #%d" % n, said[0])
+
+    # The replies that would have settled each PR: a card for the item the issue names, "no action" for the rest.
+    SETTLED = {
+        161: ["Note 2: filed as #180.", "Note 3: no action, the default checklist is what the repo wants."],
+        163: ["Notes 3 to 5: no action.", "Note 6: #181"],
+        164: ["Filed #182 for the advisor's comment https://github.com/hornof/apb/pull/164#issuecomment-7085356206.",
+              "Notes 4 and 5: no action, both are harmless."],
+    }
+    NO_ACTION = {
+        161: ["Notes 2 and 3: no action."],
+        163: ["Note 3: no action\nNote 4: no action\nNote 5: no action\nNote 6: no action, the script's line is the hand-off."],
+        164: ["> I'd file one card for them now instead of waiting for the new message to show up on GitHub.\n\n"
+              "No action: #136's own fix covers it.", "Notes 4, 5: no action."],
+    }
+
+    def settle(self, n, lines, on_card=False):
+        p = json.loads(json.dumps(real_prs()[n]))
+        replies = [reply(line) for line in lines]
+        p["card_comments" if on_card else "comments"] += replies
+        return p
+
+    def test_the_same_prs_with_a_card_linked_pass(self):
+        for n, lines in self.SETTLED.items():
+            for key, merged in (("merged", True), ("merge", False)):
+                found = cc.check(real_snap([self.settle(n, lines)], merged), {key: [n]})
+                self.assertEqual(loose(found), [], (n, key))
+
+    def test_the_same_prs_with_no_action_replied_pass(self):
+        for n, lines in self.NO_ACTION.items():
+            found = cc.check(real_snap([self.settle(n, lines)]), {"merged": [n]})
+            self.assertEqual(loose(found), [], n)
+
+    def test_a_reply_on_the_card_it_closes_counts(self):
+        for n, lines in self.SETTLED.items():
+            self.assertEqual(loose(cc.check(real_snap([self.settle(n, lines, on_card=True)]), {"merged": [n]})), [], n)
+
+    def test_each_item_is_its_own(self):
+        # Settling every item but one leaves exactly that one.
+        p = self.settle(163, ["Notes 3 to 5: no action."])
+        found = loose(cc.check(real_snap([p]), {"merged": [163]}))
+        self.assertEqual(len(found), 1, [x["problem"] for x in found])
+        self.assertIn("Note 6", found[0]["problem"])
+
+    def test_only_a_merge_handed_over_or_noticed_is_checked(self):
+        p = real_prs()[163]
+        self.assertEqual(loose(cc.check(real_snap([p], merged=False))), [])
+        self.assertEqual(loose(cc.check(real_snap([p], merged=False), {"prs": [163], "issues": [162]})), [])
+        self.assertEqual(loose(cc.check(real_snap([p]), {"merged": [999]})), [])
+
+    def test_an_open_pr_said_to_be_merged_is_not_a_merge_noticed(self):
+        # Review fix 1 on #179: "PR #179 is ready to be merged." names an open PR; only s["merged"] counts.
+        post = comment("## Notes\n1. Slow.", url="https://github.com/hum/proj/pull/179#issuecomment-5")
+        p = pr(179, closes=[173], comments=[post])
+        self.assertEqual(loose(cc.check(snap(prs=[p]), {"merged": [179]})), [])
+        # The same PR, merged, is checked; and asked to merge, it is checked as a merge handed over.
+        s = snap()
+        s["merged"] = [p]
+        self.assertEqual(len(loose(cc.check(s, {"merged": [179]}))), 1)
+        self.assertIn("hands over the merge of PR #179",
+                      loose(cc.check(snap(prs=[p]), {"merge": [179]}))[0]["problem"])
+
+    # ------------------------------------------------ made-up posts, for each rule on its own
+
+    URL = "https://github.com/hum/proj/pull/120#issuecomment-500"
+
+    def notes_post(self, *items, at="2026-11-20T10:00:00Z", author=CLAUDE):
+        body = "## Fix items\n\n1. Rename it. Fixed in abc1234.\n\n## Notes\n\n" + "\n".join(
+            "%d. %s" % (k, text) for k, text in items)
+        return comment(body, author=author, at=at, url=self.URL)
+
+    def found_for(self, comments=(), card_comments=(), reviews=()):
+        p = pr(120, closes=[7], comments=comments, reviews=reviews, commits=[OID])
+        p["card_comments"] = list(card_comments)
+        return loose(cc.check(snap(prs=[p]), {"prs": [120], "merge": [120]}))
+
+    def test_a_note_that_links_a_new_card_is_settled(self):
+        for text in ["Slow on big boards; filed #44.", "See https://github.com/hum/proj/issues/44 for it.",
+                     "Slow on big boards (#44)."]:
+            self.assertEqual(self.found_for([self.notes_post((2, text))]), [], text)
+
+    def test_a_note_that_names_only_the_pr_its_card_or_another_pr_is_loose(self):
+        for text in ["Slow on big boards, as #7 says.", "Slow, like #120 itself.", "Slow, as on PR #44.",
+                     "Slow, see https://github.com/hum/proj/pull/44.", "Slow, see `#44`.", "Slow, see &#44; here."]:
+            found = self.found_for([self.notes_post((2, text))])
+            self.assertEqual(len(found), 1, text)
+            self.assertIn("Note 2", found[0]["problem"])
+            self.assertIn(self.URL, found[0]["problem"])
+
+    def test_no_action_in_the_note_itself_is_not_a_reply(self):
+        found = self.found_for([self.notes_post((2, "Harmless; no action needed."))])
+        self.assertEqual(len(found), 1)
+
+    def test_a_reply_settles_only_the_notes_on_its_line(self):
+        later = comment("Note 2: no action.\nNote 3: looking into it.", at="2026-11-20T11:00:00Z")
+        found = self.found_for([self.notes_post((2, "a"), (3, "b")), later])
+        self.assertEqual([("Note 3" in p["problem"]) for p in found], [True])
+
+    def test_a_reply_before_the_note_doesnt_settle_it(self):
+        earlier = comment("Note 2: no action.", at="2026-11-20T09:00:00Z")
+        self.assertEqual(len(self.found_for([earlier, self.notes_post((2, "a"))])), 1)
+
+    def test_a_reply_with_no_card_and_no_no_action_doesnt_settle_it(self):
+        for body in ["Note 2: seen.", "Note 2: see #7.", "Note 2: see PR #44.", "Notes: no action.",
+                     "Note 12: no action.", "No action on any of it.",
+                     # Review fix 2 on #179: "no card" is a status, not a decision.
+                     "Notes 2-3: no card, harmless.", "Notes 2 and 6 still have no card.",
+                     "Note 2 has no card yet; filing after merge."]:
+            later = comment(body, at="2026-11-20T11:00:00Z")
+            self.assertEqual(len(self.found_for([self.notes_post((2, "a")), later])), 1, body)
+
+    def test_reply_forms_that_settle_a_note(self):
+        for body in ["Note 2: no action.", "note 2 - #45", "**Note 2:** filed #45.", "Notes 1 to 3: no action.",
+                     "Notes 1, 2 and 3: no action.", "Notes 2-3: no action, harmless.",
+                     "Note 2: https://github.com/hum/proj/issues/45"]:
+            later = comment(body, at="2026-11-20T11:00:00Z", author=HUMAN)
+            self.assertEqual(self.found_for([self.notes_post((2, "a")), later]), [], body)
+
+    def test_bold_numbered_notes_are_items(self):
+        body = "## Notes\n\n**3.** First.\n\n**4.** Second **with bold**.\n\n## Decisions\n\n7. Not a note."
+        found = self.found_for([comment(body, url=self.URL)])
+        self.assertEqual(sorted(p["problem"].split("Note ")[1].split()[0] for p in found), ["3", "4"])
+
+    def test_a_notes_heading_in_bold_and_a_review_body(self):
+        body = "**Notes**\n1. One.\n\n— Claude (reviewer)"
+        self.assertEqual(len(self.found_for(reviews=[comment(body, url=self.URL)])), 1)
+
+    def test_notes_from_the_human_or_the_advisor_are_not_reviewer_notes(self):
+        self.assertEqual(self.found_for([self.notes_post((2, "a"), author=HUMAN)]), [])
+        advisor = comment("## Notes\n1. One." + ADVISOR, author=HUMAN, url=self.URL)
+        self.assertEqual(self.found_for([advisor]), [])
+
+    def test_a_post_with_no_notes_section_has_no_notes(self):
+        body = "Index: 1 Fix, 2 Notes (3 to 4), 0 Decisions.\n\n1. one\n2. two\n\n— Claude (reviewer)"
+        self.assertEqual(self.found_for([comment(body, url=self.URL)]), [])
+
+    REQUESTS = ["Want a card for this?", "If you want a card, say so.", "Say so and I'll file it.",
+                "I'd file one card for them now.", "File a card now.", "We should **file a** card for it.",
+                "Do you want a card?", "Say so if you want a separate card."]
+    NOT_REQUESTS = ["The PR says so.", "If it's still blocked, the orchestrator should say so in the hand-off.",
+                    "> File a card now.", "The rule is `file a card`.", "File a card now: #45.",
+                    "No action: we won't file a card.", "Seen."]
+
+    def test_what_counts_as_asking_for_a_card(self):
+        for text in self.REQUESTS:
+            for where in ("comments", "card_comments"):
+                c = comment(text + ADVISOR, author=HUMAN, url=self.URL)
+                found = self.found_for(**{where: [c]})
+                self.assertEqual(len(found), 1, (text, where))
+                self.assertIn(self.URL, found[0]["problem"])
+        for text in self.NOT_REQUESTS:
+            c = comment(text + ADVISOR, author=HUMAN, url=self.URL)
+            self.assertEqual(self.found_for([c]), [], text)
+
+    def test_a_request_is_settled_by_a_later_reply_that_addresses_it(self):
+        ask = comment("Want a card for this?" + ADVISOR, author=HUMAN, url=self.URL)
+        for body in ["Filed #45 for %s." % self.URL, "> Want a card for this?\n\nNo action: harmless.",
+                     "No card for %s: no action." % self.URL]:
+            for where in ("comments", "card_comments"):
+                later = comment(body, at="2026-11-20T11:00:00Z")
+                kw = {"comments": [ask]}
+                kw[where] = kw.get(where, []) + [later]
+                self.assertEqual(self.found_for(**kw), [], (body, where))
+
+    def test_a_reply_that_doesnt_address_the_request_or_says_nothing_doesnt_settle_it(self):
+        ask = comment("Want a card for this?" + ADVISOR, author=HUMAN, url=self.URL)
+        for body, at in [("Filed #45.", "2026-11-20T11:00:00Z"),  # doesn't say for what
+                         ("Seen %s." % self.URL, "2026-11-20T11:00:00Z"),  # no card, no "no action"
+                         ("Filed #45 for %s." % self.URL, "2026-11-20T09:00:00Z"),  # before it
+                         ("Filed #7 for %s." % self.URL, "2026-11-20T11:00:00Z")]:  # the PR's own card
+            later = comment(body, at=at)
+            self.assertEqual(len(self.found_for([ask, later])), 1, body)
+
+    def test_a_request_inside_a_note_is_named_once_as_the_note(self):
+        found = self.found_for([self.notes_post((2, "Slow on big boards. Want a card?"))])
+        self.assertEqual(len(found), 1)
+        self.assertIn("Note 2", found[0]["problem"])
+
+    def test_the_problem_says_how_to_settle_it(self):
+        found = self.found_for([self.notes_post((2, "a"))])
+        self.assertIn("#<card>", found[0]["problem"])
+        self.assertIn("no action", found[0]["problem"])
+
+
+class LooseFollowUpProperties(unittest.TestCase):
+    """Random Notes posts and replies: a Note is named exactly when an independent bookkeeping of what
+    was settled (written as the replies are generated, not read back by the check's rules) says it is
+    loose. Both directions: a settled Note is never named, a loose one always is."""
+
+    def test_against_the_bookkeeping(self):
+        rng = random.Random(173)
+        url = "https://github.com/hum/proj/pull/120#issuecomment-500"
+        for _ in range(300):
+            numbers = sorted(rng.sample(range(1, 12), rng.randint(1, 5)))
+            settled = set()
+            items = []
+            for k in numbers:
+                if rng.random() < 0.2:
+                    items.append("%d. Slow on big boards; filed #%d." % (k, 200 + k))
+                    settled.add(k)
+                else:
+                    items.append("%d. Slow on big boards, as #7 and PR #3 say." % k)
+            post = comment("## Notes\n\n" + "\n".join(items), at="2026-11-20T10:00:00Z", url=url)
+            replies = []
+            for k in numbers:
+                roll = rng.random()
+                if roll < 0.25:
+                    replies.append(comment("Note %d: no action." % k, at="2026-11-20T11:00:00Z", author=HUMAN))
+                    settled.add(k)
+                elif roll < 0.45:
+                    replies.append(comment("Note %d: #%d" % (k, 300 + k), at="2026-11-20T11:00:00Z"))
+                    settled.add(k)
+                elif roll < 0.55:  # too early
+                    replies.append(comment("Note %d: no action." % k, at="2026-11-20T09:00:00Z"))
+                elif roll < 0.65:  # no disposition
+                    replies.append(comment("Note %d: seen, see #7." % k, at="2026-11-20T11:00:00Z"))
+                elif roll < 0.75:  # another number
+                    replies.append(comment("Note %d: no action." % (k + 20), at="2026-11-20T11:00:00Z"))
+            if len(numbers) > 1 and rng.random() < 0.3:
+                lo, hi = numbers[0], numbers[-1]
+                replies.append(comment("Notes %d to %d: no action." % (lo, hi), at="2026-11-20T12:00:00Z"))
+                settled |= set(range(lo, hi + 1))
+            rng.shuffle(replies)
+            p = pr(120, closes=[7], comments=[post] + replies)
+            found = loose(cc.check(snap(prs=[p]), {"merge": [120]}))
+            named = {int(x["problem"].split("Note ")[1].split()[0]) for x in found}
+            self.assertEqual(named, set(numbers) - settled, (items, [r["body"] for r in replies]))
+
+
+class PlaybookListsEveryCase(unittest.TestCase):
+    def test_every_case_is_in_the_playbook(self):
+        with open(os.path.join(os.path.dirname(HERE), "docs", "playbook.md"), encoding="utf-8") as f:
+            playbook = f.read()
+        for case in cc.CASES:
+            self.assertIn("**%s:**" % case["id"], playbook, case["id"])
 
 
 class NoAdvisorSummaryCase(unittest.TestCase):
@@ -595,6 +885,33 @@ class FromGitHub(unittest.TestCase):
         s = cc.from_answers([answer], REPO, CLAUDE, [], agents={"a1": [3]})
         self.assertEqual(s["prs"][0]["commits"], [OID])
         self.assertEqual(s["agents"], {"a1": [3]})
+
+    def test_merged_prs_and_the_comments_on_the_cards_a_pr_closes(self):
+        # #173: a merge the turn notices is read from the recently merged PRs, with its cards' comments.
+        open_pr = gql_pr(5, closes=[2])
+        open_pr["closingIssuesReferences"]["nodes"][0]["comments"] = {"nodes": [
+            {"body": "Want a card?", "author": {"login": HUMAN}, "createdAt": "2026-11-22T10:00:00Z",
+             "url": "https://github.com/hum/proj/issues/2#issuecomment-3"}]}
+        merged = gql_pr(6, closes=[4])
+        merged["comments"] = {"nodes": [{"body": "## Notes\n1. Slow.", "author": {"login": CLAUDE},
+                                         "createdAt": "2026-11-22T10:00:00Z",
+                                         "url": "https://github.com/hum/proj/pull/6#issuecomment-9"}]}
+        answer = graphql_answer([], [open_pr])
+        answer["data"]["repository"]["merged"] = {"nodes": [merged]}
+        s = cc.from_answers([answer], REPO, CLAUDE, [])
+        self.assertEqual([c["body"] for c in s["prs"][0]["card_comments"]], ["Want a card?"])
+        self.assertEqual([p["number"] for p in s["merged"]], [6])
+        self.assertEqual(s["merged"][0]["card_comments"], [])
+        found = cc.check(s, {"merged": [6], "merge": [5]})
+        self.assertEqual(sorted(p["problem"].split(", but ")[0] for p in loose(found)),
+                         ["this turn hands over the merge of PR #5", "this turn notices PR #6 merged"])
+        # An answer from before #173, with neither, reads as none.
+        s = cc.from_answers([graphql_answer([], [gql_pr(5, closes=[2])])], REPO, CLAUDE, [])
+        self.assertEqual((s["merged"], s["prs"][0]["card_comments"]), ([], []))
+
+    def test_the_query_asks_for_merged_prs_and_card_comments(self):
+        self.assertIn("merged: pullRequests(states: MERGED", cc.QUERY)
+        self.assertRegex(cc.QUERY, r"closingIssuesReferences\(first: \d+\) \{ nodes \{ number comments\(")
 
     def test_the_query_asks_for_each_prs_commits(self):
         self.assertIn("commits(", cc.QUERY)
