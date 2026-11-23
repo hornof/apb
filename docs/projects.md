@@ -10,4 +10,4 @@ The projects that run on apb, whether each is in use, and where its checkout is.
 | Repo | In use | Checkout |
 |---|---|---|
 | hornof/sketch-gallery | yes | `~/src/claude/sketch-gallery` |
-| hornof/tahoe-tracker | no | `~/src/claude/tahoe-tracker` |
+| hornof/tahoe-tracker | yes | `~/src/claude/tahoe-tracker` |
